@@ -81,3 +81,40 @@ def test_exact_match_no_fallback(tmp_path):
     ))
     intent_evt = next(e for e in events if e["stage"] == "intent")
     assert intent_evt.get("fallback_notice") is None, "Recognized prompt should not have fallback_notice"
+
+
+@needs_iverilog
+def test_oscillation_detection_stops_loop(tmp_path):
+    """Regression: if the provider alternates between two RTLs the loop must stop."""
+    import models
+    from simulator import IcarusSimulator
+
+    _orig_fix = llm_service.OfflineProvider.fix_design
+
+    _oscillation_state = {"call": 0}
+
+    def _alternating_fix(self, rtl_code, tb_code, log_excerpt, model=None):
+        _oscillation_state["call"] += 1
+        # Alternates between two slightly different RTLs (whitespace only).
+        if _oscillation_state["call"] % 2 == 1:
+            fixed = rtl_code.replace("endmodule", "\nendmodule")
+        else:
+            fixed = rtl_code.replace("\nendmodule", "endmodule")
+        return {
+            "rtl_code": fixed,
+            "testbench_code": tb_code,
+            "fix_summary": "oscillation test fix",
+            "fix_type": "test",
+        }
+
+    llm_service.OfflineProvider.fix_design = _alternating_fix
+    try:
+        sim = IcarusSimulator(workspace=str(tmp_path))
+        resp = run_pipeline("Design a buggy 4-bit counter", "d7", sim, max_iterations=5)
+        # Must NOT have burned all 5 iterations — should have stopped early.
+        assert resp.iterations < 5, f"Loop ran {resp.iterations} times; oscillation guard failed"
+        # The last history entry should indicate the guard fired.
+        last = resp.iteration_history[-1]
+        assert "oscillation" in last.fix_summary.lower() or last.fix_summary == "oscillation"
+    finally:
+        llm_service.OfflineProvider.fix_design = _orig_fix

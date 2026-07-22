@@ -8,10 +8,14 @@ The agentic pipeline.
 stream progress over SSE (this drives the live AI-agent panel). `run_pipeline`
 consumes those events and returns a complete RunResponse for the one-shot route.
 
-A no-progress guard stops the loop if a fix returns code identical to the
-previous iteration (prevents burning iterations on a stuck model).
+No-progress guard:
+  - Content hashing (not exact string equality) detects identical RTL/TB
+    regardless of whitespace changes.
+  - Oscillation detection: if an RTL hash we have already seen reappears,
+    the loop stops immediately to prevent thrashing.
 """
 
+import hashlib
 from typing import Iterator, Optional
 
 import llm_service
@@ -76,6 +80,9 @@ def pipeline_events(
            "message": _sim_message(0, result), "result": result.model_dump()}
 
     iteration = 0
+    seen_rtl_hashes: set[str] = set()
+    seen_rtl_hashes.add(hashlib.sha256(rtl_code.encode()).hexdigest())
+
     while self_correct and result.status in ("FAIL", "ERROR") and iteration < max_iterations:
         iteration += 1
         yield {"stage": "fixing", "iteration": iteration,
@@ -83,12 +90,22 @@ def pipeline_events(
 
         fix = llm_service.fix_design(rtl_code, tb_code, result.log_excerpt, model=model)
         new_rtl, new_tb = fix["rtl_code"], fix["testbench_code"]
+        new_rtl_hash = hashlib.sha256(new_rtl.encode()).hexdigest()
 
-        if new_rtl == rtl_code and new_tb == tb_code:
+        # No-progress guard: no change at all.
+        if new_rtl_hash == hashlib.sha256(rtl_code.encode()).hexdigest():
             yield {"stage": "fix", "iteration": iteration,
                    "message": "Model returned no change; stopping the loop.", "fix_summary": "no-op"}
             break
 
+        # Oscillation guard: we have seen this RTL before.
+        if new_rtl_hash in seen_rtl_hashes:
+            yield {"stage": "fix", "iteration": iteration,
+                   "message": "Oscillation detected (repeated RTL); stopping the loop.",
+                   "fix_summary": "oscillation"}
+            break
+
+        seen_rtl_hashes.add(new_rtl_hash)
         rtl_code, tb_code = new_rtl, new_tb
         yield {"stage": "fix", "iteration": iteration, "message": fix["fix_summary"],
                "fix_summary": fix["fix_summary"], "fix_type": fix.get("fix_type", ""),
