@@ -1,0 +1,28 @@
+# Python
+backend/venv/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+
+# Secrets
+backend/.env
+.env
+
+# Simulation artifacts
+backend/workspace/
+backend/test_workspace/
+**/*.vvp
+**/*.vcd
+
+# Node / Vite
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Editor / OS
+.DS_Store
+.vscode/
+.idea/
+
+# TS build info
+frontend/tsconfig.tsbuildinfo

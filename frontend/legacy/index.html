@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI-Driven EDA Playground</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+    <!-- FontAwesome for icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Header -->
+        <header class="navbar">
+            <div class="logo">
+                <i class="fa-solid fa-microchip"></i>
+                <span>Antigravity EDA</span>
+            </div>
+            <div class="nav-actions">
+                <button class="btn btn-secondary"><i class="fa-solid fa-upload"></i> Upload Code</button>
+                <button class="btn btn-primary"><i class="fa-solid fa-play"></i> Run Sim</button>
+            </div>
+        </header>
+
+        <!-- Main Layout -->
+        <main class="workspace">
+            
+            <!-- Left Sidebar: Configuration & Prompt -->
+            <aside class="left-panel glass-panel">
+                <div class="panel-header">
+                    <h3><i class="fa-solid fa-wand-magic-sparkles"></i> Design Prompt</h3>
+                </div>
+                <div class="panel-content">
+                    <div class="input-group">
+                        <label>Natural Language Requirement</label>
+                        <textarea id="prompt-input" placeholder="e.g., Design a 4-bit ALU with add, sub, and, or, xor operations with overflow detection..."></textarea>
+                    </div>
+                    <div class="options-group">
+                        <label>Target Frequency</label>
+                        <input type="range" min="10" max="500" value="100" class="slider">
+                        <span class="slider-val">100 MHz</span>
+                    </div>
+                    <button class="btn btn-primary btn-block" id="generate-btn">
+                        <span>Generate RTL</span> <i class="fa-solid fa-arrow-right"></i>
+                    </button>
+                </div>
+            </aside>
+
+            <!-- Center Content: Code Editors & Results -->
+            <section class="center-panel">
+                
+                <!-- Code Editor Split -->
+                <div class="editor-pane glass-panel">
+                    <div class="tabs editor-tabs">
+                        <button class="tab active" data-target="rtl-editor"><i class="fa-solid fa-code"></i> design.v</button>
+                        <button class="tab" data-target="tb-editor"><i class="fa-solid fa-flask"></i> tb_design.sv</button>
+                    </div>
+                    <div class="tab-content">
+                        <div class="code-container" id="rtl-editor">
+<pre><code><span class="keyword">module</span> alu_4bit #(
+    <span class="keyword">parameter</span> WIDTH = 4
+)(
+    <span class="keyword">input</span>  [WIDTH-1:0] a,
+    <span class="keyword">input</span>  [WIDTH-1:0] b,
+    <span class="keyword">input</span>  [2:0]       opcode,
+    <span class="keyword">output</span> <span class="keyword">reg</span> [WIDTH-1:0] result,
+    <span class="keyword">output</span> <span class="keyword">reg</span>         overflow
+);
+    
+    <span class="keyword">always_comb</span> <span class="keyword">begin</span>
+        <span class="comment">// Wait for AI generation</span>
+    <span class="keyword">end</span>
+<span class="keyword">endmodule</span></code></pre>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Results & Waveform Split -->
+                <div class="results-pane glass-panel">
+                    <div class="tabs results-tabs">
+                        <button class="tab active" data-target="waveform-tab"><i class="fa-solid fa-chart-line"></i> Waveform</button>
+                        <button class="tab" data-target="results-tab"><i class="fa-solid fa-square-check"></i> Results</button>
+                        <button class="tab" data-target="schematic-tab"><i class="fa-solid fa-project-diagram"></i> Schematic</button>
+                    </div>
+                    <div class="tab-content" id="bottom-content">
+                        <!-- Waveform Mockup -->
+                         <div class="waveform-mock">
+                             <div class="signal">
+                                 <span class="sig-name">clk</span>
+                                 <div class="sig-wave clk"></div>
+                             </div>
+                             <div class="signal">
+                                 <span class="sig-name">reset</span>
+                                 <div class="sig-wave high"></div>
+                             </div>
+                             <div class="signal">
+                                 <span class="sig-name">a[3:0]</span>
+                                 <div class="sig-wave bus"><span>0xA</span></div>
+                             </div>
+                             <div class="signal">
+                                 <span class="sig-name">b[3:0]</span>
+                                 <div class="sig-wave bus"><span>0x5</span></div>
+                             </div>
+                         </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Right Sidebar: AI Agent Chat / Debugger -->
+            <aside class="right-panel glass-panel">
+                <div class="panel-header">
+                    <h3><i class="fa-regular fa-comments"></i> AI Agent</h3>
+                    <span class="status-indicator online"></span>
+                </div>
+                <div class="chat-container">
+                    <div class="chat-messages">
+                        <div class="message ai-msg">
+                            <div class="msg-avatar"><i class="fa-solid fa-robot"></i></div>
+                            <div class="msg-bubble">
+                                <p>Ready. Describe your hardware requirement, and I will generate the RTL module, testbench, and run tests automatically.</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="chat-input-area">
+                        <input type="text" placeholder="Ask AI a question or request changes...">
+                        <button class="icon-btn"><i class="fa-solid fa-paper-plane"></i></button>
+                    </div>
+                </div>
+            </aside>
+        </main>
+    </div>
+    <script src="app.js"></script>
+</body>
+</html>
