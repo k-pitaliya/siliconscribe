@@ -39,36 +39,7 @@ def test_stream_endpoint_emits_done():
     assert '"stage": "intent"' in text
 
 
-def test_artifact_path_traversal_blocked():
-    # Disallowed filename
-    r = client.get("/api/artifacts/abcd1234/../../../etc/passwd")
-    assert r.status_code in (400, 404)
-    # Disallowed via filename allowlist
-    r2 = client.get("/api/artifacts/abcd1234/secret.txt")
-    assert r2.status_code == 400
-
-
-def test_invalid_design_id_rejected():
-    r = client.get("/api/artifacts/..%2f..%2fetc/design.vcd")
-    assert r.status_code in (400, 404)
-
-
 # --- Security regression tests ---
-
-
-def test_design_id_length_cap():
-    """Regression: design IDs longer than 64 chars must be rejected."""
-    long_id = "a" * 65
-    r = client.get(f"/api/artifacts/{long_id}/design.vcd")
-    assert r.status_code == 400
-    assert "too long" in r.json()["detail"].lower()
-
-
-def test_design_id_special_chars_rejected():
-    """Regression: design IDs with path traversal chars must be rejected."""
-    for bad_id in ["abc..etc..passwd", "abc;rm -rf", "abc%00null"]:
-        r = client.get(f"/api/artifacts/{bad_id}/design.vcd")
-        assert r.status_code == 400, f"Expected 400 for id={bad_id!r}, got {r.status_code}"
 
 
 def test_rate_limit_enforced():

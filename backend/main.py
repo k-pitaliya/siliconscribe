@@ -1,5 +1,4 @@
 import json
-import os
 import time
 import uuid
 from collections import defaultdict
@@ -12,10 +11,8 @@ import llm_service
 from orchestrator import pipeline_events, run_pipeline
 from simulator import IcarusSimulator, VCD_FILENAME, LOG_FILENAME
 from coverage import compute_coverage
-from schematic import build_schematic
 from vcd_parser import parse_vcd
 from models import (
-    GenerateRequest, GenerateResponse,
     SimulationRequest, SimulationResult,
     RunRequest, RunResponse,
 )
@@ -53,8 +50,6 @@ app.add_middleware(
 
 WORKSPACE = "./workspace"
 simulator = IcarusSimulator(workspace=WORKSPACE)
-
-ALLOWED_ARTIFACTS = {VCD_FILENAME, LOG_FILENAME}
 
 
 def _new_design_id() -> str:
@@ -126,24 +121,6 @@ async def design_stream(request: RunRequest, req: Request):
     )
 
 
-@app.post("/api/design/generate", response_model=GenerateResponse)
-async def generate_design(request: GenerateRequest, req: Request):
-    """Generate RTL + testbench + explanation only (no simulation)."""
-    _check_rate_limit(req.client.host if req.client else "unknown")
-    try:
-        design_id = _new_design_id()
-        spec = llm_service.parse_intent(request.prompt, model=request.model)
-        rtl_code = llm_service.generate_rtl(spec, request.target_frequency_mhz, model=request.model)
-        tb_code = llm_service.generate_testbench(rtl_code, spec, model=request.model) if request.include_testbench else None
-        explanation = llm_service.explain_design(rtl_code, spec, model=request.model)
-        return GenerateResponse(
-            design_id=design_id, rtl_spec=spec, rtl_code=rtl_code,
-            testbench_code=tb_code, explanation=explanation,
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
 @app.post("/api/simulation/run", response_model=SimulationResult)
 async def run_simulation(request: SimulationRequest):
     """Simulate a (possibly hand-edited) RTL/testbench pair once. No auto-fix."""
@@ -158,44 +135,6 @@ async def run_simulation(request: SimulationRequest):
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/api/simulation/{design_id}/waveform")
-async def get_waveform(design_id: str):
-    """Return parsed VCD JSON for a previously-simulated design."""
-    vcd = (simulator.workspace / _safe_id(design_id) / VCD_FILENAME)
-    waveform = parse_vcd(vcd)
-    if waveform is None:
-        raise HTTPException(status_code=404, detail="No waveform for this design")
-    return waveform
-
-
-@app.get("/api/artifacts/{design_id}/{filename}")
-async def get_artifact(design_id: str, filename: str):
-    """Download a simulation artifact (VCD or transcript). Path-traversal safe."""
-    if filename not in ALLOWED_ARTIFACTS:
-        raise HTTPException(status_code=400, detail="Artifact not allowed")
-
-    workspace_root = simulator.workspace
-    file_path = (workspace_root / _safe_id(design_id) / filename).resolve()
-
-    # Confine strictly within the workspace.
-    if not str(file_path).startswith(str(workspace_root)) or not file_path.exists():
-        raise HTTPException(status_code=404, detail="Artifact not found")
-
-    return FileResponse(file_path)
-
-
-def _safe_id(design_id: str) -> str:
-    """Reject anything that isn't a plain id segment."""
-    if len(design_id) > 64:
-        raise HTTPException(status_code=400, detail="Design id too long")
-    if not design_id.isalnum() and "_" not in design_id:
-        raise HTTPException(status_code=400, detail="Invalid design id")
-    cleaned = "".join(c for c in design_id if c.isalnum() or c == "_")
-    if cleaned != design_id:
-        raise HTTPException(status_code=400, detail="Invalid design id")
-    return cleaned
 
 
 if __name__ == "__main__":
