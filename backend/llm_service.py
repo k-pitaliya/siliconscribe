@@ -193,6 +193,7 @@ class OpenAIProvider:
             "rtl_code": _strip_code_fence(data.get("rtl_code", rtl_code)),
             "testbench_code": _strip_code_fence(data.get("testbench_code", tb_code)),
             "fix_summary": data.get("fix_summary", "Applied a fix."),
+            "fix_type": "llm_diagnosis",
         }
 
 
@@ -233,7 +234,8 @@ class OfflineProvider:
         return {
             "rtl_code": golden,
             "testbench_code": tb_code,
-            "fix_summary": "Replaced the faulty RTL with a corrected implementation.",
+            "fix_summary": "Offline scripted fix: replaced with known-correct implementation.",
+            "fix_type": "offline_scripted",
         }
 
     # set by select_provider wrapper per-request

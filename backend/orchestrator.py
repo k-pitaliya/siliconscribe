@@ -81,13 +81,15 @@ def pipeline_events(
 
         rtl_code, tb_code = new_rtl, new_tb
         yield {"stage": "fix", "iteration": iteration, "message": fix["fix_summary"],
-               "fix_summary": fix["fix_summary"], "rtl_code": rtl_code, "testbench_code": tb_code}
+               "fix_summary": fix["fix_summary"], "fix_type": fix.get("fix_type", ""),
+               "rtl_code": rtl_code, "testbench_code": tb_code}
 
         result = simulator.simulate(f"{design_id}", rtl_code, tb_code, timeout=timeout_seconds)
         history.append(IterationRecord(iteration=iteration, status=result.status,
-                                       fix_summary=fix["fix_summary"],
-                                       pass_count=result.pass_count, fail_count=result.fail_count,
-                                       log_excerpt=result.log_excerpt[-1200:]))
+                                        fix_summary=fix["fix_summary"],
+                                        fix_type=fix.get("fix_type", ""),
+                                        pass_count=result.pass_count, fail_count=result.fail_count,
+                                        log_excerpt=result.log_excerpt[-1200:]))
         yield {"stage": "simulate", "iteration": iteration, "status": result.status,
                "message": _sim_message(iteration, result), "result": result.model_dump()}
 

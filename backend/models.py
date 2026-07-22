@@ -71,6 +71,7 @@ class IterationRecord(BaseModel):
     iteration: int
     status: str
     fix_summary: str = ""
+    fix_type: str = ""
     pass_count: int = 0
     fail_count: int = 0
     log_excerpt: str = ""
