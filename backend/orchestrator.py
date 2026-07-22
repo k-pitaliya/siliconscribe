@@ -41,8 +41,18 @@ def pipeline_events(
 
     # 1. Intent
     spec: RTLDesignSpec = llm_service.parse_intent(prompt, model=model)
+
+    # Check for offline fallback disclosure
+    fallback_notice = None
+    provider = llm_service.get_provider()
+    if hasattr(provider, "_last_exact") and not provider._last_exact:
+        fallback_notice = (
+            "Your request did not match a built-in offline design. "
+            "Showing a representative counter design as a demo."
+        )
+
     yield {"stage": "intent", "message": f"Identified module '{spec.module_name}' with {len(spec.ports)} ports.",
-           "rtl_spec": spec.model_dump()}
+           "rtl_spec": spec.model_dump(), "fallback_notice": fallback_notice}
 
     # 2. RTL
     rtl_code = llm_service.generate_rtl(spec, target_frequency_mhz, model=model)

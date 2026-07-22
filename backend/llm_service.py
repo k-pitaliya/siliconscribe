@@ -202,9 +202,11 @@ class OfflineProvider:
 
     def __init__(self):
         self._last_key: Optional[str] = None
+        self._last_exact: bool = False
 
     def parse_intent(self, prompt: str, model: Optional[str] = None) -> RTLDesignSpec:
         self._last_key = od.match_design(prompt)
+        self._last_exact = od.is_exact_match(prompt)
         return RTLDesignSpec(**od.get_design(self._last_key)["spec"])
 
     def generate_rtl(self, spec: RTLDesignSpec, freq_hint: Optional[int],
@@ -225,7 +227,13 @@ class OfflineProvider:
     def explain_design(self, rtl_code: str, spec: RTLDesignSpec,
                        model: Optional[str] = None) -> str:
         key = od.design_key_from_rtl(rtl_code) or self._last_key or "counter"
-        return od.get_design(key)["explanation"]
+        base = od.get_design(key)["explanation"]
+        if not self._last_exact:
+            base = (
+                f"[Offline demo] Your request was not an exact match for a built-in "
+                f"design. Showing a representative counter design instead. {base}"
+            )
+        return base
 
     def fix_design(self, rtl_code: str, tb_code: str, log: str,
                    model: Optional[str] = None) -> dict:

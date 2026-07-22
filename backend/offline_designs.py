@@ -348,6 +348,15 @@ def match_design(prompt: str) -> str:
     return "counter"  # sensible default that exercises sequential logic
 
 
+def is_exact_match(prompt: str) -> bool:
+    """Return True if the prompt matched a known design keyword, False on fallback."""
+    p = prompt.lower()
+    for _key, words in _KEYWORDS:
+        if any(w in p for w in words):
+            return True
+    return False
+
+
 def is_buggy_request(prompt: str) -> bool:
     return "buggy" in prompt.lower() or "with a bug" in prompt.lower()
 

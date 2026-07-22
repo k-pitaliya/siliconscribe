@@ -52,3 +52,32 @@ def test_self_correction_uses_offline_scripted_fix(tmp_path):
 
     # Verify the fix summary explicitly discloses scripted nature.
     assert "scripted" in fix_records[0].fix_summary.lower() or "known-correct" in fix_records[0].fix_summary.lower()
+
+
+@needs_iverilog
+def test_offline_fallback_disclosure(tmp_path):
+    """Regression: an unrecognized prompt must disclose the fallback to the user."""
+    sim = IcarusSimulator(workspace=str(tmp_path))
+    # This prompt does NOT match any built-in keyword.
+    events = list(pipeline_events(
+        "Design a UART transmitter with baud rate generator", "d5", sim, max_iterations=1
+    ))
+    intent_evt = next(e for e in events if e["stage"] == "intent")
+    notice = intent_evt.get("fallback_notice")
+    assert notice is not None, "fallback_notice must be set for unrecognized prompts"
+    assert "counter" in notice.lower() or "representative" in notice.lower()
+
+    # The explanation should also contain the disclosure.
+    expl_evt = next(e for e in events if e["stage"] == "explanation")
+    assert "offline" in expl_evt["explanation"].lower() or "representative" in expl_evt["explanation"].lower()
+
+
+@needs_iverilog
+def test_exact_match_no_fallback(tmp_path):
+    """Regression: a recognized prompt must NOT produce a fallback notice."""
+    sim = IcarusSimulator(workspace=str(tmp_path))
+    events = list(pipeline_events(
+        "Design a 4-bit ALU with add sub and or xor", "d6", sim, max_iterations=1
+    ))
+    intent_evt = next(e for e in events if e["stage"] == "intent")
+    assert intent_evt.get("fallback_notice") is None, "Recognized prompt should not have fallback_notice"
