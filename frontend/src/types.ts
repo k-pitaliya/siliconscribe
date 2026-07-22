@@ -65,6 +65,9 @@ export interface Waveform {
   timescale: string
   end_time: number
   signals: WaveformSignal[]
+  truncated: boolean
+  dropped_signals: number
+  changes_truncated: boolean
 }
 
 export interface SchematicPort {
@@ -115,6 +118,8 @@ export interface StreamEvent {
   testbench_code?: string
   explanation?: string
   fix_summary?: string
+  fix_type?: string
+  fallback_notice?: string
   result?: SimulationResult
   response?: RunResponse
 }

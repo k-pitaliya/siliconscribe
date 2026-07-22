@@ -87,6 +87,9 @@ class Waveform(BaseModel):
     timescale: str = "1ns"
     end_time: int = 0
     signals: List[WaveformSignal] = Field(default_factory=list)
+    truncated: bool = False
+    dropped_signals: int = 0
+    changes_truncated: bool = False
 
 
 class SchematicPort(BaseModel):

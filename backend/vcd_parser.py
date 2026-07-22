@@ -71,14 +71,17 @@ def parse_vcd(vcd_path: str | Path, max_signals: int = MAX_SIGNALS) -> Optional[
     # Walk the value-change section.
     current_time = 0
     end_time = 0
+    changes_truncated = False
     body_start = text.find("$enddefinitions")
     body = text[body_start:] if body_start != -1 else text
 
     def record(code: str, value: str):
+        nonlocal changes_truncated
         sig = code_to_sig.get(code)
         if sig is None:
             return
         if len(sig["wave"]) >= MAX_CHANGES_PER_SIGNAL:
+            changes_truncated = True
             return
         sig["wave"].append({"t": current_time, "v": value})
 
@@ -108,10 +111,18 @@ def parse_vcd(vcd_path: str | Path, max_signals: int = MAX_SIGNALS) -> Optional[
             if len(parts) == 2:
                 record(parts[1], parts[0])
 
+    total_sigs = len(code_to_sig)
     signals = []
     for sig in code_to_sig.values():
         signals.append(WaveformSignal(name=sig["name"], width=sig["width"], wave=sig["wave"]))
         if len(signals) >= max_signals:
             break
 
-    return Waveform(timescale=timescale, end_time=end_time, signals=signals)
+    dropped_signals = max(0, total_sigs - max_signals)
+    truncated = dropped_signals > 0 or changes_truncated
+
+    return Waveform(
+        timescale=timescale, end_time=end_time, signals=signals,
+        truncated=truncated, dropped_signals=dropped_signals,
+        changes_truncated=changes_truncated,
+    )

@@ -49,3 +49,39 @@ def test_parse_real_vcd(tmp_path):
     wf = parse_vcd(r.waveform_file)
     assert wf is not None and len(wf.signals) > 0
     assert any(s.name == "clk" for s in wf.signals)
+
+
+def test_parse_synthetic_vcd_no_truncation(tmp_path):
+    """Regression: a small VCD must report truncated=False."""
+    vcd = tmp_path / "small.vcd"
+    vcd.write_text(
+        "$timescale 1ns $end\n"
+        "$var wire 1 ! clk $end\n"
+        "$enddefinitions $end\n"
+        "#0\n0!\n#5\n1!\n"
+    )
+    wf = parse_vcd(vcd)
+    assert wf is not None
+    assert wf.truncated is False
+    assert wf.dropped_signals == 0
+    assert wf.changes_truncated is False
+
+
+def test_parse_vcd_truncation_fields(tmp_path):
+    """Regression: VCD parser must populate truncation metadata."""
+    from vcd_parser import MAX_SIGNALS
+    # Build a VCD with more signals than MAX_SIGNALS.
+    lines = ["$timescale 1ns $end\n"]
+    for i in range(MAX_SIGNALS + 5):
+        lines.append(f"$var wire 1 {chr(33 + i)} sig{i} $end\n")
+    lines.append("$enddefinitions $end\n")
+    lines.append("#0\n")
+    for i in range(MAX_SIGNALS + 5):
+        lines.append(f"0{chr(33 + i)}\n")
+    vcd = tmp_path / "big.vcd"
+    vcd.write_text("\n".join(lines))
+    wf = parse_vcd(vcd)
+    assert wf is not None
+    assert wf.truncated is True
+    assert wf.dropped_signals == 5
+    assert len(wf.signals) == MAX_SIGNALS

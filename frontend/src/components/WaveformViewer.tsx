@@ -22,6 +22,18 @@ export default function WaveformViewer({ waveform }: { waveform: Waveform | null
       <div className="waveform-meta">
         timescale {waveform.timescale} · {end} time units · {rows.length} signals
       </div>
+      {waveform.truncated && (
+        <div className="waveform-truncation-notice" style={{
+          padding: '6px 12px', marginBottom: 8, borderRadius: 4,
+          background: '#fef3cd', color: '#856404', fontSize: 13,
+          border: '1px solid #ffc107',
+        }}>
+          {waveform.dropped_signals > 0 &&
+            `${waveform.dropped_signals} signal(s) hidden (max 40 shown). `}
+          {waveform.changes_truncated &&
+            'Some signals have value changes truncated (max 2000 per signal).'}
+        </div>
+      )}
       <svg
         className="waveform-svg"
         viewBox={`0 0 ${LABEL_W + PLOT_W + 20} ${height}`}
