@@ -1,8 +1,10 @@
 import json
 import os
+import time
 import uuid
+from collections import defaultdict
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse
 
@@ -17,6 +19,24 @@ from models import (
     SimulationRequest, SimulationResult,
     RunRequest, RunResponse,
 )
+
+# --- Simple in-memory rate limiter (per-IP, sliding window) ---
+RATE_LIMIT_WINDOW = 60        # seconds
+RATE_LIMIT_MAX_REQUESTS = 20  # per window
+
+_rate_log: dict[str, list[float]] = defaultdict(list)
+
+
+def _check_rate_limit(ip: str):
+    now = time.time()
+    cutoff = now - RATE_LIMIT_WINDOW
+    _rate_log[ip] = [t for t in _rate_log[ip] if t > cutoff]
+    if len(_rate_log[ip]) >= RATE_LIMIT_MAX_REQUESTS:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Rate limit exceeded. Max {RATE_LIMIT_MAX_REQUESTS} requests per {RATE_LIMIT_WINDOW}s.",
+        )
+    _rate_log[ip].append(now)
 
 app = FastAPI(title="SiliconScribe API", version="1.0.0")
 
@@ -59,8 +79,9 @@ async def get_models():
 
 
 @app.post("/api/design/run", response_model=RunResponse)
-async def design_run(request: RunRequest):
+async def design_run(request: RunRequest, req: Request):
     """One-shot: generate -> simulate -> self-correct. Returns everything."""
+    _check_rate_limit(req.client.host if req.client else "unknown")
     try:
         return run_pipeline(
             prompt=request.prompt,
@@ -77,8 +98,9 @@ async def design_run(request: RunRequest):
 
 
 @app.post("/api/design/stream")
-async def design_stream(request: RunRequest):
+async def design_stream(request: RunRequest, req: Request):
     """Server-Sent Events stream of each pipeline stage (drives the agent panel)."""
+    _check_rate_limit(req.client.host if req.client else "unknown")
     design_id = _new_design_id()
 
     def event_source():
@@ -105,8 +127,9 @@ async def design_stream(request: RunRequest):
 
 
 @app.post("/api/design/generate", response_model=GenerateResponse)
-async def generate_design(request: GenerateRequest):
+async def generate_design(request: GenerateRequest, req: Request):
     """Generate RTL + testbench + explanation only (no simulation)."""
+    _check_rate_limit(req.client.host if req.client else "unknown")
     try:
         design_id = _new_design_id()
         spec = llm_service.parse_intent(request.prompt, model=request.model)
@@ -165,6 +188,8 @@ async def get_artifact(design_id: str, filename: str):
 
 def _safe_id(design_id: str) -> str:
     """Reject anything that isn't a plain id segment."""
+    if len(design_id) > 64:
+        raise HTTPException(status_code=400, detail="Design id too long")
     if not design_id.isalnum() and "_" not in design_id:
         raise HTTPException(status_code=400, detail="Invalid design id")
     cleaned = "".join(c for c in design_id if c.isalnum() or c == "_")

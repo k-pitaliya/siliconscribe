@@ -51,3 +51,44 @@ def test_artifact_path_traversal_blocked():
 def test_invalid_design_id_rejected():
     r = client.get("/api/artifacts/..%2f..%2fetc/design.vcd")
     assert r.status_code in (400, 404)
+
+
+# --- Security regression tests ---
+
+
+def test_design_id_length_cap():
+    """Regression: design IDs longer than 64 chars must be rejected."""
+    long_id = "a" * 65
+    r = client.get(f"/api/artifacts/{long_id}/design.vcd")
+    assert r.status_code == 400
+    assert "too long" in r.json()["detail"].lower()
+
+
+def test_design_id_special_chars_rejected():
+    """Regression: design IDs with path traversal chars must be rejected."""
+    for bad_id in ["abc..etc..passwd", "abc;rm -rf", "abc%00null"]:
+        r = client.get(f"/api/artifacts/{bad_id}/design.vcd")
+        assert r.status_code == 400, f"Expected 400 for id={bad_id!r}, got {r.status_code}"
+
+
+def test_rate_limit_enforced():
+    """Regression: exceeding rate limit must return 429."""
+    # Temporarily lower the limit for this test.
+    old_max = main.RATE_LIMIT_MAX_REQUESTS
+    old_window = main.RATE_LIMIT_WINDOW
+    main.RATE_LIMIT_MAX_REQUESTS = 3
+    main.RATE_LIMIT_WINDOW = 60
+    try:
+        ip = "test_rate_limit_client"
+        main._rate_log[ip] = []
+        for _ in range(3):
+            client.post("/api/design/run",
+                        json={"prompt": "Design a counter", "max_iterations": 1})
+        r = client.post("/api/design/run",
+                        json={"prompt": "Design a counter", "max_iterations": 1})
+        assert r.status_code == 429
+        assert "rate limit" in r.json()["detail"].lower()
+    finally:
+        main.RATE_LIMIT_MAX_REQUESTS = old_max
+        main.RATE_LIMIT_WINDOW = old_window
+        main._rate_log.pop("test_rate_limit_client", None)
