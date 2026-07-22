@@ -26,3 +26,6 @@ frontend/.vite/
 
 # TS build info
 frontend/tsconfig.tsbuildinfo
+
+# Docker
+docker-compose.override.yml

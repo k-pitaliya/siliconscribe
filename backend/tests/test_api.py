@@ -19,6 +19,14 @@ def test_root_reports_offline():
     assert body["provider"] == "offline"
 
 
+def test_health_endpoint():
+    r = client.get("/health")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] == "ok"
+    assert "simulator" in body
+
+
 @needs_iverilog
 def test_design_run_endpoint():
     r = client.post("/api/design/run", json={"prompt": "Design a 4-bit ALU", "max_iterations": 2})

@@ -1,4 +1,5 @@
 import json
+import logging
 import time
 import uuid
 from collections import defaultdict
@@ -16,6 +17,13 @@ from models import (
     SimulationRequest, SimulationResult,
     RunRequest, RunResponse,
 )
+
+# --- Structured logging ---
+logging.basicConfig(
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    level=logging.INFO,
+)
+logger = logging.getLogger("siliconscribe")
 
 # --- Simple in-memory rate limiter (per-IP, sliding window) ---
 RATE_LIMIT_WINDOW = 60        # seconds
@@ -67,6 +75,12 @@ async def root():
     }
 
 
+@app.get("/health")
+async def health():
+    """Health check endpoint for Docker/CI probes."""
+    return {"status": "ok", "simulator": simulator.available()}
+
+
 @app.get("/api/models")
 async def get_models():
     """List the models the user can choose for generation (empty when offline)."""
@@ -77,10 +91,12 @@ async def get_models():
 async def design_run(request: RunRequest, req: Request):
     """One-shot: generate -> simulate -> self-correct. Returns everything."""
     _check_rate_limit(req.client.host if req.client else "unknown")
+    design_id = _new_design_id()
+    logger.info("design_run id=%s prompt=%s", design_id, request.prompt[:80])
     try:
-        return run_pipeline(
+        result = run_pipeline(
             prompt=request.prompt,
-            design_id=_new_design_id(),
+            design_id=design_id,
             simulator=simulator,
             target_frequency_mhz=request.target_frequency_mhz,
             self_correct=request.self_correct,
@@ -88,7 +104,10 @@ async def design_run(request: RunRequest, req: Request):
             timeout_seconds=request.timeout_seconds,
             model=request.model,
         )
+        logger.info("design_run id=%s status=%s iterations=%s", design_id, result.status, result.iterations)
+        return result
     except Exception as e:
+        logger.exception("design_run id=%s failed", design_id)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -97,6 +116,7 @@ async def design_stream(request: RunRequest, req: Request):
     """Server-Sent Events stream of each pipeline stage (drives the agent panel)."""
     _check_rate_limit(req.client.host if req.client else "unknown")
     design_id = _new_design_id()
+    logger.info("design_stream id=%s prompt=%s", design_id, request.prompt[:80])
 
     def event_source():
         try:
@@ -112,6 +132,7 @@ async def design_stream(request: RunRequest, req: Request):
             ):
                 yield f"data: {json.dumps(event)}\n\n"
         except Exception as e:
+            logger.exception("design_stream id=%s error", design_id)
             yield f"data: {json.dumps({'stage': 'error', 'message': str(e)})}\n\n"
 
     return StreamingResponse(
@@ -124,6 +145,7 @@ async def design_stream(request: RunRequest, req: Request):
 @app.post("/api/simulation/run", response_model=SimulationResult)
 async def run_simulation(request: SimulationRequest):
     """Simulate a (possibly hand-edited) RTL/testbench pair once. No auto-fix."""
+    logger.info("run_simulation id=%s", request.design_id)
     try:
         result = simulator.simulate(
             design_id=request.design_id,
@@ -132,8 +154,10 @@ async def run_simulation(request: SimulationRequest):
             timeout=request.timeout_seconds,
         )
         result.coverage = compute_coverage(result)
+        logger.info("run_simulation id=%s status=%s", request.design_id, result.status)
         return result
     except Exception as e:
+        logger.exception("run_simulation id=%s failed", request.design_id)
         raise HTTPException(status_code=500, detail=str(e))
 
 
