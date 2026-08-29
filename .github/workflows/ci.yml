@@ -14,8 +14,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install iverilog
-        run: sudo apt-get update && sudo apt-get install -y iverilog
+      - name: Install iverilog + yosys
+        run: sudo apt-get update && sudo apt-get install -y iverilog yosys
       - name: Install dependencies
         run: |
           cd backend
@@ -30,6 +30,8 @@ jobs:
         run: |
           cd backend
           OFFLINE_MODE=1 venv/bin/python -m pytest tests/ -v
+          OFFLINE_MODE=1 venv/bin/python -c "from uvm_templates import generate_uvm_bundle; from models import RTLDesignSpec, PortSpec; s=RTLDesignSpec(module_name='alu_4bit', ports=[PortSpec(name='a',direction='input',width=4),PortSpec(name='b',direction='input',width=4),PortSpec(name='opcode',direction='input',width=3),PortSpec(name='result',direction='output',width=4)], behavior='alu', constraints=['Combinational']); b=generate_uvm_bundle(s); assert len(b)==16; print(f'UVM bundle {len(b)} files OK')"
+          OFFLINE_MODE=1 venv/bin/python -c "from fastapi.testclient import TestClient; import main; c=TestClient(main.app); r=c.post('/api/design/run', json={'prompt':'Design a 4-bit counter','max_iterations':1}); assert r.status_code==200 and r.json()['status']=='PASS'; print('E2E design/run PASS'); r=c.get('/api/projects'); assert r.status_code==200; print(f\"Projects {r.json()['total']}\")"
 
   frontend:
     runs-on: ubuntu-latest
