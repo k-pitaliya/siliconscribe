@@ -1,5 +1,10 @@
-from pydantic import BaseModel, Field
+import re
+
+from pydantic import BaseModel, Field, field_validator
 from typing import List, Optional, Literal
+
+# Shared design_id pattern for path-traversal hardening
+DESIGN_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{1,32}$")
 
 
 class PortSpec(BaseModel):
@@ -7,6 +12,21 @@ class PortSpec(BaseModel):
     direction: Literal["input", "output", "inout"] = Field(..., description="Port direction")
     width: int = Field(1, description="Bit width of the port")
     description: str = Field("", description="Brief description of the port")
+
+    @field_validator("width", mode="before")
+    @classmethod
+    def coerce_width(cls, v):
+        """Accept numeric strings, parameter names (WIDTH), or plain ints."""
+        if isinstance(v, int):
+            return v
+        if isinstance(v, str):
+            v = v.strip()
+            if v.isdigit():
+                return int(v)
+            # Parameterized width like "WIDTH" — default to 1 (the TB will
+            # instantiate with the module's default parameter).
+            return 1
+        return 1
 
 
 class ParameterSpec(BaseModel):
@@ -24,10 +44,10 @@ class RTLDesignSpec(BaseModel):
 
 
 class GenerateRequest(BaseModel):
-    prompt: str = Field(..., description="Natural language design prompt")
+    prompt: str = Field(..., max_length=2000, description="Natural language design prompt")
     include_testbench: bool = Field(True, description="Generate testbench along with RTL")
-    target_frequency_mhz: Optional[int] = Field(None, description="Target clock frequency hint")
-    model: Optional[str] = Field(None, description="Override LLM model for this request")
+    target_frequency_mhz: Optional[int] = Field(None, ge=1, le=10000, description="Target clock frequency hint")
+    model: Optional[str] = Field(None, max_length=100, description="Override LLM model for this request")
 
 
 class GenerateResponse(BaseModel):
@@ -60,10 +80,20 @@ class SimulationResult(BaseModel):
 
 
 class SimulationRequest(BaseModel):
-    design_id: str
-    rtl_code: str
-    testbench_code: str
-    timeout_seconds: int = Field(60, description="Simulation timeout")
+    design_id: str = Field(..., max_length=32, pattern=r"^[a-zA-Z0-9_-]{1,32}$", description="Design identifier")
+    rtl_code: str = Field(..., max_length=50000, description="RTL code")
+    testbench_code: str = Field(..., max_length=50000, description="Testbench code")
+    timeout_seconds: int = Field(60, ge=1, le=120, description="Simulation timeout")
+
+    @field_validator("design_id")
+    @classmethod
+    def validate_design_id(cls, v: str) -> str:
+        if not DESIGN_ID_RE.match(v):
+            raise ValueError("design_id must match ^[a-zA-Z0-9_-]{1,32}$")
+        # Redundant extra guard: disallow path separators even if regex changes
+        if "/" in v or "\\" in v or ".." in v:
+            raise ValueError("design_id contains illegal path characters")
+        return v
 
 
 class IterationRecord(BaseModel):
@@ -107,12 +137,12 @@ class Schematic(BaseModel):
 
 class RunRequest(BaseModel):
     """One-shot: natural language -> generate -> simulate -> self-correct."""
-    prompt: str = Field(..., description="Natural language design prompt")
-    target_frequency_mhz: Optional[int] = Field(None, description="Target clock frequency hint")
+    prompt: str = Field(..., max_length=2000, description="Natural language design prompt")
+    target_frequency_mhz: Optional[int] = Field(None, ge=1, le=10000, description="Target clock frequency hint")
     self_correct: bool = Field(True, description="Enable auto-fix loop")
-    max_iterations: int = Field(5, description="Max self-correction iterations")
-    timeout_seconds: int = Field(30, description="Per-simulation timeout")
-    model: Optional[str] = Field(None, description="Override LLM model for this run")
+    max_iterations: int = Field(5, ge=0, le=10, description="Max self-correction iterations")
+    timeout_seconds: int = Field(30, ge=1, le=120, description="Per-simulation timeout")
+    model: Optional[str] = Field(None, max_length=100, description="Override LLM model for this run")
 
 
 class RunResponse(BaseModel):
@@ -127,3 +157,17 @@ class RunResponse(BaseModel):
     iteration_history: List[IterationRecord] = Field(default_factory=list)
     waveform: Optional[Waveform] = None
     schematic: Optional[Schematic] = None
+    synthesis: Optional[dict] = None
+
+
+class SynthesisRequest(BaseModel):
+    """Request body for POST /api/synthesis/run."""
+    rtl_code: str = Field(..., max_length=100000, description="RTL Verilog/SystemVerilog code")
+    module_name: str = Field(..., max_length=64, pattern=r"^[A-Za-z_][A-Za-z0-9_]*$", description="Top module name")
+
+    @field_validator("module_name")
+    @classmethod
+    def validate_module_name(cls, v: str) -> str:
+        if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", v):
+            raise ValueError("module_name must be a valid Verilog identifier")
+        return v

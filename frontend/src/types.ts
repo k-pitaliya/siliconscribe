@@ -83,6 +83,20 @@ export interface Schematic {
   inouts: SchematicPort[]
 }
 
+export interface SynthesisInfo {
+  available: boolean
+  cell_count?: number
+  area_estimate?: number | string
+  error?: string
+}
+
+export interface LintInfo {
+  ok: boolean
+  errors: SimError[]
+  warnings: SimError[]
+  output?: string
+}
+
 export interface RunResponse {
   design_id: string
   rtl_spec: RTLDesignSpec
@@ -95,6 +109,7 @@ export interface RunResponse {
   iteration_history: IterationRecord[]
   waveform: Waveform | null
   schematic: Schematic | null
+  synthesis?: SynthesisInfo | null
 }
 
 /** A single SSE event emitted by /api/design/stream. */
@@ -108,11 +123,14 @@ export interface StreamEvent {
     | 'simulate'
     | 'fixing'
     | 'fix'
+    | 'lint'
+    | 'synthesis'
     | 'done'
     | 'error'
   message?: string
   iteration?: number
   status?: string
+  target?: string
   rtl_spec?: RTLDesignSpec
   rtl_code?: string
   testbench_code?: string
@@ -122,4 +140,6 @@ export interface StreamEvent {
   fallback_notice?: string
   result?: SimulationResult
   response?: RunResponse
+  synthesis?: SynthesisInfo
+  lint?: LintInfo
 }

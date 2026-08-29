@@ -9,7 +9,7 @@ RUN npm run build
 # ---- Backend + runtime ----
 FROM python:3.12-slim AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    iverilog ca-certificates && \
+    yosys iverilog ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

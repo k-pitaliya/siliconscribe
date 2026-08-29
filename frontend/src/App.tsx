@@ -6,10 +6,12 @@ import AgentChat, { type ChatMessage } from './components/AgentChat'
 import { getStatus, getModels, streamDesign, reSimulate } from './api'
 import type {
   IterationRecord,
+  LintInfo,
   ModelInfo,
   RunResponse,
   Schematic,
   SimulationResult,
+  SynthesisInfo,
   Waveform,
 } from './types'
 
@@ -28,7 +30,10 @@ export default function App() {
   const [waveform, setWaveform] = useState<Waveform | null>(null)
   const [schematic, setSchematic] = useState<Schematic | null>(null)
   const [history, setHistory] = useState<IterationRecord[]>([])
+  const [iterations, setIterations] = useState<number>(0)
   const [designId, setDesignId] = useState<string>('')
+  const [synthesis, setSynthesis] = useState<SynthesisInfo | null>(null)
+  const [lintInfo, setLintInfo] = useState<LintInfo | null>(null)
 
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
@@ -46,6 +51,7 @@ export default function App() {
       .then((m) => {
         setModels(m.models)
         setSelectedModel(m.current ?? m.models[0]?.id ?? '')
+        if (m.offline) setProvider((prev) => prev ?? { provider: 'offline', offline: true })
       })
       .catch(() => setModels([]))
   }, [])
@@ -59,6 +65,9 @@ export default function App() {
     setWaveform(null)
     setSchematic(null)
     setHistory([])
+    setIterations(0)
+    setSynthesis(null)
+    setLintInfo(null)
     pushMsg({ role: 'user', text: prompt })
 
     const ctrl = new AbortController()
@@ -75,7 +84,7 @@ export default function App() {
           model: selectedModel || undefined,
         },
         (e) => {
-          if (e.message && ['intent', 'rtl', 'testbench', 'explanation', 'simulate', 'fixing', 'fix', 'done', 'error'].includes(e.stage)) {
+          if (e.message && ['intent', 'rtl', 'testbench', 'explanation', 'simulate', 'fixing', 'fix', 'lint', 'synthesis', 'done', 'error'].includes(e.stage)) {
             pushMsg({ role: 'ai', text: e.message, stage: e.stage, status: e.status })
           }
           if (e.rtl_spec) setModuleName(e.rtl_spec.module_name)
@@ -83,6 +92,8 @@ export default function App() {
           if (e.testbench_code) setTb(e.testbench_code)
           if (e.explanation) setExplanation(e.explanation)
           if (e.result) setResult(e.result)
+          if (e.synthesis) setSynthesis(e.synthesis)
+          if (e.lint) setLintInfo(e.lint as LintInfo)
           if (e.stage === 'done' && e.response) {
             const r: RunResponse = e.response
             setRtl(r.rtl_code)
@@ -91,9 +102,11 @@ export default function App() {
             setWaveform(r.waveform)
             setSchematic(r.schematic)
             setHistory(r.iteration_history)
+            setIterations(r.iterations ?? (r.iteration_history.length > 0 ? Math.max(...r.iteration_history.map(h => h.iteration)) : 0))
             setDesignId(r.design_id)
             setExplanation(r.explanation)
             setModuleName(r.rtl_spec.module_name)
+            if (r.synthesis) setSynthesis(r.synthesis)
           }
         },
         ctrl.signal,
@@ -153,12 +166,12 @@ export default function App() {
             </span>
           )}
           {running ? (
-            <button className="btn btn-danger" onClick={handleCancel}>
-              <i className="fa-solid fa-stop" /> Stop
+            <button className="btn btn-danger" onClick={handleCancel} aria-label="Stop generation">
+              <i className="fa-solid fa-stop" aria-hidden="true" /> Stop
             </button>
           ) : (
-            <button className="btn btn-secondary" onClick={handleReRun} disabled={!rtl}>
-              <i className="fa-solid fa-rotate-right" /> Re-run
+            <button className="btn btn-secondary" onClick={handleReRun} disabled={!rtl} aria-label="Re-run simulation with edited code">
+              <i className="fa-solid fa-rotate-right" aria-hidden="true" /> Re-run
             </button>
           )}
         </div>
@@ -187,6 +200,9 @@ export default function App() {
             waveform={waveform}
             schematic={schematic}
             history={history}
+            iterations={iterations}
+            synthesis={synthesis}
+            lint={lintInfo}
           />
         </section>
 

@@ -10,6 +10,7 @@ backend/.env
 
 # Simulation artifacts
 backend/workspace/
+workspace/
 backend/test_workspace/
 **/*.vvp
 **/*.vcd

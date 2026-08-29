@@ -21,11 +21,26 @@ from models import SimulationResult, SimError
 VCD_FILENAME = "design.vcd"
 LOG_FILENAME = "transcript.log"
 
+# --- Hardening constants ---
+DESIGN_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{1,32}$")
+MAX_CODE_BYTES = 200 * 1024  # 200 KB
+
+
+def _validate_design_id(design_id: str) -> None:
+    """Validate design_id against strict allow-list; raise ValueError on violation."""
+    if not isinstance(design_id, str) or not DESIGN_ID_RE.match(design_id):
+        raise ValueError(f"Invalid design_id: {design_id!r} must match ^[a-zA-Z0-9_-]{{1,32}}$")
+    # Extra defense even though regex excludes these
+    if "/" in design_id or "\\" in design_id or ".." in design_id:
+        raise ValueError(f"Invalid design_id: {design_id!r} contains illegal path characters")
+
 
 def ensure_vcd_dump(testbench_code: str, top_module: str = "testbench") -> str:
     """Inject $dumpfile/$dumpvars into a testbench if it has none, so a VCD is
     always produced for the waveform viewer. Best-effort, idempotent."""
-    if "$dumpvars" in testbench_code:
+    # Idempotent: if either dump primitive exists (any variant), leave untouched
+    # to avoid double-injection or breaking a user-supplied dump configuration.
+    if "$dumpfile" in testbench_code or "$dumpvars" in testbench_code or "$dumpall" in testbench_code:
         return testbench_code
 
     dump_block = (
@@ -41,7 +56,8 @@ def ensure_vcd_dump(testbench_code: str, top_module: str = "testbench") -> str:
         idx = match.end()
         return testbench_code[:idx] + dump_block + testbench_code[idx:]
 
-    # Fallback: prepend (still compiles, dump just lives in its own scope).
+    # Fallback: append (still compiles; dump lives in its own scope).
+    # Use append rather than prepend to avoid breaking `timescale directives.
     return testbench_code + dump_block
 
 
@@ -71,14 +87,42 @@ class IcarusSimulator:
         return shutil.which("iverilog") is not None and shutil.which("vvp") is not None
 
     def _design_dir(self, design_id: str) -> Path:
+        _validate_design_id(design_id)
+        # Resolve and ensure is_relative_to workspace to block traversal (e.g. design_id crafted
+        # to escape via symlink or .. even if regex were bypassed)
         d = (self.workspace / design_id).resolve()
+        try:
+            # Python 3.9+: Path.is_relative_to
+            if not d.is_relative_to(self.workspace):
+                raise ValueError(f"Invalid design_id: {design_id!r} escapes workspace")
+        except AttributeError:
+            # Fallback for older Python: use relative_to with try
+            try:
+                d.relative_to(self.workspace)
+            except ValueError:
+                raise ValueError(f"Invalid design_id: {design_id!r} escapes workspace")
         d.mkdir(parents=True, exist_ok=True)
         return d
 
     def write_files(self, design_id: str, rtl_code: str, testbench_code: str) -> Tuple[Path, Path]:
+        # Input size guard: refuse unreasonably large payloads (200 KB each)
+        if len(rtl_code.encode("utf-8")) > MAX_CODE_BYTES:
+            raise ValueError(f"rtl_code exceeds {MAX_CODE_BYTES} bytes limit")
+        if len(testbench_code.encode("utf-8")) > MAX_CODE_BYTES:
+            raise ValueError(f"testbench_code exceeds {MAX_CODE_BYTES} bytes limit")
         design_dir = self._design_dir(design_id)
         rtl_file = design_dir / "design.sv"
         tb_file = design_dir / "testbench.sv"
+        # Ensure resolved file paths remain inside workspace (sanitize artifact paths)
+        for p in (rtl_file.resolve(), tb_file.resolve()):
+            try:
+                if not p.is_relative_to(self.workspace):
+                    raise ValueError(f"Artifact path escapes workspace: {p}")
+            except AttributeError:
+                try:
+                    p.relative_to(self.workspace)
+                except ValueError:
+                    raise ValueError(f"Artifact path escapes workspace: {p}")
         rtl_file.write_text(rtl_code)
         tb_file.write_text(ensure_vcd_dump(testbench_code))
         return rtl_file, tb_file
@@ -101,7 +145,13 @@ class IcarusSimulator:
         vvp_file = design_dir / f"{top_module}.vvp"
         vcd_file = design_dir / VCD_FILENAME
         log_file = design_dir / LOG_FILENAME
-        timeout = timeout or self.timeout_seconds
+        if timeout is None:
+            timeout = self.timeout_seconds
+        # Clamp to sane bounds even if called bypassing Pydantic validation
+        if not isinstance(timeout, int) or timeout < 1:
+            timeout = 1
+        if timeout > 120:
+            timeout = 120
 
         if not vvp_file.exists():
             return SimulationResult(status="ERROR", module_name="",
@@ -175,6 +225,17 @@ class IcarusSimulator:
 
     def simulate(self, design_id: str, rtl_code: str, testbench_code: str,
                  timeout: int = 60) -> SimulationResult:
+        _validate_design_id(design_id)
+        # Also ensure workspace containment before any file ops
+        resolved = (self.workspace / design_id).resolve()
+        try:
+            if not resolved.is_relative_to(self.workspace):
+                raise ValueError(f"Invalid design_id: {design_id!r} escapes workspace")
+        except AttributeError:
+            try:
+                resolved.relative_to(self.workspace)
+            except ValueError:
+                raise ValueError(f"Invalid design_id: {design_id!r} escapes workspace")
         rtl_file, tb_file = self.write_files(design_id, rtl_code, testbench_code)
         ok, compile_log = self.compile(rtl_file, tb_file)
         if not ok:

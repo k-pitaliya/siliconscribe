@@ -3,6 +3,7 @@ import logging
 import time
 import uuid
 from collections import defaultdict
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -16,7 +17,13 @@ from vcd_parser import parse_vcd
 from models import (
     SimulationRequest, SimulationResult,
     RunRequest, RunResponse,
+    SynthesisRequest,
 )
+
+try:
+    from cleanup import cleanup_old_workspaces
+except ImportError:
+    cleanup_old_workspaces = None  # type: ignore
 
 # --- Structured logging ---
 logging.basicConfig(
@@ -58,6 +65,44 @@ app.add_middleware(
 
 WORKSPACE = "./workspace"
 simulator = IcarusSimulator(workspace=WORKSPACE)
+
+# Workspace GC on startup (best-effort; do not fail boot if workspace missing)
+if cleanup_old_workspaces is not None:
+    try:
+        # Run eagerly at import so early tests also benefit, but also wire as startup event
+        cleanup_old_workspaces(WORKSPACE, ttl_hours=24)
+    except Exception:
+        logger.exception("startup cleanup failed")
+
+
+@app.on_event("startup")
+async def _startup_gc():
+    if cleanup_old_workspaces is not None:
+        try:
+            removed = cleanup_old_workspaces(WORKSPACE, ttl_hours=24)
+            logger.info("startup GC removed %d stale workspaces", removed)
+        except Exception:
+            logger.exception("startup GC failed")
+
+
+# Alternative lifespan handler for newer FastAPI (if on_event is deprecated)
+try:
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):  # type: ignore
+        if cleanup_old_workspaces is not None:
+            try:
+                cleanup_old_workspaces(WORKSPACE, ttl_hours=24)
+            except Exception:
+                logger.exception("lifespan cleanup failed")
+        yield
+
+    # Only assign if not already set; app.router.lifespan_context is newer API
+    if not getattr(app, "router", None) or not getattr(app.router, "lifespan_context", None):
+        pass  # keep existing on_event; lifespan wiring is optional
+except Exception:
+    pass
 
 
 def _new_design_id() -> str:
@@ -106,9 +151,11 @@ async def design_run(request: RunRequest, req: Request):
         )
         logger.info("design_run id=%s status=%s iterations=%s", design_id, result.status, result.iterations)
         return result
-    except Exception as e:
+    except HTTPException:
+        raise
+    except Exception:
         logger.exception("design_run id=%s failed", design_id)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.post("/api/design/stream")
@@ -131,9 +178,9 @@ async def design_stream(request: RunRequest, req: Request):
                 model=request.model,
             ):
                 yield f"data: {json.dumps(event)}\n\n"
-        except Exception as e:
+        except Exception:
             logger.exception("design_stream id=%s error", design_id)
-            yield f"data: {json.dumps({'stage': 'error', 'message': str(e)})}\n\n"
+            yield f"data: {json.dumps({'stage': 'error', 'message': 'Internal server error'})}\n\n"
 
     return StreamingResponse(
         event_source(),
@@ -143,8 +190,9 @@ async def design_stream(request: RunRequest, req: Request):
 
 
 @app.post("/api/simulation/run", response_model=SimulationResult)
-async def run_simulation(request: SimulationRequest):
+async def run_simulation(request: SimulationRequest, req: Request):
     """Simulate a (possibly hand-edited) RTL/testbench pair once. No auto-fix."""
+    _check_rate_limit(req.client.host if req.client else "unknown")
     logger.info("run_simulation id=%s", request.design_id)
     try:
         result = simulator.simulate(
@@ -153,12 +201,84 @@ async def run_simulation(request: SimulationRequest):
             testbench_code=request.testbench_code,
             timeout=request.timeout_seconds,
         )
+        # Sanitize artifact paths: ensure they are inside workspace before exposing
+        for attr in ("waveform_file", "transcript_file"):
+            val = getattr(result, attr, None)
+            if val:
+                try:
+                    p = Path(val).resolve()
+                    ws = Path(WORKSPACE).resolve()
+                    try:
+                        is_inside = p.is_relative_to(ws)
+                    except AttributeError:
+                        try:
+                            p.relative_to(ws)
+                            is_inside = True
+                        except ValueError:
+                            is_inside = False
+                    if not is_inside:
+                        logger.warning("sanitized artifact path outside workspace: %s", val)
+                        setattr(result, attr, None)
+                except Exception:
+                    setattr(result, attr, None)
         result.coverage = compute_coverage(result)
         logger.info("run_simulation id=%s status=%s", request.design_id, result.status)
         return result
-    except Exception as e:
+    except HTTPException:
+        raise
+    except Exception:
         logger.exception("run_simulation id=%s failed", request.design_id)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.post("/api/synthesis/run")
+async def run_synthesis(request: SynthesisRequest, req: Request):
+    """Synthesize RTL with Yosys (if available) and return gate-level metrics.
+
+    Graceful fallback: when ``yosys`` is not installed the endpoint returns
+    ``{"available": False}`` with HTTP 200 so offline mode never breaks.
+    """
+    _check_rate_limit(req.client.host if req.client else "unknown")
+    logger.info("run_synthesis module=%s len=%d", request.module_name, len(request.rtl_code))
+    try:
+        try:
+            from synthesis import YosysSynthesizer  # type: ignore
+        except Exception as e:
+            logger.warning("synthesis import failed: %s", e)
+            return {"available": False, "error": "synthesis module not available"}
+        # Use an isolated work dir per request to avoid collisions
+        work_dir = Path(WORKSPACE) / f"synth_{request.module_name}_{uuid.uuid4().hex[:6]}"
+        synthesizer = YosysSynthesizer(workspace=WORKSPACE)
+        result = synthesizer.synthesize(request.rtl_code, request.module_name, work_dir=work_dir)
+        logger.info("run_synthesis module=%s available=%s cell_count=%s", request.module_name, result.get("available"), result.get("cell_count"))
+        return result
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("run_synthesis failed")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.post("/api/admin/cleanup")
+async def admin_cleanup(request: Request, ttl_hours: int = 24):
+    """Admin: remove workspace dirs older than TTL (default 24h)."""
+    if cleanup_old_workspaces is None:
+        raise HTTPException(status_code=500, detail="Internal server error")
+    # Validate TTL to prevent abuse: negative/zero would delete everything
+    if not isinstance(ttl_hours, int) or ttl_hours < 1:
+        raise HTTPException(status_code=422, detail="ttl_hours must be >= 1")
+    if ttl_hours > 720:  # cap at 30 days
+        raise HTTPException(status_code=422, detail="ttl_hours must be <= 720")
+    # Simple rate-limit even for admin
+    if request.client:
+        _check_rate_limit(request.client.host)
+    try:
+        removed = cleanup_old_workspaces(WORKSPACE, ttl_hours=ttl_hours)
+        logger.info("admin cleanup removed %d (ttl=%dh)", removed, ttl_hours)
+        return {"removed": removed, "workspace": str(Path(WORKSPACE).resolve()), "ttl_hours": ttl_hours}
+    except Exception:
+        logger.exception("admin cleanup failed")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 if __name__ == "__main__":

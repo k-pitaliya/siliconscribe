@@ -2,7 +2,7 @@
 The agentic pipeline.
 
     prompt -> parse_intent -> generate_rtl -> generate_testbench -> explain
-           -> simulate -> [FAIL/ERROR? fix_design -> re-simulate] (loop) -> done
+           -> [lint] -> simulate -> [FAIL/ERROR? fix_design -> lint -> re-simulate] (loop) -> done
 
 `pipeline_events` is a generator that yields one event per stage so the API can
 stream progress over SSE (this drives the live AI-agent panel). `run_pipeline`
@@ -13,9 +13,17 @@ No-progress guard:
     regardless of whitespace changes.
   - Oscillation detection: if an RTL hash we have already seen reappears,
     the loop stops immediately to prevent thrashing.
+
+Linter integration (non-blocking):
+  - Before each simulation, VerilogLinter is run on the current RTL+TB.
+  - If lint finds errors/warnings, a ``stage="lint"`` event is yielded so the
+    agent panel can surface diagnostics.
+  - Lint never blocks the pipeline; simulation still runs so the
+    self-correction loop can fix issues.
 """
 
 import hashlib
+from pathlib import Path
 from typing import Iterator, Optional
 
 import llm_service
@@ -26,6 +34,35 @@ from vcd_parser import parse_vcd
 from models import (
     RunResponse, IterationRecord, RTLDesignSpec,
 )
+
+# Optional synthesis — must not break import when yosys not installed
+try:
+    from synthesis import YosysSynthesizer  # type: ignore
+except Exception:  # pragma: no cover
+    YosysSynthesizer = None  # type: ignore
+
+# Optional linter — must not break import when tool chain is absent
+try:
+    from linter import VerilogLinter  # type: ignore
+except Exception:  # pragma: no cover
+    VerilogLinter = None  # type: ignore
+
+
+def _lint_payload(lint_res: dict) -> dict:
+    """Convert VerilogLinter result (with SimError objects) to JSON-serialisable payload."""
+    def _dump(e):
+        # SimError is a pydantic model; be defensive for plain dicts
+        if hasattr(e, "model_dump"):
+            return e.model_dump()
+        if isinstance(e, dict):
+            return e
+        return {"message": str(e)}
+    return {
+        "ok": lint_res.get("ok", True),
+        "errors": [_dump(e) for e in lint_res.get("errors", [])],
+        "warnings": [_dump(w) for w in lint_res.get("warnings", [])],
+        "output": lint_res.get("output", ""),
+    }
 
 
 def pipeline_events(
@@ -62,9 +99,41 @@ def pipeline_events(
     rtl_code = llm_service.generate_rtl(spec, target_frequency_mhz, model=model)
     yield {"stage": "rtl", "message": "Generated RTL.", "rtl_code": rtl_code}
 
+    # Lint RTL alone (non-blocking, informational)
+    if VerilogLinter is not None:
+        try:
+            linter = VerilogLinter()
+            lint_res = linter.lint(rtl_code)
+            if lint_res.get("errors") or lint_res.get("warnings"):
+                payload = _lint_payload(lint_res)
+                yield {
+                    "stage": "lint",
+                    "target": "rtl",
+                    "message": f"Lint RTL: {len(payload['errors'])} error(s), {len(payload['warnings'])} warning(s)",
+                    "lint": payload,
+                }
+        except Exception:
+            pass  # linter must never break the pipeline
+
     # 3. Testbench
     tb_code = llm_service.generate_testbench(rtl_code, spec, model=model)
     yield {"stage": "testbench", "message": "Generated self-checking testbench.", "testbench_code": tb_code}
+
+    # Lint combined RTL + TB before simulation (non-blocking)
+    if VerilogLinter is not None:
+        try:
+            linter = VerilogLinter()
+            lint_res = linter.lint(rtl_code, tb_code)
+            if lint_res.get("errors") or lint_res.get("warnings"):
+                payload = _lint_payload(lint_res)
+                yield {
+                    "stage": "lint",
+                    "target": "tb",
+                    "message": f"Lint TB: {len(payload['errors'])} error(s), {len(payload['warnings'])} warning(s)",
+                    "lint": payload,
+                }
+        except Exception:
+            pass
 
     # 4. Explanation
     explanation = llm_service.explain_design(rtl_code, spec, model=model)
@@ -79,9 +148,20 @@ def pipeline_events(
     yield {"stage": "simulate", "iteration": 0, "status": result.status,
            "message": _sim_message(0, result), "result": result.model_dump()}
 
+    def _norm_hash(code: str) -> str:
+        # Whitespace-insensitive hash as promised in the module docstring:
+        # strip all whitespace + comments so trivial formatting changes are identical.
+        # IMPORTANT: strip comments BEFORE whitespace, otherwise "//.*"
+        # after whitespace removal would match from "//" to end-of-file and wipe the hash.
+        import re as _re
+        norm = _re.sub(r"//.*", "", code)
+        norm = _re.sub(r"/\*.*?\*/", "", norm, flags=_re.DOTALL)
+        norm = _re.sub(r"\s+", "", norm)
+        return hashlib.sha256(norm.encode()).hexdigest()
+
     iteration = 0
     seen_rtl_hashes: set[str] = set()
-    seen_rtl_hashes.add(hashlib.sha256(rtl_code.encode()).hexdigest())
+    seen_rtl_hashes.add(_norm_hash(rtl_code))
 
     while self_correct and result.status in ("FAIL", "ERROR") and iteration < max_iterations:
         iteration += 1
@@ -90,15 +170,16 @@ def pipeline_events(
 
         fix = llm_service.fix_design(rtl_code, tb_code, result.log_excerpt, model=model)
         new_rtl, new_tb = fix["rtl_code"], fix["testbench_code"]
-        new_rtl_hash = hashlib.sha256(new_rtl.encode()).hexdigest()
+        new_rtl_hash = _norm_hash(new_rtl)
+        cur_hash = _norm_hash(rtl_code)
 
-        # No-progress guard: no change at all.
-        if new_rtl_hash == hashlib.sha256(rtl_code.encode()).hexdigest():
+        # No-progress guard: no change at all (whitespace-insensitive).
+        if new_rtl_hash == cur_hash:
             yield {"stage": "fix", "iteration": iteration,
                    "message": "Model returned no change; stopping the loop.", "fix_summary": "no-op"}
             break
 
-        # Oscillation guard: we have seen this RTL before.
+        # Oscillation guard: we have seen this RTL before (whitespace-insensitive).
         if new_rtl_hash in seen_rtl_hashes:
             yield {"stage": "fix", "iteration": iteration,
                    "message": "Oscillation detected (repeated RTL); stopping the loop.",
@@ -111,6 +192,23 @@ def pipeline_events(
                "fix_summary": fix["fix_summary"], "fix_type": fix.get("fix_type", ""),
                "rtl_code": rtl_code, "testbench_code": tb_code}
 
+        # Lint the fixed design before re-simulating (non-blocking)
+        if VerilogLinter is not None:
+            try:
+                linter = VerilogLinter()
+                lint_res = linter.lint(rtl_code, tb_code)
+                if lint_res.get("errors") or lint_res.get("warnings"):
+                    payload = _lint_payload(lint_res)
+                    yield {
+                        "stage": "lint",
+                        "target": "fix",
+                        "iteration": iteration,
+                        "message": f"Lint fix #{iteration}: {len(payload['errors'])} error(s), {len(payload['warnings'])} warning(s)",
+                        "lint": payload,
+                    }
+            except Exception:
+                pass
+
         result = simulator.simulate(f"{design_id}", rtl_code, tb_code, timeout=timeout_seconds)
         history.append(IterationRecord(iteration=iteration, status=result.status,
                                         fix_summary=fix["fix_summary"],
@@ -121,9 +219,40 @@ def pipeline_events(
                "message": _sim_message(iteration, result), "result": result.model_dump()}
 
     # 6. Post-processing artifacts
-    result.coverage = compute_coverage(result)
+    # Pass explicit log to compute_coverage so toggle/branch parsing sees full transcript
+    result.coverage = compute_coverage(result, log=result.log_excerpt or "")
     waveform = parse_vcd(result.waveform_file) if result.waveform_file else None
     schematic = build_schematic(spec)
+
+    # 7. Synthesis (yosys) — graceful fallback to port-level schematic
+    synthesis: Optional[dict] = None
+    if YosysSynthesizer is not None:
+        try:
+            synth_workdir = Path(simulator.workspace) / design_id / "synth"
+            synthesizer = YosysSynthesizer(workspace=str(simulator.workspace))
+            synthesis = synthesizer.synthesize(rtl_code, spec.module_name, work_dir=synth_workdir)
+            if synthesis.get("available"):
+                if "cell_count" in synthesis:
+                    msg = f"Synthesis: {synthesis['cell_count']} cells, ~{synthesis.get('area_estimate', '?')} um² (yosys)"
+                elif synthesis.get("error"):
+                    msg = f"Synthesis warning: {str(synthesis['error'])[:120]}"
+                else:
+                    msg = "Synthesis completed (yosys available)"
+            else:
+                msg = "Synthesis not available (yosys not installed — showing port-level schematic)"
+            yield {"stage": "synthesis", "synthesis": synthesis, "message": msg}
+        except Exception as e:
+            synthesis = {"available": False, "error": str(e)}
+            try:
+                yield {"stage": "synthesis", "synthesis": synthesis, "message": "Synthesis fallback (port-level schematic)"}
+            except Exception:
+                pass
+    else:
+        synthesis = {"available": False}
+        try:
+            yield {"stage": "synthesis", "synthesis": synthesis, "message": "Synthesis not available (yosys not installed — showing port-level schematic)"}
+        except Exception:
+            pass
 
     response = RunResponse(
         design_id=design_id,
@@ -137,6 +266,7 @@ def pipeline_events(
         iteration_history=history,
         waveform=waveform,
         schematic=schematic,
+        synthesis=synthesis,
     )
     yield {"stage": "done", "status": result.status,
            "message": _final_message(result, iteration),

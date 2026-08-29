@@ -5,7 +5,9 @@ export default function SchematicView({ schematic }: { schematic: Schematic | nu
 
   const inputs = schematic.inputs
   const outputs = schematic.outputs
-  const rows = Math.max(inputs.length, outputs.length, 1)
+  const inouts = schematic.inouts ?? []
+  // Include inouts in row calculation; render them mid-height
+  const rows = Math.max(inputs.length, outputs.length, inouts.length, 1)
 
   const ROW = 34
   const PAD = 30
@@ -19,41 +21,69 @@ export default function SchematicView({ schematic }: { schematic: Schematic | nu
 
   return (
     <div className="schematic-view">
-      <svg viewBox={`0 0 ${width} ${height}`} width="100%" preserveAspectRatio="xMidYMin meet">
-        {/* module box */}
-        <rect x={BOX_X} y={PAD} width={BOX_W} height={boxH} rx={10} className="sch-box" />
-        <text x={BOX_X + BOX_W / 2} y={PAD + boxH / 2} className="sch-module" textAnchor="middle">
-          {schematic.module_name}
-        </text>
+      <div className="schematic-scroll" style={{ overflowX: 'auto', overflowY: 'hidden' }}>
+        <svg
+          viewBox={`0 0 ${width} ${height}`}
+          width={width}
+          height={height}
+          preserveAspectRatio="xMidYMin meet"
+          style={{ display: 'block', minWidth: width, maxWidth: '100%' }}
+          role="img"
+          aria-label={`Schematic for module ${schematic.module_name}`}
+        >
+          {/* module box */}
+          <rect x={BOX_X} y={PAD} width={BOX_W} height={boxH} rx={10} className="sch-box" />
+          <text x={BOX_X + BOX_W / 2} y={PAD + boxH / 2} className="sch-module" textAnchor="middle" dominantBaseline="middle">
+            {schematic.module_name}
+          </text>
 
-        {/* inputs on the left */}
-        {inputs.map((p, i) => {
-          const y = PAD + i * ROW + ROW / 2
-          return (
-            <g key={`in-${p.name}`}>
-              <line x1={60} y1={y} x2={BOX_X} y2={y} className="sch-wire" />
-              <circle cx={60} cy={y} r={4} className="sch-pin in" />
-              <text x={54} y={y + 4} className="sch-port" textAnchor="end">
-                {portLabel(p)}
-              </text>
-            </g>
-          )
-        })}
+          {/* inputs on the left */}
+          {inputs.map((p, i) => {
+            const y = PAD + i * ROW + ROW / 2
+            return (
+              <g key={`in-${p.name}`}>
+                <line x1={60} y1={y} x2={BOX_X} y2={y} className="sch-wire" />
+                <circle cx={60} cy={y} r={4} className="sch-pin in" />
+                <text x={54} y={y + 4} className="sch-port" textAnchor="end">
+                  {portLabel(p)}
+                </text>
+              </g>
+            )
+          })}
 
-        {/* outputs on the right */}
-        {outputs.map((p, i) => {
-          const y = PAD + i * ROW + ROW / 2
-          return (
-            <g key={`out-${p.name}`}>
-              <line x1={BOX_X + BOX_W} y1={y} x2={BOX_X + BOX_W + 60} y2={y} className="sch-wire" />
-              <circle cx={BOX_X + BOX_W + 60} cy={y} r={4} className="sch-pin out" />
-              <text x={BOX_X + BOX_W + 66} y={y + 4} className="sch-port" textAnchor="start">
-                {portLabel(p)}
-              </text>
-            </g>
-          )
-        })}
-      </svg>
+          {/* inouts in middle left (draw as bidirectional) */}
+          {inouts.map((p, i) => {
+            const y = PAD + i * ROW + ROW / 2
+            // offset slightly to avoid overlapping inputs if both exist
+            const offset = inputs.length ? inputs.length * ROW + 6 : 0
+            const yy = y + offset
+            if (yy > PAD + boxH - ROW / 2) return null
+            return (
+              <g key={`io-${p.name}`}>
+                <line x1={60} y1={yy} x2={BOX_X} y2={yy} className="sch-wire" strokeDasharray="4 2" />
+                <circle cx={60} cy={yy} r={4} className="sch-pin in" fill="var(--warn-amber)" />
+                <text x={54} y={yy + 4} className="sch-port" textAnchor="end">
+                  {portLabel(p)} *
+                </text>
+              </g>
+            )
+          })}
+
+          {/* outputs on the right */}
+          {outputs.map((p, i) => {
+            const y = PAD + i * ROW + ROW / 2
+            return (
+              <g key={`out-${p.name}`}>
+                <line x1={BOX_X + BOX_W} y1={y} x2={BOX_X + BOX_W + 60} y2={y} className="sch-wire" />
+                <circle cx={BOX_X + BOX_W + 60} cy={y} r={4} className="sch-pin out" />
+                <text x={BOX_X + BOX_W + 66} y={y + 4} className="sch-port" textAnchor="start">
+                  {portLabel(p)}
+                </text>
+              </g>
+            )
+          })}
+        </svg>
+      </div>
       <div className="schematic-note">
         Port-level block diagram. Gate-level synthesis view (yosys) is future work.
       </div>
