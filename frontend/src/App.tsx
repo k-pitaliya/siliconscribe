@@ -3,11 +3,12 @@ import PromptPanel from './components/PromptPanel'
 import CodeEditor from './components/CodeEditor'
 import ResultsPanel from './components/ResultsPanel'
 import AgentChat, { type ChatMessage } from './components/AgentChat'
-import { getStatus, getModels, streamDesign, reSimulate } from './api'
+import { getStatus, getModels, streamDesign, reSimulate, exportUVM, listProjects, deleteProject } from './api'
 import type {
   IterationRecord,
   LintInfo,
   ModelInfo,
+  ProjectSummary,
   RunResponse,
   Schematic,
   SimulationResult,
@@ -41,6 +42,8 @@ export default function App() {
       text: 'Ready. Describe your hardware requirement and I will generate RTL, a testbench, run simulation, and auto-fix failures.',
     },
   ])
+  const [projects, setProjects] = useState<ProjectSummary[]>([])
+  const [showProjects, setShowProjects] = useState(false)
   const abortRef = useRef<AbortController | null>(null)
 
   useEffect(() => {
@@ -54,7 +57,17 @@ export default function App() {
         if (m.offline) setProvider((prev) => prev ?? { provider: 'offline', offline: true })
       })
       .catch(() => setModels([]))
+    refreshProjects()
   }, [])
+
+  async function refreshProjects() {
+    try {
+      const r = await listProjects(20, 0)
+      setProjects(r.projects)
+    } catch {
+      /* ignore */
+    }
+  }
 
   const pushMsg = (m: ChatMessage) => setMessages((prev) => [...prev, m])
 
@@ -107,6 +120,7 @@ export default function App() {
             setExplanation(r.explanation)
             setModuleName(r.rtl_spec.module_name)
             if (r.synthesis) setSynthesis(r.synthesis)
+            refreshProjects()
           }
         },
         ctrl.signal,
@@ -151,6 +165,61 @@ export default function App() {
     }
   }
 
+  async function handleUVMExport() {
+    if (running || !moduleName) return
+    const prompt = `Design a UVM testbench for ${moduleName}`
+    pushMsg({ role: 'user', text: `Exporting UVM bundle for ${moduleName}…` })
+    try {
+      const resp = await exportUVM(prompt, moduleName, selectedModel || undefined)
+      // trigger download from base64 zip
+      if (resp.zip_base64) {
+        const bytes = Uint8Array.from(atob(resp.zip_base64), c => c.charCodeAt(0))
+        const blob = new Blob([bytes], { type: 'application/zip' })
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = `${resp.module_name}_uvm_bundle.zip`
+        a.click()
+        URL.revokeObjectURL(url)
+        pushMsg({ role: 'ai', text: `UVM bundle ready: ${resp.file_count} files (Questa style, not Icarus). Zip downloaded.`, stage: 'synthesis' })
+      } else {
+        pushMsg({ role: 'ai', text: `UVM bundle: ${resp.file_count} files for ${resp.module_name}. ${resp.note}`, stage: 'synthesis' })
+      }
+    } catch (err) {
+      pushMsg({ role: 'ai', text: `UVM export failed: ${(err as Error).message}`, stage: 'error' })
+    }
+  }
+
+  async function handleLoadProject(id: string) {
+    try {
+      const proj = await import('./api').then(m => m.getProject(id))
+      setRtl(proj.rtl_code)
+      setTb(proj.testbench_code)
+      setModuleName(proj.rtl_spec.module_name)
+      setResult(proj.result)
+      setWaveform(proj.waveform)
+      setSchematic(proj.schematic)
+      setHistory(proj.iteration_history)
+      setDesignId(proj.design_id)
+      setExplanation(proj.explanation)
+      setSynthesis((proj as any).synthesis ?? null)
+      pushMsg({ role: 'ai', text: `Loaded project ${id} (${proj.rtl_spec.module_name})`, stage: 'done', status: proj.status })
+      setShowProjects(false)
+    } catch (err) {
+      pushMsg({ role: 'ai', text: `Load failed: ${(err as Error).message}`, stage: 'error' })
+    }
+  }
+
+  async function handleDeleteProject(id: string) {
+    try {
+      await deleteProject(id)
+      setProjects(prev => prev.filter(p => p.design_id !== id))
+      pushMsg({ role: 'ai', text: `Deleted project ${id}` })
+    } catch (err) {
+      pushMsg({ role: 'ai', text: `Delete failed: ${(err as Error).message}`, stage: 'error' })
+    }
+  }
+
   return (
     <div className="app-container">
       <header className="navbar">
@@ -165,6 +234,12 @@ export default function App() {
               {provider.offline ? 'Offline demo' : `Live · ${provider.provider}`}
             </span>
           )}
+          <button className="btn btn-secondary" onClick={() => setShowProjects(v => !v)} aria-label="Toggle projects">
+            <i className="fa-solid fa-folder-open" aria-hidden="true" /> Projects ({projects.length})
+          </button>
+          <button className="btn btn-secondary" onClick={handleUVMExport} disabled={!rtl || running} aria-label="Export UVM bundle">
+            <i className="fa-solid fa-download" aria-hidden="true" /> UVM
+          </button>
           {running ? (
             <button className="btn btn-danger" onClick={handleCancel} aria-label="Stop generation">
               <i className="fa-solid fa-stop" aria-hidden="true" /> Stop
@@ -176,6 +251,33 @@ export default function App() {
           )}
         </div>
       </header>
+
+      {showProjects && (
+        <div className="projects-drawer glass-panel" style={{ marginBottom: '0.75rem', padding: '1rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+            <h3><i className="fa-solid fa-folder-open" /> Recent Projects</h3>
+            <button className="btn btn-secondary" onClick={() => setShowProjects(false)}>Close</button>
+          </div>
+          {projects.length === 0 ? (
+            <div className="empty-state">No projects yet. Generate a design to save.</div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', maxHeight: '300px', overflowY: 'auto' }}>
+              {projects.map(p => (
+                <div key={p.design_id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(255,255,255,0.04)', padding: '0.5rem 0.7rem', borderRadius: '8px' }}>
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: '0.85rem' }}>{p.module_name} <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>· {p.design_id}</span></div>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{p.prompt.slice(0, 60)} — {p.status} · {p.iterations} iter</div>
+                  </div>
+                  <div style={{ display: 'flex', gap: '0.3rem' }}>
+                    <button className="btn btn-secondary" onClick={() => handleLoadProject(p.design_id)} style={{ padding: '0.3rem 0.6rem' }}>Load</button>
+                    <button className="btn btn-danger" onClick={() => handleDeleteProject(p.design_id)} style={{ padding: '0.3rem 0.6rem' }}>Delete</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       <main className="workspace">
         <PromptPanel

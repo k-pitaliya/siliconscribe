@@ -1,7 +1,7 @@
 import re
 
 from pydantic import BaseModel, Field, field_validator
-from typing import List, Optional, Literal
+from typing import List, Optional, Literal, Dict
 
 # Shared design_id pattern for path-traversal hardening
 DESIGN_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{1,32}$")
@@ -171,3 +171,49 @@ class SynthesisRequest(BaseModel):
         if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", v):
             raise ValueError("module_name must be a valid Verilog identifier")
         return v
+
+
+class UVMExportRequest(BaseModel):
+    """Request body for POST /api/uvm/export (export-only, commercial sim style).
+
+    The endpoint is export-only and never touches the Icarus path.
+    `prompt` is the natural-language design intent (max 2000 chars, same limit
+    as GenerateRequest/RunRequest). `module_name` optionally overrides the
+    inferred/spec module name (e.g., UI provides a sanitize slot).
+    """
+    prompt: str = Field(..., max_length=2000, description="Natural language design prompt for UVM export")
+    module_name: Optional[str] = Field(
+        None,
+        max_length=64,
+        pattern=r"^[A-Za-z_][A-Za-z0-9_]*$",
+        description="Optional override for DUT module name (valid Verilog identifier)",
+    )
+    target_frequency_mhz: Optional[int] = Field(None, ge=1, le=10000, description="Optional clock hint, unused for UVM but kept for parity")
+    model: Optional[str] = Field(None, max_length=100, description="Optional LLM model override")
+
+    @field_validator("module_name")
+    @classmethod
+    def validate_module_override(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", v):
+            raise ValueError("module_name must be a valid Verilog identifier")
+        return v
+
+
+class UVMExportResponse(BaseModel):
+    """Response for POST /api/uvm/export.
+
+    `files` maps filename -> content (SystemVerilog / Makefile / filelist.f / README).
+    `zip_base64` is an optional in-memory zip (base64) for one-click download;
+    callers that only need the file map may ignore it.
+    """
+    module_name: str = Field(..., description="DUT module name used for generation")
+    files: Dict[str, str] = Field(..., description="Filename -> file content mapping")
+    file_count: int = Field(..., description="Number of files in bundle")
+    is_sequential: bool = Field(..., description="True if spec constraints indicate sequential logic")
+    zip_base64: Optional[str] = Field(None, description="Base64-encoded zip of the bundle (optional)")
+    note: str = Field(
+        "Questa/ModelSim style (logic/always_ff, UVM 1.2). Export-only, not simulated via Icarus iVerilog.",
+        description="Human-readable note about simulator compatibility",
+    )

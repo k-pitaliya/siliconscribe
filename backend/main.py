@@ -18,7 +18,14 @@ from models import (
     SimulationRequest, SimulationResult,
     RunRequest, RunResponse,
     SynthesisRequest,
+    UVMExportRequest, UVMExportResponse,
+    DESIGN_ID_RE,
 )
+
+try:
+    import db  # type: ignore
+except ImportError:
+    db = None  # type: ignore
 
 try:
     from cleanup import cleanup_old_workspaces
@@ -74,6 +81,13 @@ if cleanup_old_workspaces is not None:
     except Exception:
         logger.exception("startup cleanup failed")
 
+# Init SQLite persistence (best-effort; do not fail boot)
+if db is not None:
+    try:
+        db.init_db(WORKSPACE)
+    except Exception:
+        logger.exception("db init failed")
+
 
 @app.on_event("startup")
 async def _startup_gc():
@@ -83,6 +97,11 @@ async def _startup_gc():
             logger.info("startup GC removed %d stale workspaces", removed)
         except Exception:
             logger.exception("startup GC failed")
+    if db is not None:
+        try:
+            db.init_db(WORKSPACE)
+        except Exception:
+            logger.exception("startup db init failed")
 
 
 # Alternative lifespan handler for newer FastAPI (if on_event is deprecated)
@@ -96,6 +115,11 @@ try:
                 cleanup_old_workspaces(WORKSPACE, ttl_hours=24)
             except Exception:
                 logger.exception("lifespan cleanup failed")
+        if db is not None:
+            try:
+                db.init_db(WORKSPACE)
+            except Exception:
+                logger.exception("lifespan db init failed")
         yield
 
     # Only assign if not already set; app.router.lifespan_context is newer API
@@ -150,6 +174,15 @@ async def design_run(request: RunRequest, req: Request):
             model=request.model,
         )
         logger.info("design_run id=%s status=%s iterations=%s", design_id, result.status, result.iterations)
+        # Persist to SQLite (best-effort, never fail request)
+        if db is not None:
+            try:
+                try:
+                    db.save_project(result, prompt=request.prompt)
+                except TypeError:
+                    db.save_project(result)
+            except Exception:
+                logger.exception("db save failed for %s", design_id)
         return result
     except HTTPException:
         raise
@@ -256,6 +289,107 @@ async def run_synthesis(request: SynthesisRequest, req: Request):
         raise
     except Exception:
         logger.exception("run_synthesis failed")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.get("/api/projects")
+async def list_projects_endpoint(request: Request, limit: int = 20, offset: int = 0):
+    """List persisted projects, newest first."""
+    _check_rate_limit(request.client.host if request.client else "unknown")
+    if limit < 1 or limit > 100:
+        raise HTTPException(status_code=422, detail="limit must be between 1 and 100")
+    if offset < 0:
+        raise HTTPException(status_code=422, detail="offset must be >= 0")
+    if db is None:
+        return {"total": 0, "projects": []}
+    try:
+        total = db.count_projects()
+        projects = db.list_projects(limit=limit, offset=offset)
+        return {"total": total, "projects": projects}
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("list_projects failed")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.get("/api/projects/{design_id}")
+async def get_project_endpoint(design_id: str, request: Request):
+    """Get full RunResponse for a persisted project."""
+    _check_rate_limit(request.client.host if request.client else "unknown")
+    if not DESIGN_ID_RE.match(design_id):
+        raise HTTPException(status_code=422, detail="Invalid design_id")
+    if db is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    try:
+        proj = db.get_project(design_id)
+    except Exception:
+        logger.exception("get_project failed for %s", design_id)
+        raise HTTPException(status_code=500, detail="Internal server error")
+    if proj is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return proj
+
+
+@app.delete("/api/projects/{design_id}", status_code=204)
+async def delete_project_endpoint(design_id: str, request: Request):
+    """Delete a persisted project."""
+    _check_rate_limit(request.client.host if request.client else "unknown")
+    if not DESIGN_ID_RE.match(design_id):
+        raise HTTPException(status_code=422, detail="Invalid design_id")
+    if db is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    try:
+        deleted = db.delete_project(design_id)
+    except Exception:
+        logger.exception("delete_project failed for %s", design_id)
+        raise HTTPException(status_code=500, detail="Internal server error")
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Project not found")
+    from fastapi.responses import Response
+
+    return Response(status_code=204)
+
+
+@app.post("/api/uvm/export", response_model=UVMExportResponse)
+async def uvm_export(request: UVMExportRequest, req: Request):
+    """Export a UVM testbench bundle (Questa style) for a spec derived from prompt.
+
+    Export-only, never calls Icarus. Uses llm_service.parse_intent to derive
+    RTLDesignSpec, then uvm_templates.generate_uvm_bundle. Gracefully falls back
+    to offline spec when Zen not available.
+    """
+    _check_rate_limit(req.client.host if req.client else "unknown")
+    logger.info("uvm_export prompt=%s module_override=%s", request.prompt[:80], request.module_name)
+    try:
+        from uvm_templates import generate_uvm_bundle, bundle_to_zip_base64
+        from models import RTLDesignSpec
+    except Exception as e:
+        logger.exception("uvm_templates import failed")
+        raise HTTPException(status_code=500, detail="UVM templates not available")
+    try:
+        spec = llm_service.parse_intent(request.prompt, model=request.model)
+        if request.module_name:
+            spec.module_name = request.module_name
+        bundle = generate_uvm_bundle(spec)
+        # Detect sequential for response
+        is_seq = any("sequential" in (c or "").lower() for c in (spec.constraints or []))
+        zip_b64 = None
+        try:
+            zip_b64 = bundle_to_zip_base64(bundle)
+        except Exception:
+            logger.exception("uvm zip failed")
+        return UVMExportResponse(
+            module_name=spec.module_name,
+            files=bundle,
+            file_count=len(bundle),
+            is_sequential=is_seq,
+            zip_base64=zip_b64,
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("uvm_export failed")
         raise HTTPException(status_code=500, detail="Internal server error")
 
 

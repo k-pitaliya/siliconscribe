@@ -112,6 +112,24 @@ export interface RunResponse {
   synthesis?: SynthesisInfo | null
 }
 
+export interface ProjectSummary {
+  design_id: string
+  prompt: string
+  module_name: string
+  status: string
+  created_at: number
+  iterations: number
+}
+
+export interface UVMExportResponse {
+  module_name: string
+  files: Record<string, string>
+  file_count: number
+  is_sequential: boolean
+  zip_base64: string | null
+  note: string
+}
+
 /** A single SSE event emitted by /api/design/stream. */
 export interface StreamEvent {
   stage:
