@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type KeyboardEvent } from 'react'
 import type { ModelInfo } from '../types'
 
 const EXAMPLES = [
@@ -31,6 +31,12 @@ export default function PromptPanel({
 
   const activeModel = models.find((m) => m.id === selectedModel)
 
+  function clampFreq(v: number): number {
+    // slider is 10–500 but backend allows 1–10000; validate/clamp to keep contract
+    if (!Number.isFinite(v)) return 100
+    return Math.min(10000, Math.max(1, Math.round(v)))
+  }
+
   function submit() {
     const text = prompt.trim()
     if (!text) {
@@ -38,7 +44,16 @@ export default function PromptPanel({
       setTimeout(() => setInvalid(false), 1000)
       return
     }
-    onGenerate(text, freq)
+    const safeFreq = clampFreq(freq)
+    if (safeFreq !== freq) setFreq(safeFreq)
+    onGenerate(text, safeFreq)
+  }
+
+  function handleTextareaKey(e: KeyboardEvent<HTMLTextAreaElement>) {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+      e.preventDefault()
+      if (!running) submit()
+    }
   }
 
   return (
@@ -50,18 +65,21 @@ export default function PromptPanel({
       </div>
       <div className="panel-content">
         <div className="session-group">
-          <label>
+          <label htmlFor="model-select" id="model-select-label">
             <i className="fa-solid fa-robot" /> AI Model {!offline && <span className="req">· choose before generating</span>}
           </label>
           {offline ? (
-            <div className="model-offline">
+            <div className="model-offline" role="status" aria-live="polite">
               <i className="fa-solid fa-plug-circle-xmark" /> Offline demo — no model selection. Add an API key to enable.
             </div>
           ) : models.length === 0 ? (
-            <div className="model-offline">No models available.</div>
+            <div className="model-offline" role="status">No models available.</div>
           ) : (
             <>
               <select
+                id="model-select"
+                aria-labelledby="model-select-label"
+                aria-label="AI Model selection"
                 className="model-select"
                 value={selectedModel}
                 onChange={(e) => onModelChange(e.target.value)}
@@ -74,7 +92,7 @@ export default function PromptPanel({
                 ))}
               </select>
               {activeModel && (
-                <div className="model-note">
+                <div className="model-note" aria-live="polite">
                   <span className={`model-tag ${activeModel.tag}`}>{activeModel.tag}</span>
                   {activeModel.note}
                 </div>
@@ -84,20 +102,40 @@ export default function PromptPanel({
         </div>
 
         <div className="input-group">
-          <label>Natural Language Requirement</label>
+          <label htmlFor="prompt-textarea">Natural Language Requirement</label>
           <textarea
+            id="prompt-textarea"
+            aria-label="Natural Language Requirement"
+            aria-required="true"
+            aria-invalid={invalid}
+            aria-describedby={invalid ? 'prompt-error' : undefined}
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
+            onKeyDown={handleTextareaKey}
             placeholder="e.g., Design a 4-bit ALU with add, sub, and, or, xor operations with overflow detection..."
             style={invalid ? { borderColor: 'var(--neg-red)' } : undefined}
           />
+          {invalid && (
+            <span id="prompt-error" role="alert" style={{ color: 'var(--neg-red)', fontSize: '0.78rem', marginTop: 4, display: 'block' }}>
+              Please enter a design prompt.
+            </span>
+          )}
+          <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: 4, display: 'block' }}>
+            Tip: Press <kbd>Ctrl</kbd> + <kbd>Enter</kbd> to generate
+          </span>
         </div>
 
         <div className="examples">
-          <label>Examples</label>
-          <div className="example-chips">
+          <label id="examples-label">Examples</label>
+          <div className="example-chips" role="group" aria-labelledby="examples-label">
             {EXAMPLES.map((ex) => (
-              <button key={ex} className="chip" onClick={() => setPrompt(ex)} disabled={running}>
+              <button
+                key={ex}
+                className="chip"
+                aria-label={`Use example: ${ex}`}
+                onClick={() => setPrompt(ex)}
+                disabled={running}
+              >
                 {ex.replace('Design a ', '').replace('Design ', '')}
               </button>
             ))}
@@ -105,27 +143,35 @@ export default function PromptPanel({
         </div>
 
         <div className="options-group">
-          <label>
-            Target Frequency <span className="slider-val">{freq} MHz</span>
+          <label htmlFor="freq-slider">
+            Target Frequency <span className="slider-val" aria-live="polite">{freq} MHz</span>
           </label>
           <input
+            id="freq-slider"
+            aria-label="Target frequency in MHz, 10 to 500"
             type="range"
             min={10}
             max={500}
             value={freq}
             className="slider"
-            onChange={(e) => setFreq(Number(e.target.value))}
+            onChange={(e) => setFreq(clampFreq(Number(e.target.value)))}
           />
         </div>
 
-        <button className="btn btn-primary btn-block" onClick={submit} disabled={running}>
+        <button
+          className="btn btn-primary btn-block"
+          onClick={submit}
+          disabled={running}
+          aria-label={running ? 'Generating RTL, please wait' : 'Generate RTL from prompt, Ctrl Enter'}
+          aria-busy={running}
+        >
           {running ? (
             <>
-              <i className="fa-solid fa-circle-notch fa-spin" /> <span>Generating…</span>
+              <i className="fa-solid fa-circle-notch fa-spin" aria-hidden="true" /> <span>Generating…</span>
             </>
           ) : (
             <>
-              <span>Generate RTL</span> <i className="fa-solid fa-arrow-right" />
+              <span>Generate RTL</span> <i className="fa-solid fa-arrow-right" aria-hidden="true" />
             </>
           )}
         </button>

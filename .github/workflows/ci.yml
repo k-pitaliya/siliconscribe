@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [main, production-readiness]
+  pull_request:
+    branches: [main]
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install iverilog + yosys
+        run: sudo apt-get update && sudo apt-get install -y iverilog yosys
+      - name: Install dependencies
+        run: |
+          cd backend
+          python -m venv venv
+          venv/bin/pip install -r requirements.txt
+      - name: Lint
+        run: |
+          cd backend
+          venv/bin/pip install ruff
+          venv/bin/ruff check .
+      - name: Test
+        run: |
+          cd backend
+          OFFLINE_MODE=1 venv/bin/python -m pytest tests/ -v
+          OFFLINE_MODE=1 venv/bin/python -c "from uvm_templates import generate_uvm_bundle; from models import RTLDesignSpec, PortSpec; s=RTLDesignSpec(module_name='alu_4bit', ports=[PortSpec(name='a',direction='input',width=4),PortSpec(name='b',direction='input',width=4),PortSpec(name='opcode',direction='input',width=3),PortSpec(name='result',direction='output',width=4)], behavior='alu', constraints=['Combinational']); b=generate_uvm_bundle(s); assert len(b)==16; print(f'UVM bundle {len(b)} files OK')"
+          OFFLINE_MODE=1 venv/bin/python -c "from fastapi.testclient import TestClient; import main; c=TestClient(main.app); r=c.post('/api/design/run', json={'prompt':'Design a 4-bit counter','max_iterations':1}); assert r.status_code==200 and r.json()['status']=='PASS'; print('E2E design/run PASS'); r=c.get('/api/projects'); assert r.status_code==200; print(f\"Projects {r.json()['total']}\")"
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install
+        run: cd frontend && npm ci --ignore-scripts
+      - name: Type check
+        run: cd frontend && npx tsc --noEmit
+      - name: Test
+        run: cd frontend && npx vitest run
+      - name: Build
+        run: cd frontend && npm run build
+
+  docker:
+    runs-on: ubuntu-latest
+    needs: [backend, frontend]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Docker image
+        run: docker build -t siliconscribe:ci .

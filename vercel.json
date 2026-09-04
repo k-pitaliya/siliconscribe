@@ -1,0 +1,6 @@
+{
+  "buildCommand": "cd frontend && npm ci --ignore-scripts && npm run build",
+  "outputDirectory": "frontend/dist",
+  "framework": "vite",
+  "rewrites": [{ "source": "/api/(.*)", "destination": "https://siliconscribe-backend.onrender.com/api/$1" }]
+}

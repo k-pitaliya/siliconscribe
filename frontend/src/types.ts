@@ -65,6 +65,9 @@ export interface Waveform {
   timescale: string
   end_time: number
   signals: WaveformSignal[]
+  truncated: boolean
+  dropped_signals: number
+  changes_truncated: boolean
 }
 
 export interface SchematicPort {
@@ -80,6 +83,20 @@ export interface Schematic {
   inouts: SchematicPort[]
 }
 
+export interface SynthesisInfo {
+  available: boolean
+  cell_count?: number
+  area_estimate?: number | string
+  error?: string
+}
+
+export interface LintInfo {
+  ok: boolean
+  errors: SimError[]
+  warnings: SimError[]
+  output?: string
+}
+
 export interface RunResponse {
   design_id: string
   rtl_spec: RTLDesignSpec
@@ -92,6 +109,25 @@ export interface RunResponse {
   iteration_history: IterationRecord[]
   waveform: Waveform | null
   schematic: Schematic | null
+  synthesis?: SynthesisInfo | null
+}
+
+export interface ProjectSummary {
+  design_id: string
+  prompt: string
+  module_name: string
+  status: string
+  created_at: number
+  iterations: number
+}
+
+export interface UVMExportResponse {
+  module_name: string
+  files: Record<string, string>
+  file_count: number
+  is_sequential: boolean
+  zip_base64: string | null
+  note: string
 }
 
 /** A single SSE event emitted by /api/design/stream. */
@@ -105,16 +141,23 @@ export interface StreamEvent {
     | 'simulate'
     | 'fixing'
     | 'fix'
+    | 'lint'
+    | 'synthesis'
     | 'done'
     | 'error'
   message?: string
   iteration?: number
   status?: string
+  target?: string
   rtl_spec?: RTLDesignSpec
   rtl_code?: string
   testbench_code?: string
   explanation?: string
   fix_summary?: string
+  fix_type?: string
+  fallback_notice?: string
   result?: SimulationResult
   response?: RunResponse
+  synthesis?: SynthesisInfo
+  lint?: LintInfo
 }

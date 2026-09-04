@@ -10,6 +10,7 @@ backend/.env
 
 # Simulation artifacts
 backend/workspace/
+workspace/
 backend/test_workspace/
 **/*.vvp
 **/*.vcd
@@ -26,3 +27,6 @@ frontend/.vite/
 
 # TS build info
 frontend/tsconfig.tsbuildinfo
+
+# Docker
+docker-compose.override.yml

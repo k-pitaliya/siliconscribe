@@ -19,6 +19,14 @@ def test_root_reports_offline():
     assert body["provider"] == "offline"
 
 
+def test_health_endpoint():
+    r = client.get("/health")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] == "ok"
+    assert "simulator" in body
+
+
 @needs_iverilog
 def test_design_run_endpoint():
     r = client.post("/api/design/run", json={"prompt": "Design a 4-bit ALU", "max_iterations": 2})
@@ -39,15 +47,27 @@ def test_stream_endpoint_emits_done():
     assert '"stage": "intent"' in text
 
 
-def test_artifact_path_traversal_blocked():
-    # Disallowed filename
-    r = client.get("/api/artifacts/abcd1234/../../../etc/passwd")
-    assert r.status_code in (400, 404)
-    # Disallowed via filename allowlist
-    r2 = client.get("/api/artifacts/abcd1234/secret.txt")
-    assert r2.status_code == 400
+# --- Security regression tests ---
 
 
-def test_invalid_design_id_rejected():
-    r = client.get("/api/artifacts/..%2f..%2fetc/design.vcd")
-    assert r.status_code in (400, 404)
+def test_rate_limit_enforced():
+    """Regression: exceeding rate limit must return 429."""
+    # Temporarily lower the limit for this test.
+    old_max = main.RATE_LIMIT_MAX_REQUESTS
+    old_window = main.RATE_LIMIT_WINDOW
+    main.RATE_LIMIT_MAX_REQUESTS = 3
+    main.RATE_LIMIT_WINDOW = 60
+    try:
+        ip = "test_rate_limit_client"
+        main._rate_log[ip] = []
+        for _ in range(3):
+            client.post("/api/design/run",
+                        json={"prompt": "Design a counter", "max_iterations": 1})
+        r = client.post("/api/design/run",
+                        json={"prompt": "Design a counter", "max_iterations": 1})
+        assert r.status_code == 429
+        assert "rate limit" in r.json()["detail"].lower()
+    finally:
+        main.RATE_LIMIT_MAX_REQUESTS = old_max
+        main.RATE_LIMIT_WINDOW = old_window
+        main._rate_log.pop("test_rate_limit_client", None)

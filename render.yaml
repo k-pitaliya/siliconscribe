@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: siliconscribe-backend
+    env: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    envVars:
+      - key: OFFLINE_MODE
+        value: "1"
+      - key: OPENCODE_API_KEY
+        sync: false
+      - key: PYTHONUNBUFFERED
+        value: "1"
+    healthCheckPath: /health

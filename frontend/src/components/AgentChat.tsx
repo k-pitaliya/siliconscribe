@@ -15,6 +15,8 @@ interface Props {
 
 function stageIcon(stage?: string, status?: string): string {
   if (stage === 'fix' || stage === 'fixing') return 'fa-screwdriver-wrench'
+  if (stage === 'lint') return 'fa-magnifying-glass'
+  if (stage === 'synthesis') return 'fa-microchip'
   if (stage === 'simulate') {
     if (status === 'PASS') return 'fa-circle-check'
     if (status === 'FAIL' || status === 'ERROR') return 'fa-circle-xmark'
@@ -29,27 +31,40 @@ function stageIcon(stage?: string, status?: string): string {
 
 export default function AgentChat({ messages, running, explanation }: Props) {
   const endRef = useRef<HTMLDivElement>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
+    // smooth scroll to bottom on new messages
+    endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
+  }, [messages, running])
 
   return (
-    <aside className="right-panel glass-panel">
+    <aside className="right-panel glass-panel" aria-label="AI Agent chat">
       <div className="panel-header">
         <h3>
-          <i className="fa-regular fa-comments" /> AI Agent
+          <i className="fa-regular fa-comments" aria-hidden="true" /> AI Agent
         </h3>
-        <span className={`status-indicator ${running ? 'busy' : 'online'}`} />
+        <span
+          className={`status-indicator ${running ? 'busy' : 'online'}`}
+          role="status"
+          aria-label={running ? 'Agent busy' : 'Agent online'}
+          title={running ? 'Busy' : 'Online'}
+        />
       </div>
-      <div className="chat-container">
-        <div className="chat-messages">
+      <div className="chat-container" ref={containerRef}>
+        <div
+          className="chat-messages"
+          role="log"
+          aria-live="polite"
+          aria-relevant="additions"
+          aria-label="Agent conversation"
+        >
           {messages.map((m, i) => {
             const isAi = m.role === 'ai'
             const statusClass =
               m.status === 'PASS' ? 'ok' : m.status === 'FAIL' || m.status === 'ERROR' || m.stage === 'error' ? 'bad' : ''
             return (
               <div key={i} className={`message ${isAi ? 'ai-msg' : 'user-msg'}`}>
-                <div className={`msg-avatar ${isAi ? '' : 'user'}`}>
+                <div className={`msg-avatar ${isAi ? '' : 'user'}`} aria-hidden="true">
                   <i className={`fa-solid ${isAi ? stageIcon(m.stage, m.status) : 'fa-user'}`} />
                 </div>
                 <div className={`msg-bubble ${isAi ? '' : 'user'} ${statusClass}`}>
@@ -59,8 +74,8 @@ export default function AgentChat({ messages, running, explanation }: Props) {
             )
           })}
           {running && (
-            <div className="message ai-msg">
-              <div className="msg-avatar">
+            <div className="message ai-msg" aria-live="polite">
+              <div className="msg-avatar" aria-hidden="true">
                 <i className="fa-solid fa-circle-notch fa-spin" />
               </div>
               <div className="msg-bubble">
@@ -68,11 +83,11 @@ export default function AgentChat({ messages, running, explanation }: Props) {
               </div>
             </div>
           )}
-          <div ref={endRef} />
+          <div ref={endRef} tabIndex={-1} aria-hidden="true" />
         </div>
         {explanation && (
-          <div className="explanation-box">
-            <i className="fa-solid fa-circle-info" /> {explanation}
+          <div className="explanation-box" role="note" aria-label="Design explanation">
+            <i className="fa-solid fa-circle-info" aria-hidden="true" /> {explanation}
           </div>
         )}
       </div>

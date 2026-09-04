@@ -2,12 +2,17 @@
 LLM service: natural language -> RTL spec -> Verilog -> testbench -> explanation,
 plus the debugger entry point (fix_design) used by the self-correction loop.
 
-Two providers behind one interface:
-  - OpenAIProvider: GPT-4o (default when OPENAI_API_KEY is set and OFFLINE_MODE != 1)
-  - OfflineProvider: deterministic canned designs (no key / no internet)
+Providers behind one interface (priority order):
+  0. Opencode Zen (remote, zero-budget) — OpenAI-compatible, free tier at
+     https://api.opencode.ai/v1  (env: OPENCODE_API_KEY / ZEN_API_KEY,
+     OPENCODE_BASE_URL / ZEN_BASE_URL, ZEN_MODEL / LLM_MODEL)
+  1. NVIDIA NIM (OpenAI-compatible, free credits at build.nvidia.com)
+  2. OpenAI / any OpenAI-compatible endpoint
+  3. OfflineProvider: deterministic canned designs (no key / no internet / OFFLINE_MODE=1)
 
-The module auto-selects: if OFFLINE_MODE=1, or no usable OPENAI_API_KEY, it falls
-back to offline so the app never hard-fails in a demo.
+The module auto-selects: if OFFLINE_MODE=1 it always falls back to offline so the
+app never hard-fails in a demo. Otherwise it tries Zen first, then NVIDIA, then
+OpenAI, then offline.
 """
 
 import os
@@ -193,6 +198,7 @@ class OpenAIProvider:
             "rtl_code": _strip_code_fence(data.get("rtl_code", rtl_code)),
             "testbench_code": _strip_code_fence(data.get("testbench_code", tb_code)),
             "fix_summary": data.get("fix_summary", "Applied a fix."),
+            "fix_type": "llm_diagnosis",
         }
 
 
@@ -201,9 +207,11 @@ class OfflineProvider:
 
     def __init__(self):
         self._last_key: Optional[str] = None
+        self._last_exact: bool = False
 
     def parse_intent(self, prompt: str, model: Optional[str] = None) -> RTLDesignSpec:
         self._last_key = od.match_design(prompt)
+        self._last_exact = od.is_exact_match(prompt)
         return RTLDesignSpec(**od.get_design(self._last_key)["spec"])
 
     def generate_rtl(self, spec: RTLDesignSpec, freq_hint: Optional[int],
@@ -224,7 +232,13 @@ class OfflineProvider:
     def explain_design(self, rtl_code: str, spec: RTLDesignSpec,
                        model: Optional[str] = None) -> str:
         key = od.design_key_from_rtl(rtl_code) or self._last_key or "counter"
-        return od.get_design(key)["explanation"]
+        base = od.get_design(key)["explanation"]
+        if not self._last_exact:
+            base = (
+                f"[Offline demo] Your request was not an exact match for a built-in "
+                f"design. Showing a representative counter design instead. {base}"
+            )
+        return base
 
     def fix_design(self, rtl_code: str, tb_code: str, log: str,
                    model: Optional[str] = None) -> dict:
@@ -233,7 +247,8 @@ class OfflineProvider:
         return {
             "rtl_code": golden,
             "testbench_code": tb_code,
-            "fix_summary": "Replaced the faulty RTL with a corrected implementation.",
+            "fix_summary": "Offline scripted fix: replaced with known-correct implementation.",
+            "fix_type": "offline_scripted",
         }
 
     # set by select_provider wrapper per-request
@@ -248,8 +263,13 @@ def _placeholder(v: str) -> bool:
 
 
 def _make_provider():
-    """Pick a provider from env. Priority: OFFLINE_MODE -> NVIDIA NIM -> OpenAI -> offline.
+    """Pick a provider from env. Priority: OFFLINE_MODE -> Opencode Zen -> NVIDIA NIM -> OpenAI -> offline.
 
+    Opencode Zen (remote, zero-budget, primary) — OpenAI-compatible free tier:
+        OPENCODE_API_KEY=sk-...  (or ZEN_API_KEY alias)
+        OPENCODE_BASE_URL=https://api.opencode.ai/v1  (or ZEN_BASE_URL; defaults to
+            https://api.opencode.ai/v1, also accepts https://opencode.ai/api/v1)
+        ZEN_MODEL / LLM_MODEL=opencode/muse-spark-1.2-contributor-free  # optional
     NVIDIA NIM (OpenAI-compatible, free credits at build.nvidia.com):
         NVIDIA_API_KEY=nvapi-...
         LLM_MODEL=qwen/qwen2.5-coder-32b-instruct   # optional, this is the default
@@ -257,9 +277,33 @@ def _make_provider():
         OPENAI_API_KEY=sk-...
     Any other OpenAI-compatible endpoint:
         OPENAI_API_KEY=... + OPENAI_BASE_URL=https://...
+    OFFLINE_MODE=1 always forces OfflineProvider, even if keys are set.
     """
     if os.getenv("OFFLINE_MODE", "").strip() in ("1", "true", "True"):
         return OfflineProvider()
+
+    # 0) Opencode Zen — primary zero-budget remote provider (must be before NVIDIA/OpenAI)
+    # Support both OPENCODE_* and ZEN_* env var aliases.
+    _opencode_key = os.getenv("OPENCODE_API_KEY", "").strip()
+    _zen_key = os.getenv("ZEN_API_KEY", "").strip()
+    zen_key = ""
+    if not _placeholder(_opencode_key):
+        zen_key = _opencode_key
+    elif not _placeholder(_zen_key):
+        zen_key = _zen_key
+    if zen_key:
+        # Base URL: OPENCODE_BASE_URL > ZEN_BASE_URL > default remote Zen endpoint.
+        # Default to https://api.opencode.ai/v1 (also handle https://opencode.ai/api/v1 if user set it).
+        _base_raw = os.getenv("OPENCODE_BASE_URL", "").strip() or os.getenv("ZEN_BASE_URL", "").strip()
+        zen_base = _base_raw if _base_raw else "https://api.opencode.ai/v1"
+        # Model: ZEN_MODEL > LLM_MODEL > default Spark model.
+        _zen_model = os.getenv("ZEN_MODEL", "").strip()
+        _llm_model = os.getenv("LLM_MODEL", "").strip()
+        zen_model = _zen_model or _llm_model or "opencode/muse-spark-1.2-contributor-free"
+        try:
+            return OpenAIProvider(api_key=zen_key, base_url=zen_base, model=zen_model, name="zen")
+        except Exception:
+            return OfflineProvider()
 
     nvidia_key = os.getenv("NVIDIA_API_KEY", "").strip()
     if not _placeholder(nvidia_key):
@@ -299,8 +343,13 @@ def is_offline() -> bool:
 # Model catalog — curated set verified to work with this app (return real,
 # non-empty content). Reasoning models that emit only hidden "thinking" tokens
 # are deliberately excluded because they return empty content.
+# Priority: Zen (free, remote) first, then NVIDIA/OpenAI curated models.
 # --------------------------------------------------------------------------- #
 CURATED_MODELS = [
+    {"id": "opencode/muse-spark-1.2-contributor-free", "label": "Muse Spark 1.2 (Zen Free)",
+     "note": "Opencode Zen · free · quality code", "tag": "balanced"},
+    {"id": "opencode/gpt-5.3-codex-spark", "label": "GPT-5.3 Codex Spark",
+     "note": "Fast code · zen", "tag": "fast"},
     {"id": "qwen/qwen3-coder-480b-a35b-instruct", "label": "Qwen3 Coder 480B",
      "note": "Code-specialized · most accurate · slow", "tag": "accurate"},
     {"id": "qwen/qwen3.5-397b-a17b", "label": "Qwen3.5 397B",
@@ -319,9 +368,11 @@ def current_model() -> Optional[str]:
 
 
 def list_models() -> dict:
-    """Models the user can choose for generation. Empty in offline mode."""
+    """Models the user can choose for generation."""
     if is_offline():
-        return {"offline": True, "current": None, "models": []}
+        return {"offline": True, "current": "offline", "models": [
+            {"id": "offline", "label": "Offline Demo", "note": "Scripted designs, no LLM", "tag": "fast"},
+        ]}
     return {"offline": False, "current": current_model(), "models": CURATED_MODELS}
 
 

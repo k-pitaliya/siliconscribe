@@ -1,0 +1,12 @@
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      OFFLINE_MODE: "1"
+    volumes:
+      - workspace:/app/workspace
+
+volumes:
+  workspace:

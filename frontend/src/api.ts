@@ -50,6 +50,51 @@ export async function reSimulate(
  * Stream the agentic pipeline over SSE (fetch + ReadableStream so we can POST a
  * JSON body, which EventSource cannot do). Calls onEvent for each stage.
  */
+export interface ProjectSummary {
+  design_id: string
+  prompt: string
+  module_name: string
+  status: string
+  created_at: number
+  iterations: number
+}
+
+export async function listProjects(limit = 20, offset = 0): Promise<{ total: number; projects: ProjectSummary[] }> {
+  const r = await fetch(`${BASE}/api/projects?limit=${limit}&offset=${offset}`)
+  if (!r.ok) throw new Error(`list projects failed: ${r.status}`)
+  return r.json()
+}
+
+export async function getProject(design_id: string): Promise<RunResponse> {
+  const r = await fetch(`${BASE}/api/projects/${design_id}`)
+  if (!r.ok) throw new Error(`get project failed: ${r.status}`)
+  return r.json()
+}
+
+export async function deleteProject(design_id: string): Promise<void> {
+  const r = await fetch(`${BASE}/api/projects/${design_id}`, { method: 'DELETE' })
+  if (!r.ok && r.status !== 204) throw new Error(`delete failed: ${r.status}`)
+}
+
+export interface UVMExportResponse {
+  module_name: string
+  files: Record<string, string>
+  file_count: number
+  is_sequential: boolean
+  zip_base64: string | null
+  note: string
+}
+
+export async function exportUVM(prompt: string, module_name?: string, model?: string): Promise<UVMExportResponse> {
+  const r = await fetch(`${BASE}/api/uvm/export`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prompt, module_name: module_name || undefined, model }),
+  })
+  if (!r.ok) throw new Error(`uvm export failed: ${r.status} ${await r.text()}`)
+  return r.json()
+}
+
 export async function streamDesign(
   params: RunParams,
   onEvent: (e: StreamEvent) => void,
