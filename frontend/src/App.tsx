@@ -49,14 +49,19 @@ export default function App() {
   useEffect(() => {
     getStatus()
       .then((s) => setProvider(s))
-      .catch(() => setProvider(null))
+      .catch(() => setProvider({ provider: 'offline', offline: true }))
     getModels()
       .then((m) => {
         setModels(m.models)
         setSelectedModel(m.current ?? m.models[0]?.id ?? '')
         if (m.offline) setProvider((prev) => prev ?? { provider: 'offline', offline: true })
       })
-      .catch(() => setModels([]))
+      .catch(() => {
+        // Backend unreachable (e.g., Vercel frontend without Render backend) → show offline demo fallback
+        setModels([{ id: 'offline', label: 'Offline Demo', note: 'Backend unavailable — offline demo', tag: 'fast' }])
+        setSelectedModel('offline')
+        setProvider({ provider: 'offline', offline: true })
+      })
     refreshProjects()
   }, [])
 
