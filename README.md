@@ -123,3 +123,18 @@ frontend/
   src/api.ts         REST + SSE (fetch+Reader) + projects/uvm export client
   src/types.ts       RunResponse + ProjectSummary + UVMExportResponse + StreamEvent lint/synthesis
 ```
+
+## Deploy (Free Tier)
+
+**Frontend (Vercel):** `vercel.json` → `build: cd frontend && npm ci && npm run build`, `output: frontend/dist`, rewrites `/api/*` → backend.
+
+**Backend (Render):** `render.yaml` → `Dockerfile` (`yosys+iverilog`, `OFFLINE_MODE=1`), `healthCheck: /health`, set `OPENCODE_API_KEY` as secret env for Zen.
+
+```bash
+# Push to GitHub then
+vercel --prod   # or import via vercel.com/new
+# Render: connect repo at render.com, picks render.yaml auto
+```
+
+Live demo after deploy: `https://siliconscribe.vercel.app` (frontend) + `https://siliconscribe-backend.onrender.com` (backend `/docs`).
+
