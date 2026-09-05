@@ -103,9 +103,9 @@ endmodule
 """
 
 # ---------------------------------------------------------------------------
-# 4-bit ALU
+# ALU — supports both 4-bit and 8-bit via WIDTH param (offline demo)
 # ---------------------------------------------------------------------------
-ALU_SPEC = {
+ALU_SPEC_4 = {
     "module_name": "alu_4bit",
     "parameters": [{"name": "WIDTH", "type": "integer", "default": 4}],
     "ports": [
@@ -118,8 +118,23 @@ ALU_SPEC = {
     "behavior": "4-bit ALU: add, sub, and, or, xor with overflow on add/sub.",
     "constraints": ["Combinational"],
 }
+ALU_SPEC_8 = {
+    "module_name": "alu_8bit",
+    "parameters": [{"name": "WIDTH", "type": "integer", "default": 8}],
+    "ports": [
+        {"name": "a", "direction": "input", "width": 8, "description": "Operand A"},
+        {"name": "b", "direction": "input", "width": 8, "description": "Operand B"},
+        {"name": "opcode", "direction": "input", "width": 3, "description": "Operation select"},
+        {"name": "result", "direction": "output", "width": 8, "description": "Result"},
+        {"name": "overflow", "direction": "output", "width": 1, "description": "Carry/overflow"},
+    ],
+    "behavior": "8-bit ALU: add, sub, and, or, xor with overflow on add/sub.",
+    "constraints": ["Combinational"],
+}
+# Keep backward compat alias
+ALU_SPEC = ALU_SPEC_4
 
-ALU_RTL = _marker("alu") + """module alu_4bit #(
+ALU_RTL_4 = _marker("alu") + """module alu_4bit #(
     parameter WIDTH = 4
 )(
     input  wire [WIDTH-1:0] a,
@@ -141,8 +156,31 @@ ALU_RTL = _marker("alu") + """module alu_4bit #(
     end
 endmodule
 """
+ALU_RTL_8 = _marker("alu8") + """module alu_8bit #(
+    parameter WIDTH = 8
+)(
+    input  wire [WIDTH-1:0] a,
+    input  wire [WIDTH-1:0] b,
+    input  wire [2:0]       opcode,
+    output reg  [WIDTH-1:0] result,
+    output reg              overflow
+);
+    always @(*) begin
+        overflow = 1'b0;
+        case (opcode)
+            3'b000: {overflow, result} = a + b;
+            3'b001: {overflow, result} = a - b;
+            3'b010: result = a & b;
+            3'b011: result = a | b;
+            3'b100: result = a ^ b;
+            default: result = {WIDTH{1'b0}};
+        endcase
+    end
+endmodule
+"""
+ALU_RTL = ALU_RTL_4
 
-ALU_TB = """`timescale 1ns/1ps
+ALU_TB_4 = """`timescale 1ns/1ps
 module testbench;
     reg  [3:0] a, b;
     reg  [2:0] opcode;
@@ -182,6 +220,47 @@ module testbench;
     end
 endmodule
 """
+ALU_TB_8 = """`timescale 1ns/1ps
+module testbench;
+    reg  [7:0] a, b;
+    reg  [2:0] opcode;
+    wire [7:0] result;
+    wire       overflow;
+    integer pass_count = 0;
+    integer fail_count = 0;
+    integer i;
+    reg  [7:0] exp;
+
+    alu_8bit #(8) dut (.a(a), .b(b), .opcode(opcode), .result(result), .overflow(overflow));
+
+    initial begin
+        for (i = 0; i < 200; i = i + 1) begin
+            a = $random;
+            b = $random;
+            opcode = i % 5;
+            #5;
+            case (opcode)
+                3'b000: exp = a + b;
+                3'b001: exp = a - b;
+                3'b010: exp = a & b;
+                3'b011: exp = a | b;
+                3'b100: exp = a ^ b;
+                default: exp = 8'b0;
+            endcase
+            if (result === exp) pass_count = pass_count + 1;
+            else begin
+                $display("FAIL: op=%0d a=%0d b=%0d result=%0d exp=%0d", opcode, a, b, result, exp);
+                fail_count = fail_count + 1;
+            end
+        end
+        $display("Passed: %0d", pass_count);
+        $display("Failed: %0d", fail_count);
+        if (fail_count == 0) $display("ALL TESTS PASSED");
+        $finish;
+    end
+endmodule
+"""
+ALU_TB = ALU_TB_4
 
 # ---------------------------------------------------------------------------
 # Full adder
@@ -318,10 +397,14 @@ endmodule
 """
 
 DESIGNS = {
-    "alu": {"spec": ALU_SPEC, "rtl": ALU_RTL, "tb": ALU_TB,
+    "alu": {"spec": ALU_SPEC_4, "rtl": ALU_RTL_4, "tb": ALU_TB_4,
             "explanation": "A combinational 4-bit ALU. opcode selects add/sub/and/or/xor; "
                            "add and subtract expose carry/borrow on the overflow output via "
                            "a 5-bit concatenation assignment."},
+    "alu8": {"spec": ALU_SPEC_8, "rtl": ALU_RTL_8, "tb": ALU_TB_8,
+            "explanation": "A combinational 8-bit ALU. opcode selects add/sub/and/or/xor; "
+                           "add and subtract expose carry/borrow on the overflow output via "
+                           "a 9-bit concatenation assignment."},
     "counter": {"spec": COUNTER_SPEC, "rtl": COUNTER_RTL, "rtl_buggy": COUNTER_RTL_BUGGY,
                 "tb": COUNTER_TB,
                 "explanation": "A parameterizable synchronous up-counter with an asynchronous "
@@ -342,6 +425,9 @@ _KEYWORDS = [
 
 def match_design(prompt: str) -> str:
     p = prompt.lower()
+    # Check for 8-bit ALU before generic ALU (width-specific)
+    if "alu" in p and "8" in p:
+        return "alu8"
     for key, words in _KEYWORDS:
         if any(w in p for w in words):
             return key
