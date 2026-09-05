@@ -4,6 +4,8 @@ services:
     env: docker
     dockerfilePath: ./Dockerfile
     plan: free
+    branch: production-readiness
+    healthCheckPath: /health
     envVars:
       - key: OFFLINE_MODE
         value: "1"
@@ -11,4 +13,3 @@ services:
         sync: false
       - key: PYTHONUNBUFFERED
         value: "1"
-    healthCheckPath: /health

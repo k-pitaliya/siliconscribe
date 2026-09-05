@@ -3,7 +3,7 @@ import PromptPanel from './components/PromptPanel'
 import CodeEditor from './components/CodeEditor'
 import ResultsPanel from './components/ResultsPanel'
 import AgentChat, { type ChatMessage } from './components/AgentChat'
-import { getStatus, getModels, streamDesign, reSimulate, exportUVM, listProjects, deleteProject } from './api'
+import { getStatus, getModels, streamDesign, reSimulate, exportUVM, listProjects, deleteProject, getProject } from './api'
 import type {
   IterationRecord,
   LintInfo,
@@ -54,7 +54,7 @@ export default function App() {
       .then((m) => {
         setModels(m.models)
         setSelectedModel(m.current ?? m.models[0]?.id ?? '')
-        if (m.offline) setProvider((prev) => prev ?? { provider: 'offline', offline: true })
+        if (m.offline) setProvider({ provider: 'offline', offline: true })
       })
       .catch(() => {
         // Backend unreachable (e.g., Vercel frontend without Render backend) → show offline demo fallback
@@ -184,8 +184,10 @@ export default function App() {
         const a = document.createElement('a')
         a.href = url
         a.download = `${resp.module_name}_uvm_bundle.zip`
+        document.body.appendChild(a)
         a.click()
-        URL.revokeObjectURL(url)
+        a.remove()
+        setTimeout(() => URL.revokeObjectURL(url), 1000)
         pushMsg({ role: 'ai', text: `UVM bundle ready: ${resp.file_count} files (Questa style, not Icarus). Zip downloaded.`, stage: 'synthesis' })
       } else {
         pushMsg({ role: 'ai', text: `UVM bundle: ${resp.file_count} files for ${resp.module_name}. ${resp.note}`, stage: 'synthesis' })
@@ -197,7 +199,7 @@ export default function App() {
 
   async function handleLoadProject(id: string) {
     try {
-      const proj = await import('./api').then(m => m.getProject(id))
+      const proj = await getProject(id)
       setRtl(proj.rtl_code)
       setTb(proj.testbench_code)
       setModuleName(proj.rtl_spec.module_name)
@@ -207,7 +209,7 @@ export default function App() {
       setHistory(proj.iteration_history)
       setDesignId(proj.design_id)
       setExplanation(proj.explanation)
-      setSynthesis((proj as any).synthesis ?? null)
+      setSynthesis(proj.synthesis ?? null)
       pushMsg({ role: 'ai', text: `Loaded project ${id} (${proj.rtl_spec.module_name})`, stage: 'done', status: proj.status })
       setShowProjects(false)
     } catch (err) {
