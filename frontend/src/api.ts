@@ -14,6 +14,17 @@ export interface RunParams {
 }
 
 export async function getStatus(): Promise<{ provider: string; offline: boolean; simulator_available: boolean }> {
+  // On Vercel, `/` is frontend HTML, not API. Use /api/models as status proxy (has offline + provider).
+  // Try /api/models first (proxied to Render), fallback to / for local dev.
+  try {
+    const r = await fetch(`${BASE}/api/models`)
+    if (r.ok) {
+      const m = (await r.json()) as ModelsResponse
+      return { provider: m.current || (m.offline ? 'offline' : 'zen'), offline: m.offline, simulator_available: true }
+    }
+  } catch {
+    /* fall through */
+  }
   const r = await fetch(`${BASE}/`)
   return r.json()
 }
