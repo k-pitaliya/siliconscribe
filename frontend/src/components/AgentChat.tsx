@@ -85,7 +85,7 @@ export default function AgentChat({ messages, running, explanation }: Props) {
           )}
           <div ref={endRef} tabIndex={-1} aria-hidden="true" />
         </div>
-        {explanation && (
+        {explanation && messages.length > 0 && messages[messages.length - 1]?.text !== explanation && (
           <div className="explanation-box" role="note" aria-label="Design explanation">
             <i className="fa-solid fa-circle-info" aria-hidden="true" /> {explanation}
           </div>
