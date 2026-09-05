@@ -259,7 +259,11 @@ class OfflineProvider:
 # Provider selection
 # --------------------------------------------------------------------------- #
 def _placeholder(v: str) -> bool:
-    return not v or v.startswith("your_")
+    return not v or v.strip().lower().startswith("your_")
+
+
+def _is_offline_env() -> bool:
+    return os.getenv("OFFLINE_MODE", "").strip().lower() in ("1", "true", "yes", "on")
 
 
 def _make_provider():
@@ -279,7 +283,7 @@ def _make_provider():
         OPENAI_API_KEY=... + OPENAI_BASE_URL=https://...
     OFFLINE_MODE=1 always forces OfflineProvider, even if keys are set.
     """
-    if os.getenv("OFFLINE_MODE", "").strip() in ("1", "true", "True"):
+    if _is_offline_env():
         return OfflineProvider()
 
     # 0) Opencode Zen — primary zero-budget remote provider (must be before NVIDIA/OpenAI)
@@ -329,14 +333,21 @@ def _make_provider():
 
 
 _provider = _make_provider()
+# Singleton offline instance for dynamic OFFLINE_MODE forcing without re-creating
+_offline_provider = _provider if isinstance(_provider, OfflineProvider) else OfflineProvider()
 
 
 def get_provider():
+    # Dynamic check: OFFLINE_MODE=1 must always force offline even if _provider was cached as zen
+    if _is_offline_env():
+        return _offline_provider
     return _provider
 
 
 def is_offline() -> bool:
-    return _provider.name == "offline"
+    if _is_offline_env():
+        return True
+    return getattr(_provider, "name", "") == "offline"
 
 
 # --------------------------------------------------------------------------- #
@@ -364,7 +375,8 @@ CURATED_MODELS = [
 
 
 def current_model() -> Optional[str]:
-    return getattr(_provider, "model", None) if not is_offline() else None
+    prov = get_provider()
+    return getattr(prov, "model", None) if not is_offline() else None
 
 
 def list_models() -> dict:
@@ -381,23 +393,24 @@ def list_models() -> dict:
 # default for a single request (the UI model picker passes it through).
 # --------------------------------------------------------------------------- #
 def parse_intent(prompt: str, model: Optional[str] = None) -> RTLDesignSpec:
-    if isinstance(_provider, OfflineProvider):
-        _provider._buggy = od.is_buggy_request(prompt)
-    return _provider.parse_intent(prompt, model=model)
+    prov = get_provider()
+    if isinstance(prov, OfflineProvider):
+        prov._buggy = od.is_buggy_request(prompt)
+    return prov.parse_intent(prompt, model=model)
 
 
 def generate_rtl(spec: RTLDesignSpec, freq_hint: Optional[int] = None,
                  model: Optional[str] = None) -> str:
-    return _provider.generate_rtl(spec, freq_hint, model=model)
+    return get_provider().generate_rtl(spec, freq_hint, model=model)
 
 
 def generate_testbench(rtl_code: str, spec: RTLDesignSpec, model: Optional[str] = None) -> str:
-    return _provider.generate_testbench(rtl_code, spec, model=model)
+    return get_provider().generate_testbench(rtl_code, spec, model=model)
 
 
 def explain_design(rtl_code: str, spec: RTLDesignSpec, model: Optional[str] = None) -> str:
-    return _provider.explain_design(rtl_code, spec, model=model)
+    return get_provider().explain_design(rtl_code, spec, model=model)
 
 
 def fix_design(rtl_code: str, tb_code: str, log: str, model: Optional[str] = None) -> dict:
-    return _provider.fix_design(rtl_code, tb_code, log, model=model)
+    return get_provider().fix_design(rtl_code, tb_code, log, model=model)

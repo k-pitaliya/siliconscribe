@@ -10,13 +10,16 @@ DESIGN_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{1,32}$")
 class PortSpec(BaseModel):
     name: str = Field(..., description="Port name")
     direction: Literal["input", "output", "inout"] = Field(..., description="Port direction")
-    width: int = Field(1, description="Bit width of the port")
+    width: int = Field(1, ge=1, le=1024, description="Bit width of the port")
     description: str = Field("", description="Brief description of the port")
 
     @field_validator("width", mode="before")
     @classmethod
     def coerce_width(cls, v):
         """Accept numeric strings, parameter names (WIDTH), or plain ints."""
+        # Reject booleans explicitly (bool is subclass of int)
+        if isinstance(v, bool):
+            return 1
         if isinstance(v, int):
             return v
         if isinstance(v, str):

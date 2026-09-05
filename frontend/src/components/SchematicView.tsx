@@ -6,8 +6,9 @@ export default function SchematicView({ schematic }: { schematic: Schematic | nu
   const inputs = schematic.inputs
   const outputs = schematic.outputs
   const inouts = schematic.inouts ?? []
-  // Include inouts in row calculation; render them mid-height
-  const rows = Math.max(inputs.length, outputs.length, inouts.length, 1)
+  // Include inouts stacked below inputs so total left-side ports fit; avoid overflow clipping
+  const leftRows = inputs.length + inouts.length
+  const rows = Math.max(leftRows, outputs.length, inouts.length, 1)
 
   const ROW = 34
   const PAD = 30

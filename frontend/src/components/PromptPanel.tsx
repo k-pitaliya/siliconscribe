@@ -44,6 +44,10 @@ export default function PromptPanel({
       setTimeout(() => setInvalid(false), 1000)
       return
     }
+    if (text.length > 2000) {
+      setInvalid(true)
+      return
+    }
     const safeFreq = clampFreq(freq)
     if (safeFreq !== freq) setFreq(safeFreq)
     onGenerate(text, safeFreq)
@@ -108,20 +112,25 @@ export default function PromptPanel({
             aria-label="Natural Language Requirement"
             aria-required="true"
             aria-invalid={invalid}
-            aria-describedby={invalid ? 'prompt-error' : undefined}
+            aria-describedby={invalid ? 'prompt-error' : prompt.length > 2000 ? 'prompt-error' : undefined}
             value={prompt}
+            maxLength={2000}
             onChange={(e) => setPrompt(e.target.value)}
             onKeyDown={handleTextareaKey}
             placeholder="e.g., Design a 4-bit ALU with add, sub, and, or, xor operations with overflow detection..."
-            style={invalid ? { borderColor: 'var(--neg-red)' } : undefined}
+            style={invalid || prompt.length > 2000 ? { borderColor: 'var(--neg-red)' } : undefined}
           />
-          {invalid && (
+          {prompt.length > 2000 ? (
+            <span id="prompt-error" role="alert" style={{ color: 'var(--neg-red)', fontSize: '0.78rem', marginTop: 4, display: 'block' }}>
+              Prompt too long — max 2000 characters ({prompt.length}/2000).
+            </span>
+          ) : invalid ? (
             <span id="prompt-error" role="alert" style={{ color: 'var(--neg-red)', fontSize: '0.78rem', marginTop: 4, display: 'block' }}>
               Please enter a design prompt.
             </span>
-          )}
-          <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: 4, display: 'block' }}>
-            Tip: Press <kbd>Ctrl</kbd> + <kbd>Enter</kbd> to generate
+          ) : null}
+          <span style={{ fontSize: '0.7rem', color: prompt.length > 1800 ? 'var(--warn-amber)' : 'var(--text-muted)', marginTop: 4, display: 'block' }}>
+            {prompt.length}/2000 · Tip: Press <kbd>Ctrl</kbd> + <kbd>Enter</kbd> to generate
           </span>
         </div>
 

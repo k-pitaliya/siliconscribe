@@ -64,16 +64,21 @@ def synthesize_with_yosys(rtl_code: str, module_name: str, work_dir: Path) -> di
     work_dir = Path(work_dir)
     try:
         work_dir.mkdir(parents=True, exist_ok=True)
-    except Exception as e:
-        return {"available": True, "error": f"Could not create work_dir: {e}"}
+    except Exception:
+        # Generic to avoid leaking internal path / OS error details
+        import logging as _logging
+        _logging.getLogger("siliconscribe.synthesis").exception("work_dir create failed")
+        return {"available": True, "error": "Could not create work_dir"}
 
     rtl_file = work_dir / f"{module_name}.sv"
     json_out = work_dir / f"{module_name}_netlist.json"
 
     try:
         rtl_file.write_text(rtl_code)
-    except Exception as e:
-        return {"available": True, "error": f"Failed to write RTL: {e}"}
+    except Exception:
+        import logging as _logging
+        _logging.getLogger("siliconscribe.synthesis").exception("write RTL failed")
+        return {"available": True, "error": "Failed to write RTL"}
 
     # Build the yosys script.  Keep it single-string for ``yosys -p``.
     # read_verilog -sv -> SystemVerilog, hierarchy check, proc/opt, synth, stat, write_json
@@ -143,5 +148,7 @@ def synthesize_with_yosys(rtl_code: str, module_name: str, work_dir: Path) -> di
     except FileNotFoundError:
         # yosys disappeared between shutil.which and run
         return {"available": False}
-    except Exception as e:
-        return {"available": True, "error": str(e)}
+    except Exception:
+        import logging as _logging
+        _logging.getLogger("siliconscribe.synthesis").exception("yosys synthesis failed")
+        return {"available": True, "error": "synthesis failed"}

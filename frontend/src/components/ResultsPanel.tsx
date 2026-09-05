@@ -231,7 +231,7 @@ function ResultsView({
 
       <details className="log-details" open={result.status !== 'PASS'}>
         <summary>Simulation log</summary>
-        <pre className="log-pre">{result.log_excerpt}</pre>
+        <pre className="log-pre">{result.log_excerpt.slice(0, 2500)}{result.log_excerpt.length > 2500 ? '\n… truncated (2500 chars shown)' : ''}</pre>
       </details>
     </div>
   )

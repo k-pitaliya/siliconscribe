@@ -1,4 +1,5 @@
-import type { ModelsResponse, RunResponse, SimulationResult, StreamEvent } from './types'
+import type { ModelsResponse, RunResponse, SimulationResult, StreamEvent, ProjectSummary, UVMExportResponse } from './types'
+export type { ProjectSummary, UVMExportResponse } from './types'
 
 // In dev, Vite proxies /api -> :8000. Override with VITE_API_BASE if needed.
 const BASE = import.meta.env.VITE_API_BASE ?? ''
@@ -50,15 +51,6 @@ export async function reSimulate(
  * Stream the agentic pipeline over SSE (fetch + ReadableStream so we can POST a
  * JSON body, which EventSource cannot do). Calls onEvent for each stage.
  */
-export interface ProjectSummary {
-  design_id: string
-  prompt: string
-  module_name: string
-  status: string
-  created_at: number
-  iterations: number
-}
-
 export async function listProjects(limit = 20, offset = 0): Promise<{ total: number; projects: ProjectSummary[] }> {
   const r = await fetch(`${BASE}/api/projects?limit=${limit}&offset=${offset}`)
   if (!r.ok) throw new Error(`list projects failed: ${r.status}`)
@@ -74,15 +66,6 @@ export async function getProject(design_id: string): Promise<RunResponse> {
 export async function deleteProject(design_id: string): Promise<void> {
   const r = await fetch(`${BASE}/api/projects/${design_id}`, { method: 'DELETE' })
   if (!r.ok && r.status !== 204) throw new Error(`delete failed: ${r.status}`)
-}
-
-export interface UVMExportResponse {
-  module_name: string
-  files: Record<string, string>
-  file_count: number
-  is_sequential: boolean
-  zip_base64: string | null
-  note: string
 }
 
 export async function exportUVM(prompt: string, module_name?: string, model?: string): Promise<UVMExportResponse> {

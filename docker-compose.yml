@@ -5,8 +5,17 @@ services:
       - "8000:8000"
     environment:
       OFFLINE_MODE: "1"
+      PYTHONUNBUFFERED: "1"
+      # Passthrough for live LLM (optional, falls back to offline when blank)
+      OPENCODE_API_KEY: "${OPENCODE_API_KEY:-}"
     volumes:
       - workspace:/app/workspace
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
 volumes:
   workspace:

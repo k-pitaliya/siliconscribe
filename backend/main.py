@@ -50,12 +50,28 @@ def _check_rate_limit(ip: str):
     now = time.time()
     cutoff = now - RATE_LIMIT_WINDOW
     _rate_log[ip] = [t for t in _rate_log[ip] if t > cutoff]
+    # Prune empty entries for other IPs to prevent unbounded growth (CWE-770)
+    if len(_rate_log) > 500:
+        # Opportunistic sweep: remove IPs with no recent requests
+        for k in list(_rate_log.keys()):
+            if k != ip and not _rate_log[k]:
+                _rate_log.pop(k, None)
+            elif k != ip:
+                # also prune stale timestamps for other IPs lazily
+                trimmed = [t for t in _rate_log[k] if t > cutoff]
+                if not trimmed:
+                    _rate_log.pop(k, None)
+                elif len(trimmed) != len(_rate_log[k]):
+                    _rate_log[k] = trimmed
     if len(_rate_log[ip]) >= RATE_LIMIT_MAX_REQUESTS:
         raise HTTPException(
             status_code=429,
             detail=f"Rate limit exceeded. Max {RATE_LIMIT_MAX_REQUESTS} requests per {RATE_LIMIT_WINDOW}s.",
         )
     _rate_log[ip].append(now)
+    # If list became empty before append (edge), ensure key exists
+    if not _rate_log[ip]:
+        _rate_log[ip] = [now]
 
 app = FastAPI(title="SiliconScribe API", version="1.0.0")
 
@@ -64,7 +80,13 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:3000", "http://localhost:5173",
         "http://127.0.0.1:5173", "http://localhost:4173",
+        # Production: Vercel frontend → Render backend (rewrites proxy, but keep CORS for direct calls)
+        "https://siliconscribe.vercel.app",
+        "https://siliconscribe.onrender.com",
+        # Vercel preview deployments
+        "https://*.vercel.app",
     ],
+    allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -122,9 +144,12 @@ try:
                 logger.exception("lifespan db init failed")
         yield
 
-    # Only assign if not already set; app.router.lifespan_context is newer API
-    if not getattr(app, "router", None) or not getattr(app.router, "lifespan_context", None):
-        pass  # keep existing on_event; lifespan wiring is optional
+    # Wire lifespan for newer FastAPI/Starlette if not already set
+    try:
+        if getattr(app, "router", None) is not None and not getattr(app.router, "lifespan_context", None):
+            app.router.lifespan_context = lifespan
+    except Exception:
+        pass
 except Exception:
     pass
 
@@ -413,6 +438,21 @@ async def admin_cleanup(request: Request, ttl_hours: int = 24):
     except Exception:
         logger.exception("admin cleanup failed")
         raise HTTPException(status_code=500, detail="Internal server error")
+
+
+# Serve frontend static when Docker image includes it (docker-compose local single-container).
+# In split deploy (Vercel frontend + Render backend) ./static does not exist and this is a no-op.
+try:
+    from fastapi.staticfiles import StaticFiles
+
+    _static_candidates = [Path(__file__).parent / "static", Path("static"), Path("./static")]
+    _static_dir = next((p for p in _static_candidates if p.exists() and (p / "index.html").exists()), None)
+    if _static_dir is not None:
+        # Mount at "/" after API routes; explicit API routes (/, /health, /api/*) take precedence
+        app.mount("/", StaticFiles(directory=str(_static_dir), html=True), name="frontend")
+        logger.info("mounted static frontend from %s", _static_dir.resolve())
+except Exception:
+    logger.exception("static mount failed (non-fatal, API-only mode)")
 
 
 if __name__ == "__main__":
