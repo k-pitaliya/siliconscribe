@@ -54,7 +54,12 @@ export default function App() {
       .then((m) => {
         setModels(m.models)
         setSelectedModel(m.current ?? m.models[0]?.id ?? '')
-        if (m.offline) setProvider({ provider: 'offline', offline: true })
+        // Always sync provider from models (live zen or offline) — fixes Vercel getStatus HTML vs /api/models Live mismatch
+        if (m.offline) {
+          setProvider({ provider: 'offline', offline: true })
+        } else {
+          setProvider({ provider: m.current || 'zen', offline: false })
+        }
       })
       .catch(() => {
         // Backend unreachable (e.g., Vercel frontend without Render backend) → show offline demo fallback
