@@ -20,6 +20,7 @@ export default function App() {
   const [provider, setProvider] = useState<{ provider: string; offline: boolean } | null>(null)
   const [models, setModels] = useState<ModelInfo[]>([])
   const [selectedModel, setSelectedModel] = useState<string>('')
+  const [selectedThinking, setSelectedThinking] = useState<string>('')
   const [running, setRunning] = useState(false)
 
   const [rtl, setRtl] = useState('')
@@ -53,7 +54,15 @@ export default function App() {
     getModels()
       .then((m) => {
         setModels(m.models)
-        setSelectedModel(m.current ?? m.models[0]?.id ?? '')
+        const firstId = m.current ?? m.models[0]?.id ?? ''
+        setSelectedModel(firstId)
+        // Set default thinking level for first model (if it has variants)
+        const firstModel = m.models.find(x => x.id === firstId)
+        if (firstModel?.thinking_levels && firstModel.thinking_levels.length > 0) {
+          // Default to middle level or first
+          const levels = firstModel.thinking_levels
+          setSelectedThinking(levels[Math.floor(levels.length / 2)] || levels[0])
+        }
         // Always sync provider from models (live zen or offline) — fixes Vercel getStatus HTML vs /api/models Live mismatch
         if (m.offline) {
           setProvider({ provider: 'offline', offline: true })
@@ -81,6 +90,10 @@ export default function App() {
 
   const pushMsg = (m: ChatMessage) => setMessages((prev) => [...prev, m])
 
+  // When model changes, update thinking level to valid for that model
+  const activeModelForThinking = models.find(m => m.id === selectedModel)
+  const availableThinking = activeModelForThinking?.thinking_levels || []
+
   async function handleGenerate(prompt: string, freq: number) {
     if (running) return
     setRunning(true)
@@ -96,6 +109,9 @@ export default function App() {
     const ctrl = new AbortController()
     abortRef.current = ctrl
 
+    // Only send thinking level if model actually supports it (real, not fake)
+    const thinkingToSend = availableThinking.includes(selectedThinking) ? selectedThinking : undefined
+
     try {
       await streamDesign(
         {
@@ -105,6 +121,7 @@ export default function App() {
           max_iterations: 5,
           timeout_seconds: 30,
           model: selectedModel || undefined,
+          reasoning_effort: thinkingToSend,
         },
         (e) => {
           if (e.message && ['intent', 'rtl', 'testbench', 'explanation', 'simulate', 'fixing', 'fix', 'lint', 'synthesis', 'done', 'error'].includes(e.stage)) {
@@ -187,7 +204,8 @@ export default function App() {
     const prompt = `Design a UVM testbench for ${moduleName}`
     pushMsg({ role: 'user', text: `Exporting UVM bundle for ${moduleName}…` })
     try {
-      const resp = await exportUVM(prompt, moduleName, selectedModel || undefined)
+      const thinkingToSend = availableThinking.includes(selectedThinking) ? selectedThinking : undefined
+      const resp = await exportUVM(prompt, moduleName, selectedModel || undefined, thinkingToSend)
       // trigger download from base64 zip
       if (resp.zip_base64) {
         const bytes = Uint8Array.from(atob(resp.zip_base64), c => c.charCodeAt(0))
@@ -304,7 +322,17 @@ export default function App() {
           running={running}
           models={models}
           selectedModel={selectedModel}
-          onModelChange={setSelectedModel}
+          onModelChange={(id) => {
+            setSelectedModel(id)
+            const m = models.find(x => x.id === id)
+            if (m?.thinking_levels && m.thinking_levels.length > 0) {
+              setSelectedThinking(m.thinking_levels[Math.floor(m.thinking_levels.length / 2)] || m.thinking_levels[0])
+            } else {
+              setSelectedThinking('')
+            }
+          }}
+          selectedThinking={selectedThinking}
+          onThinkingChange={setSelectedThinking}
           offline={provider?.offline ?? false}
         />
 

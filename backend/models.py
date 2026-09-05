@@ -51,6 +51,9 @@ class GenerateRequest(BaseModel):
     include_testbench: bool = Field(True, description="Generate testbench along with RTL")
     target_frequency_mhz: Optional[int] = Field(None, ge=1, le=10000, description="Target clock frequency hint")
     model: Optional[str] = Field(None, max_length=100, description="Override LLM model for this request")
+    reasoning_effort: Optional[Literal["low", "medium", "high", "xhigh", "max"]] = Field(
+        None, description="Thinking level / reasoning effort for the model (actual, not display). Only for models that support it."
+    )
 
 
 class GenerateResponse(BaseModel):
@@ -146,6 +149,9 @@ class RunRequest(BaseModel):
     max_iterations: int = Field(5, ge=0, le=10, description="Max self-correction iterations")
     timeout_seconds: int = Field(30, ge=1, le=120, description="Per-simulation timeout")
     model: Optional[str] = Field(None, max_length=100, description="Override LLM model for this run")
+    reasoning_effort: Optional[Literal["low", "medium", "high", "xhigh", "max"]] = Field(
+        None, description="Thinking level / reasoning effort (actual, model-specific). Only for models with variants."
+    )
 
 
 class RunResponse(BaseModel):
@@ -193,6 +199,9 @@ class UVMExportRequest(BaseModel):
     )
     target_frequency_mhz: Optional[int] = Field(None, ge=1, le=10000, description="Optional clock hint, unused for UVM but kept for parity")
     model: Optional[str] = Field(None, max_length=100, description="Optional LLM model override")
+    reasoning_effort: Optional[Literal["low", "medium", "high", "xhigh", "max"]] = Field(
+        None, description="Thinking level / reasoning effort (actual, model-specific)."
+    )
 
     @field_validator("module_name")
     @classmethod

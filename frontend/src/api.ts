@@ -11,6 +11,7 @@ export interface RunParams {
   max_iterations?: number
   timeout_seconds?: number
   model?: string
+  reasoning_effort?: string
 }
 
 export async function getStatus(): Promise<{ provider: string; offline: boolean; simulator_available: boolean }> {
@@ -79,11 +80,11 @@ export async function deleteProject(design_id: string): Promise<void> {
   if (!r.ok && r.status !== 204) throw new Error(`delete failed: ${r.status}`)
 }
 
-export async function exportUVM(prompt: string, module_name?: string, model?: string): Promise<UVMExportResponse> {
+export async function exportUVM(prompt: string, module_name?: string, model?: string, reasoning_effort?: string): Promise<UVMExportResponse> {
   const r = await fetch(`${BASE}/api/uvm/export`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ prompt, module_name: module_name || undefined, model }),
+    body: JSON.stringify({ prompt, module_name: module_name || undefined, model, reasoning_effort }),
   })
   if (!r.ok) throw new Error(`uvm export failed: ${r.status} ${await r.text()}`)
   return r.json()

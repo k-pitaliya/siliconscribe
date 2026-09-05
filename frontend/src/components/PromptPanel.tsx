@@ -14,6 +14,8 @@ interface Props {
   models: ModelInfo[]
   selectedModel: string
   onModelChange: (id: string) => void
+  selectedThinking?: string
+  onThinkingChange?: (level: string) => void
   offline: boolean
 }
 
@@ -23,6 +25,8 @@ export default function PromptPanel({
   models,
   selectedModel,
   onModelChange,
+  selectedThinking,
+  onThinkingChange,
   offline,
 }: Props) {
   const [prompt, setPrompt] = useState('')
@@ -99,6 +103,30 @@ export default function PromptPanel({
                 <div className="model-note" aria-live="polite">
                   <span className={`model-tag ${activeModel.tag}`}>{activeModel.tag}</span>
                   {activeModel.note}
+                </div>
+              )}
+              {activeModel?.thinking_levels && activeModel.thinking_levels.length > 0 && onThinkingChange && (
+                <div style={{ marginTop: '0.7rem' }}>
+                  <label htmlFor="thinking-select" style={{ fontSize: '0.78rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.3rem' }}>
+                    Thinking Level <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>· actual reasoning effort</span>
+                  </label>
+                  <select
+                    id="thinking-select"
+                    aria-label="Thinking level"
+                    className="model-select"
+                    value={selectedThinking || activeModel.thinking_levels[Math.floor(activeModel.thinking_levels.length / 2)] || activeModel.thinking_levels[0]}
+                    onChange={(e) => onThinkingChange(e.target.value)}
+                    disabled={running}
+                  >
+                    {activeModel.thinking_levels.map((lvl) => (
+                      <option key={lvl} value={lvl}>
+                        {lvl} {lvl === 'low' ? '· fast' : lvl === 'medium' ? '· balanced' : lvl === 'high' ? '· thorough' : lvl === 'xhigh' ? '· very thorough' : lvl === 'max' ? '· max' : ''}
+                      </option>
+                    ))}
+                  </select>
+                  <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '0.3rem' }}>
+                    Real effort sent as <code>{activeModel.id}:{selectedThinking || activeModel.thinking_levels[Math.floor(activeModel.thinking_levels.length / 2)]}</code>
+                  </div>
                 </div>
               )}
             </>

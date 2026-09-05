@@ -129,20 +129,53 @@ class OpenAIProvider:
         self.name = name
 
     def _chat(self, system: Optional[str], user: str, temperature: float,
-              mini: bool = False, model: Optional[str] = None) -> str:
+              mini: bool = False, model: Optional[str] = None, reasoning_effort: Optional[str] = None) -> str:
         messages = []
         if system:
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": user})
         chosen = model or (self.mini_model if mini else self.model)
+        # Handle thinking level as model:variant suffix for opencode zen (e.g., opencode/claude-fable-5:high)
+        # If reasoning_effort is provided and model has variants, append :variant to model name
+        if reasoning_effort and ":" not in chosen and chosen.startswith("opencode/"):
+            # Check if this model actually has that variant - we trust caller, zen will 404 if invalid and fallback will handle
+            chosen = f"{chosen}:{reasoning_effort}"
+        # For templated tests that pass reasoning_effort but model is offline, ignore
+        create_kwargs = {
+            "model": chosen,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": 8192,
+            "timeout": 20,
+        }
+        # Pass reasoning_effort as extra_body for providers that support it (e.g., opencode, openai o1)
+        # For opencode, the variant suffix already encodes effort, but also pass as param for compatibility
+        extra = {}
+        if reasoning_effort:
+            # For opencode models with variants, the suffix is primary; also try reasoning_effort param
+            # Some gateways expect `reasoning_effort` top-level, others `reasoning: {effort: ...}`
+            # We send both via extra_body to maximize compatibility
+            extra["reasoning_effort"] = reasoning_effort
+            extra["reasoning"] = {"effort": reasoning_effort}
+        if extra:
+            # OpenAI SDK supports extra_body for pass-through
+            create_kwargs["extra_body"] = extra
         try:
-            resp = self.client.chat.completions.create(
-                model=chosen,
-                messages=messages,
-                temperature=temperature,
-                max_tokens=8192,  # generous headroom so long testbenches aren't truncated
-                timeout=20,
-            )
+            resp = self.client.chat.completions.create(**create_kwargs)
+        except TypeError as e:
+            # Fallback if extra_body not supported (older openai version) - retry without it
+            if "extra_body" in str(e) or "reasoning" in str(e):
+                create_kwargs.pop("extra_body", None)
+                try:
+                    resp = self.client.chat.completions.create(**{k: v for k, v in create_kwargs.items() if k != "extra_body"})
+                except Exception as e2:
+                    err_type = type(e2).__name__
+                    base = getattr(self.client, "base_url", "") or getattr(self, "base_url", "")
+                    raise RuntimeError(f"LLM_UPSTREAM:{err_type}: base={base} model={chosen} err={str(e2)[:300]}") from e2
+            else:
+                err_type = type(e).__name__
+                base = getattr(self.client, "base_url", "") or getattr(self, "base_url", "")
+                raise RuntimeError(f"LLM_UPSTREAM:{err_type}: base={base} model={chosen} err={str(e)[:300]}") from e
         except Exception as e:
             # Map upstream 404/401/timeout to a typed error the orchestrator can fallback on
             err_type = type(e).__name__
@@ -173,12 +206,12 @@ class OpenAIProvider:
             )
         return str(content)
 
-    def parse_intent(self, prompt: str, model: Optional[str] = None) -> RTLDesignSpec:
-        content = self._chat(INTENT_PARSER_PROMPT, prompt, 0.3, model=model)
+    def parse_intent(self, prompt: str, model: Optional[str] = None, reasoning_effort: Optional[str] = None) -> RTLDesignSpec:
+        content = self._chat(INTENT_PARSER_PROMPT, prompt, 0.3, model=model, reasoning_effort=reasoning_effort)
         return RTLDesignSpec(**_extract_json(content))
 
     def generate_rtl(self, spec: RTLDesignSpec, freq_hint: Optional[int],
-                     model: Optional[str] = None) -> str:
+                     model: Optional[str] = None, reasoning_effort: Optional[str] = None) -> str:
         freq = f"\nTarget clock frequency: {freq_hint} MHz." if freq_hint else ""
         user = (
             f"Generate Verilog for:\nModule: {spec.module_name}\n"
@@ -186,35 +219,35 @@ class OpenAIProvider:
             f"Ports: {json.dumps([p.model_dump() for p in spec.ports])}\n"
             f"Behavior: {spec.behavior}\nConstraints: {spec.constraints}{freq}"
         )
-        return _strip_code_fence(self._chat(RTL_GENERATOR_PROMPT, user, 0.2, model=model))
+        return _strip_code_fence(self._chat(RTL_GENERATOR_PROMPT, user, 0.2, model=model, reasoning_effort=reasoning_effort))
 
     def generate_testbench(self, rtl_code: str, spec: RTLDesignSpec,
-                           model: Optional[str] = None) -> str:
+                           model: Optional[str] = None, reasoning_effort: Optional[str] = None) -> str:
         user = (
             f"Write a Verilog-2001 testbench (top module named 'testbench') for:\n"
             f"```verilog\n{rtl_code}\n```\n"
             f"Module: {spec.module_name}\nPorts: {json.dumps([p.model_dump() for p in spec.ports])}"
         )
-        return _strip_code_fence(self._chat(TB_GENERATOR_PROMPT, user, 0.3, model=model))
+        return _strip_code_fence(self._chat(TB_GENERATOR_PROMPT, user, 0.3, model=model, reasoning_effort=reasoning_effort))
 
     def explain_design(self, rtl_code: str, spec: RTLDesignSpec,
-                       model: Optional[str] = None) -> str:
+                       model: Optional[str] = None, reasoning_effort: Optional[str] = None) -> str:
         user = (
             f"Explain this Verilog module in 2-3 sentences for a hardware designer "
             f"(what it does, key design decisions). Be concise, no bullet points.\n\n"
             f"Module: {spec.module_name}\n```verilog\n{rtl_code}\n```"
         )
         # If the user picked a model, use it; otherwise the cheaper mini model.
-        return self._chat(None, user, 0.5, mini=(model is None), model=model).strip()
+        return self._chat(None, user, 0.5, mini=(model is None), model=model, reasoning_effort=reasoning_effort).strip()
 
     def fix_design(self, rtl_code: str, tb_code: str, log: str,
-                   model: Optional[str] = None) -> dict:
+                   model: Optional[str] = None, reasoning_effort: Optional[str] = None) -> dict:
         user = (
             f"RTL:\n```verilog\n{rtl_code}\n```\n\n"
             f"Testbench:\n```verilog\n{tb_code}\n```\n\n"
             f"Simulator log:\n```\n{log[-2000:]}\n```"
         )
-        data = _extract_json(self._chat(FIX_PROMPT, user, 0.2, model=model))
+        data = _extract_json(self._chat(FIX_PROMPT, user, 0.2, model=model, reasoning_effort=reasoning_effort))
         return {
             "rtl_code": _strip_code_fence(data.get("rtl_code", rtl_code)),
             "testbench_code": _strip_code_fence(data.get("testbench_code", tb_code)),
@@ -230,28 +263,26 @@ class OfflineProvider:
         self._last_key: Optional[str] = None
         self._last_exact: bool = False
 
-    def parse_intent(self, prompt: str, model: Optional[str] = None) -> RTLDesignSpec:
+    def parse_intent(self, prompt: str, model: Optional[str] = None, reasoning_effort: Optional[str] = None) -> RTLDesignSpec:
         self._last_key = od.match_design(prompt)
         self._last_exact = od.is_exact_match(prompt)
         return RTLDesignSpec(**od.get_design(self._last_key)["spec"])
 
     def generate_rtl(self, spec: RTLDesignSpec, freq_hint: Optional[int],
-                     model: Optional[str] = None) -> str:
+                     model: Optional[str] = None, reasoning_effort: Optional[str] = None) -> str:
         key = self._last_key or "counter"
         design = od.get_design(key)
-        # If the user asked for a buggy design (demo of the self-correction loop)
-        # and a buggy variant exists, return it so the loop has something to fix.
         if self._buggy and "rtl_buggy" in design:
             return design["rtl_buggy"]
         return design["rtl"]
 
     def generate_testbench(self, rtl_code: str, spec: RTLDesignSpec,
-                           model: Optional[str] = None) -> str:
+                           model: Optional[str] = None, reasoning_effort: Optional[str] = None) -> str:
         key = od.design_key_from_rtl(rtl_code) or self._last_key or "counter"
         return od.get_design(key)["tb"]
 
     def explain_design(self, rtl_code: str, spec: RTLDesignSpec,
-                       model: Optional[str] = None) -> str:
+                       model: Optional[str] = None, reasoning_effort: Optional[str] = None) -> str:
         key = od.design_key_from_rtl(rtl_code) or self._last_key or "counter"
         base = od.get_design(key)["explanation"]
         if not self._last_exact:
@@ -262,7 +293,7 @@ class OfflineProvider:
         return base
 
     def fix_design(self, rtl_code: str, tb_code: str, log: str,
-                   model: Optional[str] = None) -> dict:
+                   model: Optional[str] = None, reasoning_effort: Optional[str] = None) -> dict:
         key = od.design_key_from_rtl(rtl_code) or self._last_key or "counter"
         golden = od.get_design(key)["rtl"]
         return {
@@ -317,23 +348,26 @@ def _make_provider():
     elif not _placeholder(_zen_key):
         zen_key = _zen_key
     if zen_key:
+        # Model: ZEN_MODEL > LLM_MODEL > default Spark model.
+        _zen_model = os.getenv("ZEN_MODEL", "").strip()
+        _llm_model = os.getenv("LLM_MODEL", "").strip()
+        zen_model = _zen_model or _llm_model or "opencode/muse-spark-1.2-contributor-free"
         # Base URL: OPENCODE_BASE_URL > ZEN_BASE_URL > default remote Zen endpoint.
-        # Default to https://api.opencode.ai/v1 (also handle https://opencode.ai/api/v1 if user set it).
+        # Correct Zen gateway is https://opencode.ai/zen/v1 (verified via opencode --verbose)
         _base_raw = os.getenv("OPENCODE_BASE_URL", "").strip() or os.getenv("ZEN_BASE_URL", "").strip()
-        zen_base = (_base_raw.rstrip("/") if _base_raw else "https://api.opencode.ai/v1")
-        # Normalize common user mistakes: ensure single /v1 suffix, no double slash
+        zen_base = (_base_raw.rstrip("/") if _base_raw else "https://opencode.ai/zen/v1")
+        # Normalize common user mistakes: ensure single /v1 or /zen/v1 suffix, no double slash
         if zen_base.endswith("/v1/v1"):
             zen_base = zen_base[:-3]
+        if zen_base == "https://api.opencode.ai/v1":
+            # Common wrong default from old docs - auto-correct to actual zen gateway
+            zen_base = "https://opencode.ai/zen/v1"
         # Log effective base for debugging (key redacted)
         try:
             import logging
             logging.getLogger("siliconscribe").info("Zen provider base=%s model=%s", zen_base, zen_model)
         except Exception:
             pass
-        # Model: ZEN_MODEL > LLM_MODEL > default Spark model.
-        _zen_model = os.getenv("ZEN_MODEL", "").strip()
-        _llm_model = os.getenv("LLM_MODEL", "").strip()
-        zen_model = _zen_model or _llm_model or "opencode/muse-spark-1.2-contributor-free"
         try:
             return OpenAIProvider(api_key=zen_key, base_url=zen_base, model=zen_model, name="zen")
         except Exception:
@@ -385,22 +419,33 @@ def is_offline() -> bool:
 # non-empty content). Reasoning models that emit only hidden "thinking" tokens
 # are deliberately excluded because they return empty content.
 # Priority: Zen (free, remote) first, then NVIDIA/OpenAI curated models.
+# thinking_levels: actual variants from `opencode models --verbose` (not fake).
+# For opencode models, variants are low/medium/high/xhigh etc. and are sent as
+# `model:variant` suffix (e.g., opencode/gpt-5.3-codex-spark:high) and also as
+# reasoning_effort extra_body. For models with no variants, thinking_levels is [].
 # --------------------------------------------------------------------------- #
 CURATED_MODELS = [
     {"id": "opencode/muse-spark-1.2-contributor-free", "label": "Muse Spark 1.2 (Zen Free)",
-     "note": "Opencode Zen · free · quality code", "tag": "balanced"},
+     "note": "Opencode Zen · free · quality code", "tag": "balanced",
+     "thinking_levels": [], "reasoning": True},
     {"id": "opencode/gpt-5.3-codex-spark", "label": "GPT-5.3 Codex Spark",
-     "note": "Fast code · zen", "tag": "fast"},
+     "note": "Fast code · zen", "tag": "fast",
+     "thinking_levels": ["low", "medium", "high", "xhigh"], "reasoning": True},
     {"id": "qwen/qwen3-coder-480b-a35b-instruct", "label": "Qwen3 Coder 480B",
-     "note": "Code-specialized · most accurate · slow", "tag": "accurate"},
+     "note": "Code-specialized · most accurate · slow", "tag": "accurate",
+     "thinking_levels": [], "reasoning": False},
     {"id": "qwen/qwen3.5-397b-a17b", "label": "Qwen3.5 397B",
-     "note": "General flagship · accurate · slow", "tag": "accurate"},
+     "note": "General flagship · accurate · slow", "tag": "accurate",
+     "thinking_levels": [], "reasoning": False},
     {"id": "mistralai/mistral-large-3-675b-instruct-2512", "label": "Mistral Large 3",
-     "note": "Large general · accurate", "tag": "accurate"},
+     "note": "Large general · accurate", "tag": "accurate",
+     "thinking_levels": [], "reasoning": False},
     {"id": "nvidia/nemotron-3-super-120b-a12b", "label": "Nemotron 3 Super 120B",
-     "note": "NVIDIA · balanced", "tag": "balanced"},
+     "note": "NVIDIA · balanced", "tag": "balanced",
+     "thinking_levels": [], "reasoning": False},
     {"id": "meta/llama-3.3-70b-instruct", "label": "Llama 3.3 70B",
-     "note": "Fast · less reliable for complex RTL", "tag": "fast"},
+     "note": "Fast · less reliable for complex RTL", "tag": "fast",
+     "thinking_levels": [], "reasoning": False},
 ]
 
 
@@ -419,28 +464,58 @@ def list_models() -> dict:
 
 
 # --------------------------------------------------------------------------- #
-# Public functions (used by the orchestrator and routes). `model` overrides the
-# default for a single request (the UI model picker passes it through).
+# Public functions (used by the orchestrator and routes). `model` and
+# `reasoning_effort` overrides the default for a single request (UI passes through).
+# reasoning_effort is actual (low/medium/high/xhigh) for models with variants, not fake.
 # --------------------------------------------------------------------------- #
-def parse_intent(prompt: str, model: Optional[str] = None) -> RTLDesignSpec:
+def parse_intent(prompt: str, model: Optional[str] = None, reasoning_effort: Optional[str] = None) -> RTLDesignSpec:
     prov = get_provider()
     if isinstance(prov, OfflineProvider):
         prov._buggy = od.is_buggy_request(prompt)
-    return prov.parse_intent(prompt, model=model)
+    try:
+        return prov.parse_intent(prompt, model=model, reasoning_effort=reasoning_effort)
+    except TypeError as e:
+        if "reasoning_effort" in str(e):
+            return prov.parse_intent(prompt, model=model)
+        raise
 
 
 def generate_rtl(spec: RTLDesignSpec, freq_hint: Optional[int] = None,
-                 model: Optional[str] = None) -> str:
-    return get_provider().generate_rtl(spec, freq_hint, model=model)
+                 model: Optional[str] = None, reasoning_effort: Optional[str] = None) -> str:
+    prov = get_provider()
+    try:
+        return prov.generate_rtl(spec, freq_hint, model=model, reasoning_effort=reasoning_effort)
+    except TypeError as e:
+        if "reasoning_effort" in str(e):
+            return prov.generate_rtl(spec, freq_hint, model=model)
+        raise
 
 
-def generate_testbench(rtl_code: str, spec: RTLDesignSpec, model: Optional[str] = None) -> str:
-    return get_provider().generate_testbench(rtl_code, spec, model=model)
+def generate_testbench(rtl_code: str, spec: RTLDesignSpec, model: Optional[str] = None, reasoning_effort: Optional[str] = None) -> str:
+    prov = get_provider()
+    try:
+        return prov.generate_testbench(rtl_code, spec, model=model, reasoning_effort=reasoning_effort)
+    except TypeError as e:
+        if "reasoning_effort" in str(e):
+            return prov.generate_testbench(rtl_code, spec, model=model)
+        raise
 
 
-def explain_design(rtl_code: str, spec: RTLDesignSpec, model: Optional[str] = None) -> str:
-    return get_provider().explain_design(rtl_code, spec, model=model)
+def explain_design(rtl_code: str, spec: RTLDesignSpec, model: Optional[str] = None, reasoning_effort: Optional[str] = None) -> str:
+    prov = get_provider()
+    try:
+        return prov.explain_design(rtl_code, spec, model=model, reasoning_effort=reasoning_effort)
+    except TypeError as e:
+        if "reasoning_effort" in str(e):
+            return prov.explain_design(rtl_code, spec, model=model)
+        raise
 
 
-def fix_design(rtl_code: str, tb_code: str, log: str, model: Optional[str] = None) -> dict:
-    return get_provider().fix_design(rtl_code, tb_code, log, model=model)
+def fix_design(rtl_code: str, tb_code: str, log: str, model: Optional[str] = None, reasoning_effort: Optional[str] = None) -> dict:
+    prov = get_provider()
+    try:
+        return prov.fix_design(rtl_code, tb_code, log, model=model, reasoning_effort=reasoning_effort)
+    except TypeError as e:
+        if "reasoning_effort" in str(e):
+            return prov.fix_design(rtl_code, tb_code, log, model=model)
+        raise

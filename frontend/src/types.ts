@@ -3,6 +3,8 @@ export interface ModelInfo {
   label: string
   note: string
   tag: 'accurate' | 'balanced' | 'fast' | string
+  thinking_levels?: string[]
+  reasoning?: boolean
 }
 
 export interface ModelsResponse {
