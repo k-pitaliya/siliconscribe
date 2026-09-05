@@ -135,22 +135,43 @@ class OpenAIProvider:
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": user})
         chosen = model or (self.mini_model if mini else self.model)
-        resp = self.client.chat.completions.create(
-            model=chosen,
-            messages=messages,
-            temperature=temperature,
-            max_tokens=8192,  # generous headroom so long testbenches aren't truncated
-        )
-        msg = resp.choices[0].message
-        content = msg.content or getattr(msg, "reasoning_content", None)
+        try:
+            resp = self.client.chat.completions.create(
+                model=chosen,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=8192,  # generous headroom so long testbenches aren't truncated
+                timeout=20,
+            )
+        except Exception as e:
+            # Map upstream 404/401/timeout to a typed error the orchestrator can fallback on
+            err_type = type(e).__name__
+            base = getattr(self.client, "base_url", "") or getattr(self, "base_url", "")
+            raise RuntimeError(f"LLM_UPSTREAM:{err_type}: base={base} model={chosen} err={str(e)[:300]}") from e
+        # Defensive: some gateways return plain string or empty choices
+        if isinstance(resp, str):
+            raise RuntimeError(f"LLM_UPSTREAM:InvalidResponse: provider returned str (check base_url) resp={resp[:300]}")
+        choices = getattr(resp, "choices", None)
+        if not choices:
+            raise RuntimeError(f"LLM_UPSTREAM:EmptyChoices: base={getattr(self.client, 'base_url', '')} model={chosen} resp={str(resp)[:500]}")
+        msg = choices[0].message if hasattr(choices[0], "message") else choices[0].get("message") if isinstance(choices[0], dict) else None
+        if msg is None:
+            raise RuntimeError(f"LLM_UPSTREAM:NoMessage: model={chosen} choice={str(choices[0])[:500]}")
+        content = getattr(msg, "content", None)
+        if content is None and isinstance(msg, dict):
+            content = msg.get("content")
         if not content:
+            content = getattr(msg, "reasoning_content", None) or getattr(msg, "reasoning", None)
+            if isinstance(msg, dict):
+                content = msg.get("reasoning_content") or msg.get("reasoning")
+        if not content or not str(content).strip():
             raise RuntimeError(
                 f"Model '{chosen}' returned empty content. This is usually a "
                 f"'reasoning' model that exhausted its token budget while thinking. "
                 f"Pick a non-reasoning model (e.g. meta/llama-3.3-70b-instruct or "
                 f"qwen/qwen3-coder-480b-a35b-instruct)."
             )
-        return content
+        return str(content)
 
     def parse_intent(self, prompt: str, model: Optional[str] = None) -> RTLDesignSpec:
         content = self._chat(INTENT_PARSER_PROMPT, prompt, 0.3, model=model)
@@ -299,7 +320,16 @@ def _make_provider():
         # Base URL: OPENCODE_BASE_URL > ZEN_BASE_URL > default remote Zen endpoint.
         # Default to https://api.opencode.ai/v1 (also handle https://opencode.ai/api/v1 if user set it).
         _base_raw = os.getenv("OPENCODE_BASE_URL", "").strip() or os.getenv("ZEN_BASE_URL", "").strip()
-        zen_base = _base_raw if _base_raw else "https://api.opencode.ai/v1"
+        zen_base = (_base_raw.rstrip("/") if _base_raw else "https://api.opencode.ai/v1")
+        # Normalize common user mistakes: ensure single /v1 suffix, no double slash
+        if zen_base.endswith("/v1/v1"):
+            zen_base = zen_base[:-3]
+        # Log effective base for debugging (key redacted)
+        try:
+            import logging
+            logging.getLogger("siliconscribe").info("Zen provider base=%s model=%s", zen_base, zen_model)
+        except Exception:
+            pass
         # Model: ZEN_MODEL > LLM_MODEL > default Spark model.
         _zen_model = os.getenv("ZEN_MODEL", "").strip()
         _llm_model = os.getenv("LLM_MODEL", "").strip()

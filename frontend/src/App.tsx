@@ -110,6 +110,9 @@ export default function App() {
           if (e.message && ['intent', 'rtl', 'testbench', 'explanation', 'simulate', 'fixing', 'fix', 'lint', 'synthesis', 'done', 'error'].includes(e.stage)) {
             pushMsg({ role: 'ai', text: e.message, stage: e.stage, status: e.status })
           }
+          if (e.fallback_notice) {
+            pushMsg({ role: 'ai', text: e.fallback_notice, stage: 'intent' })
+          }
           if (e.rtl_spec) setModuleName(e.rtl_spec.module_name)
           if (e.rtl_code) setRtl(e.rtl_code)
           if (e.testbench_code) setTb(e.testbench_code)
@@ -139,6 +142,10 @@ export default function App() {
       const e = err as Error
       if (e.name === 'AbortError') {
         pushMsg({ role: 'ai', text: 'Run cancelled.', stage: 'error' })
+      } else if (e.message.includes('waking up') || e.message.includes('504') || e.message.includes('502')) {
+        pushMsg({ role: 'ai', text: `Render free tier is waking up (sleeps after 15m idle). Please wait 30s and click Generate again.`, stage: 'error' })
+      } else if (e.message.includes('Failed to fetch') || e.message.includes('NetworkError')) {
+        pushMsg({ role: 'ai', text: `Network error: backend may be waking up. Wait 30s and retry.`, stage: 'error' })
       } else {
         pushMsg({ role: 'ai', text: `Error: ${e.message}`, stage: 'error' })
       }

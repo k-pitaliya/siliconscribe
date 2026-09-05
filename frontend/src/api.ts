@@ -100,7 +100,21 @@ export async function streamDesign(
     body: JSON.stringify(params),
     signal,
   })
-  if (!resp.ok || !resp.body) throw new Error(`stream failed: ${resp.status}`)
+  if (!resp.ok || !resp.body) {
+    const body = await resp.text().catch(() => '')
+    // Render free spin-down: first request after 15m idle takes 30-50s, Vercel Hobby timeout 10s → 504
+    if (resp.status === 504 || resp.status === 502 || body.includes('timeout')) {
+      throw new Error(`Render is waking up (free tier sleeps after 15m). Please wait 30s and retry. (504)`)
+    }
+    // Try to surface backend detail if available
+    try {
+      const j = JSON.parse(body)
+      if (j.detail) throw new Error(j.detail)
+    } catch {
+      /* ignore */
+    }
+    throw new Error(`stream failed: ${resp.status} ${body.slice(0, 200)}`.trim())
+  }
 
   const reader = resp.body.getReader()
   const decoder = new TextDecoder()

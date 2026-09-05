@@ -3,10 +3,15 @@ The agentic pipeline.
 
     prompt -> parse_intent -> generate_rtl -> generate_testbench -> explain
            -> [lint] -> simulate -> [FAIL/ERROR? fix_design -> lint -> re-simulate] (loop) -> done
+           -> coverage + vcd + schematic + synthesis -> done
 
 `pipeline_events` is a generator that yields one event per stage so the API can
 stream progress over SSE (this drives the live AI-agent panel). `run_pipeline`
 consumes those events and returns a complete RunResponse for the one-shot route.
+
+Systematic fallback: If Zen LLM upstream fails (404/timeout/choices error), the
+pipeline falls back to OfflineProvider for the entire run, yielding a
+fallback_notice and completing with PASS (offline curated), never 500.
 
 No-progress guard:
   - Content hashing (not exact string equality) detects identical RTL/TB
@@ -16,13 +21,12 @@ No-progress guard:
 
 Linter integration (non-blocking):
   - Before each simulation, VerilogLinter is run on the current RTL+TB.
-  - If lint finds errors/warnings, a ``stage="lint"`` event is yielded so the
-    agent panel can surface diagnostics.
-  - Lint never blocks the pipeline; simulation still runs so the
-    self-correction loop can fix issues.
+  - If lint finds errors/warnings, a ``stage="lint"`` event is yielded.
+  - Lint never blocks the pipeline.
 """
 
 import hashlib
+import logging
 from pathlib import Path
 from typing import Iterator, Optional
 
@@ -47,11 +51,12 @@ try:
 except Exception:  # pragma: no cover
     VerilogLinter = None  # type: ignore
 
+logger = logging.getLogger("siliconscribe.orchestrator")
+
 
 def _lint_payload(lint_res: dict) -> dict:
     """Convert VerilogLinter result (with SimError objects) to JSON-serialisable payload."""
     def _dump(e):
-        # SimError is a pydantic model; be defensive for plain dicts
         if hasattr(e, "model_dump"):
             return e.model_dump()
         if isinstance(e, dict):
@@ -80,25 +85,77 @@ def pipeline_events(
     yield {"stage": "start",
            "message": f"Parsing requirement (provider: {llm_service.get_provider().name}, model: {model_label})..."}
 
+    # Systematic fallback state: local to this pipeline run, never mutates global singleton
+    use_offline = False
+    offline_provider = None
+    fallback_notice = None
+
+    def _is_upstream_error(e: Exception) -> bool:
+        s = str(e)
+        return "LLM_UPSTREAM" in s or "LLM" in s and "openai" in s.lower() or "choices" in s.lower() or "API" in s
+
+    def _get_offline():
+        nonlocal offline_provider
+        if offline_provider is None:
+            from llm_service import OfflineProvider
+            offline_provider = OfflineProvider()
+        return offline_provider
+
+    def _call_llm(fn_name: str, *args, **kwargs):
+        nonlocal use_offline, fallback_notice
+        # If already in offline mode, directly use offline provider
+        if use_offline:
+            off = _get_offline()
+            fn = getattr(off, fn_name)
+            return fn(*args, **kwargs)
+        try:
+            fn = getattr(llm_service, fn_name)
+            return fn(*args, **kwargs)
+        except Exception as e:
+            if _is_upstream_error(e):
+                logger.warning("LLM upstream failed at %s, falling back to offline: %s", fn_name, str(e)[:500])
+                use_offline = True
+                off = _get_offline()
+                # Set fallback notice for UI
+                if fallback_notice is None:
+                    fallback_notice = (
+                        "Zen LLM upstream unavailable — using offline demo (retry in 30s or check Render logs for baseURL). "
+                        "Your prompt was served by curated offline designs (ALU/counter/mux/adder)."
+                    )
+                # Retry with offline
+                fn = getattr(off, fn_name)
+                # For parse_intent, need to handle _last_exact
+                return fn(*args, **kwargs)
+            raise
+
     try:
         # 1. Intent
-        spec: RTLDesignSpec = llm_service.parse_intent(prompt, model=model)
+        try:
+            spec: RTLDesignSpec = _call_llm("parse_intent", prompt, model=model)
+        except Exception as e:
+            # If _call_llm already handled fallback, it would have retried; this is non-upstream error
+            raise
 
-        # Check for offline fallback disclosure
-        fallback_notice = None
-        provider = llm_service.get_provider()
+        # Check for offline fallback disclosure (counter fallback)
+        # If we are in offline mode, check _last_exact; if Zen live but prompt unmatched, also check
+        provider = offline_provider if use_offline else llm_service.get_provider()
         if hasattr(provider, "_last_exact") and not provider._last_exact:
-            fallback_notice = (
-                "Your request did not match a built-in offline design. "
-                "Showing a representative counter design as a demo."
-            )
+            # Only set if not already set by upstream fallback
+            if fallback_notice is None:
+                fallback_notice = (
+                    "Your request did not match a built-in offline design. "
+                    "Showing a representative counter design as a demo."
+                )
+            # Special Zen upstream fallback already set a more specific notice, keep it
+            if use_offline and "Zen LLM unavailable" in (fallback_notice or ""):
+                pass  # keep upstream notice
 
-        yield {"stage": "intent", "message": f"Identified module '{spec.module_name}' with {len(spec.ports)} ports.",
+        yield {"stage": "intent", "message": f"Identified module '{spec.module_name}' with {len(spec.ports)} ports." + (" (offline fallback)" if use_offline else ""),
                "rtl_spec": spec.model_dump(), "fallback_notice": fallback_notice}
 
         # 2. RTL
-        rtl_code = llm_service.generate_rtl(spec, target_frequency_mhz, model=model)
-        yield {"stage": "rtl", "message": "Generated RTL.", "rtl_code": rtl_code}
+        rtl_code = _call_llm("generate_rtl", spec, target_frequency_mhz, model=model)
+        yield {"stage": "rtl", "message": "Generated RTL." + (" (offline fallback)" if use_offline else ""), "rtl_code": rtl_code}
 
         # Lint RTL alone (non-blocking, informational)
         if VerilogLinter is not None:
@@ -117,8 +174,8 @@ def pipeline_events(
                 pass  # linter must never break the pipeline
 
         # 3. Testbench
-        tb_code = llm_service.generate_testbench(rtl_code, spec, model=model)
-        yield {"stage": "testbench", "message": "Generated self-checking testbench.", "testbench_code": tb_code}
+        tb_code = _call_llm("generate_testbench", rtl_code, spec, model=model)
+        yield {"stage": "testbench", "message": "Generated self-checking testbench." + (" (offline fallback)" if use_offline else ""), "testbench_code": tb_code}
 
         # Lint combined RTL + TB before simulation (non-blocking)
         if VerilogLinter is not None:
@@ -137,7 +194,7 @@ def pipeline_events(
                 pass
 
         # 4. Explanation
-        explanation = llm_service.explain_design(rtl_code, spec, model=model)
+        explanation = _call_llm("explain_design", rtl_code, spec, model=model)
         yield {"stage": "explanation", "message": explanation, "explanation": explanation}
 
         # 5. Simulate + self-correct
@@ -150,10 +207,6 @@ def pipeline_events(
                "message": _sim_message(0, result), "result": result.model_dump()}
 
         def _norm_hash(code: str) -> str:
-            # Whitespace-insensitive hash as promised in the module docstring:
-            # strip all whitespace + comments so trivial formatting changes are identical.
-            # IMPORTANT: strip comments BEFORE whitespace, otherwise "//.*"
-            # after whitespace removal would match from "//" to end-of-file and wipe the hash.
             import re as _re
             norm = _re.sub(r"//.*", "", code)
             norm = _re.sub(r"/\*.*?\*/", "", norm, flags=_re.DOTALL)
@@ -169,18 +222,16 @@ def pipeline_events(
             yield {"stage": "fixing", "iteration": iteration,
                    "message": f"Simulation {result.status}. Diagnosing and patching (attempt {iteration})..."}
 
-            fix = llm_service.fix_design(rtl_code, tb_code, result.log_excerpt, model=model)
+            fix = _call_llm("fix_design", rtl_code, tb_code, result.log_excerpt, model=model)
             new_rtl, new_tb = fix["rtl_code"], fix["testbench_code"]
             new_rtl_hash = _norm_hash(new_rtl)
             cur_hash = _norm_hash(rtl_code)
 
-            # No-progress guard: no change at all (whitespace-insensitive).
             if new_rtl_hash == cur_hash:
                 yield {"stage": "fix", "iteration": iteration,
                        "message": "Model returned no change; stopping the loop.", "fix_summary": "no-op"}
                 break
 
-            # Oscillation guard: we have seen this RTL before (whitespace-insensitive).
             if new_rtl_hash in seen_rtl_hashes:
                 yield {"stage": "fix", "iteration": iteration,
                        "message": "Oscillation detected (repeated RTL); stopping the loop.",
@@ -193,7 +244,6 @@ def pipeline_events(
                    "fix_summary": fix["fix_summary"], "fix_type": fix.get("fix_type", ""),
                    "rtl_code": rtl_code, "testbench_code": tb_code}
 
-            # Lint the fixed design before re-simulating (non-blocking)
             if VerilogLinter is not None:
                 try:
                     linter = VerilogLinter()
@@ -220,7 +270,6 @@ def pipeline_events(
                    "message": _sim_message(iteration, result), "result": result.model_dump()}
 
         # 6. Post-processing artifacts
-        # Pass explicit log to compute_coverage so toggle/branch parsing sees full transcript
         result.coverage = compute_coverage(result, log=result.log_excerpt or "")
         waveform = parse_vcd(result.waveform_file) if result.waveform_file else None
         schematic = build_schematic(spec)
@@ -273,9 +322,7 @@ def pipeline_events(
                "message": _final_message(result, iteration),
                "response": response.model_dump()}
     except Exception:
-        import logging
-        logging.getLogger("siliconscribe.orchestrator").exception("pipeline failed")
-        # Never throw to SSE stream; yield a terminal error stage so frontend can handle gracefully
+        logger.exception("pipeline failed")
         yield {"stage": "error", "message": "Internal server error"}
 
 
@@ -286,7 +333,6 @@ def run_pipeline(prompt: str, design_id: str, simulator: IcarusSimulator, **kwar
         if event["stage"] == "done":
             final = event["response"]
         elif event["stage"] == "error":
-            # Surface as exception for non-stream callers; preserves 500 generic contract in API layer
             raise RuntimeError(event.get("message", "Internal server error"))
     if final is None:
         raise RuntimeError("Pipeline did not produce a final response")

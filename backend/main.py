@@ -46,30 +46,49 @@ RATE_LIMIT_MAX_REQUESTS = 20  # per window
 _rate_log: dict[str, list[float]] = defaultdict(list)
 
 
+def _get_client_ip(req: Request) -> str:
+    # Systematic: handle Render/Vercel proxy: X-Forwarded-For is set by Render, CF-Connecting-IP by Cloudflare/Vercel
+    # Trust first IP in XFF (original client) when present, else fallback to direct client.host
+    xff = req.headers.get("x-forwarded-for")
+    if xff:
+        # XFF may be "client, proxy1, proxy2" — take first
+        first = xff.split(",")[0].strip()
+        if first:
+            return first
+    ccip = req.headers.get("cf-connecting-ip")
+    if ccip:
+        return ccip.strip()
+    x_real = req.headers.get("x-real-ip")
+    if x_real:
+        return x_real.strip()
+    return req.client.host if req.client else "unknown"
+
+
 def _check_rate_limit(ip: str):
     now = time.time()
     cutoff = now - RATE_LIMIT_WINDOW
     _rate_log[ip] = [t for t in _rate_log[ip] if t > cutoff]
-    # Prune empty entries for other IPs to prevent unbounded growth (CWE-770)
-    if len(_rate_log) > 500:
-        # Opportunistic sweep: remove IPs with no recent requests
+    # Always prune stale empty entries (not only when >500) to prevent unbounded growth
+    # Opportunistic sweep every call but cheap when small
+    if len(_rate_log) > 100:
         for k in list(_rate_log.keys()):
-            if k != ip and not _rate_log[k]:
-                _rate_log.pop(k, None)
-            elif k != ip:
-                # also prune stale timestamps for other IPs lazily
-                trimmed = [t for t in _rate_log[k] if t > cutoff]
-                if not trimmed:
+            if k != ip:
+                if not _rate_log[k]:
                     _rate_log.pop(k, None)
-                elif len(trimmed) != len(_rate_log[k]):
-                    _rate_log[k] = trimmed
+                else:
+                    # prune stale timestamps
+                    trimmed = [t for t in _rate_log[k] if t > cutoff]
+                    if not trimmed:
+                        _rate_log.pop(k, None)
+                    elif len(trimmed) != len(_rate_log[k]):
+                        _rate_log[k] = trimmed
     if len(_rate_log[ip]) >= RATE_LIMIT_MAX_REQUESTS:
         raise HTTPException(
             status_code=429,
             detail=f"Rate limit exceeded. Max {RATE_LIMIT_MAX_REQUESTS} requests per {RATE_LIMIT_WINDOW}s.",
+            headers={"Retry-After": str(int(RATE_LIMIT_WINDOW))},
         )
     _rate_log[ip].append(now)
-    # If list became empty before append (edge), ensure key exists
     if not _rate_log[ip]:
         _rate_log[ip] = [now]
 
@@ -80,16 +99,13 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:3000", "http://localhost:5173",
         "http://127.0.0.1:5173", "http://localhost:4173",
-        # Production: Vercel frontend → Render backend (rewrites proxy, but keep CORS for direct calls)
         "https://siliconscribe.vercel.app",
         "https://siliconscribe.onrender.com",
-        # Vercel preview deployments
-        "https://*.vercel.app",
     ],
     allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization"],
 )
 
 WORKSPACE = "./workspace"
@@ -184,7 +200,7 @@ async def get_models():
 @app.post("/api/design/run", response_model=RunResponse)
 async def design_run(request: RunRequest, req: Request):
     """One-shot: generate -> simulate -> self-correct. Returns everything."""
-    _check_rate_limit(req.client.host if req.client else "unknown")
+    _check_rate_limit(_get_client_ip(req))
     design_id = _new_design_id()
     logger.info("design_run id=%s prompt=%s", design_id, request.prompt[:80])
     try:
@@ -219,7 +235,7 @@ async def design_run(request: RunRequest, req: Request):
 @app.post("/api/design/stream")
 async def design_stream(request: RunRequest, req: Request):
     """Server-Sent Events stream of each pipeline stage (drives the agent panel)."""
-    _check_rate_limit(req.client.host if req.client else "unknown")
+    _check_rate_limit(_get_client_ip(req))
     design_id = _new_design_id()
     logger.info("design_stream id=%s prompt=%s", design_id, request.prompt[:80])
 
@@ -250,7 +266,7 @@ async def design_stream(request: RunRequest, req: Request):
 @app.post("/api/simulation/run", response_model=SimulationResult)
 async def run_simulation(request: SimulationRequest, req: Request):
     """Simulate a (possibly hand-edited) RTL/testbench pair once. No auto-fix."""
-    _check_rate_limit(req.client.host if req.client else "unknown")
+    _check_rate_limit(_get_client_ip(req))
     logger.info("run_simulation id=%s", request.design_id)
     try:
         result = simulator.simulate(
@@ -296,7 +312,7 @@ async def run_synthesis(request: SynthesisRequest, req: Request):
     Graceful fallback: when ``yosys`` is not installed the endpoint returns
     ``{"available": False}`` with HTTP 200 so offline mode never breaks.
     """
-    _check_rate_limit(req.client.host if req.client else "unknown")
+    _check_rate_limit(_get_client_ip(req))
     logger.info("run_synthesis module=%s len=%d", request.module_name, len(request.rtl_code))
     try:
         try:
@@ -320,7 +336,7 @@ async def run_synthesis(request: SynthesisRequest, req: Request):
 @app.get("/api/projects")
 async def list_projects_endpoint(request: Request, limit: int = 20, offset: int = 0):
     """List persisted projects, newest first."""
-    _check_rate_limit(request.client.host if request.client else "unknown")
+    _check_rate_limit(_get_client_ip(request))
     if limit < 1 or limit > 100:
         raise HTTPException(status_code=422, detail="limit must be between 1 and 100")
     if offset < 0:
@@ -341,7 +357,7 @@ async def list_projects_endpoint(request: Request, limit: int = 20, offset: int 
 @app.get("/api/projects/{design_id}")
 async def get_project_endpoint(design_id: str, request: Request):
     """Get full RunResponse for a persisted project."""
-    _check_rate_limit(request.client.host if request.client else "unknown")
+    _check_rate_limit(_get_client_ip(request))
     if not DESIGN_ID_RE.match(design_id):
         raise HTTPException(status_code=422, detail="Invalid design_id")
     if db is None:
@@ -359,7 +375,7 @@ async def get_project_endpoint(design_id: str, request: Request):
 @app.delete("/api/projects/{design_id}", status_code=204)
 async def delete_project_endpoint(design_id: str, request: Request):
     """Delete a persisted project."""
-    _check_rate_limit(request.client.host if request.client else "unknown")
+    _check_rate_limit(_get_client_ip(request))
     if not DESIGN_ID_RE.match(design_id):
         raise HTTPException(status_code=422, detail="Invalid design_id")
     if db is None:
@@ -384,7 +400,7 @@ async def uvm_export(request: UVMExportRequest, req: Request):
     RTLDesignSpec, then uvm_templates.generate_uvm_bundle. Gracefully falls back
     to offline spec when Zen not available.
     """
-    _check_rate_limit(req.client.host if req.client else "unknown")
+    _check_rate_limit(_get_client_ip(req))
     logger.info("uvm_export prompt=%s module_override=%s", request.prompt[:80], request.module_name)
     try:
         from uvm_templates import generate_uvm_bundle, bundle_to_zip_base64
@@ -430,7 +446,7 @@ async def admin_cleanup(request: Request, ttl_hours: int = 24):
         raise HTTPException(status_code=422, detail="ttl_hours must be <= 720")
     # Simple rate-limit even for admin
     if request.client:
-        _check_rate_limit(request.client.host)
+        _check_rate_limit(_get_client_ip(request))
     try:
         removed = cleanup_old_workspaces(WORKSPACE, ttl_hours=ttl_hours)
         logger.info("admin cleanup removed %d (ttl=%dh)", removed, ttl_hours)

@@ -171,8 +171,13 @@ def init_db(workspace=None):
     """Ensure workspace exists and projects table is created."""
     path = _db_path(workspace)
     # Ensure parent dir exists (already done in _db_path)
-    conn = sqlite3.connect(str(path), check_same_thread=False)
+    conn = sqlite3.connect(str(path), check_same_thread=False, timeout=5.0)
     try:
+        try:
+            conn.execute("PRAGMA busy_timeout=5000")
+            conn.execute("PRAGMA journal_mode=WAL")
+        except Exception:
+            pass
         _ensure_table(conn)
         conn.commit()
     finally:
@@ -376,8 +381,13 @@ def save_project(run_response, prompt: Optional[str] = None, workspace=None):
     # To support legacy spec where only one arg, this is fine.
     fields = _extract_fields(run_response, prompt_override=prompt)
     path = _db_path(workspace)
-    conn = sqlite3.connect(str(path), check_same_thread=False)
+    conn = sqlite3.connect(str(path), check_same_thread=False, timeout=5.0)
     try:
+        try:
+            conn.execute("PRAGMA busy_timeout=5000")
+            conn.execute("PRAGMA journal_mode=WAL")
+        except Exception:
+            pass
         _ensure_table(conn)
         conn.execute(
             """
@@ -416,8 +426,13 @@ def get_project(design_id: str, workspace=None):
     if not isinstance(design_id, str) or not design_id:
         return None
     path = _db_path(workspace)
-    conn = sqlite3.connect(str(path), check_same_thread=False)
+    conn = sqlite3.connect(str(path), check_same_thread=False, timeout=5.0)
     try:
+        try:
+            conn.execute("PRAGMA busy_timeout=5000")
+            conn.execute("PRAGMA journal_mode=WAL")
+        except Exception:
+            pass
         _ensure_table(conn)
         cur = conn.execute(
             "SELECT data, id, prompt, module_name, rtl_spec, rtl_code, testbench_code, explanation, status, pass_count, fail_count, iterations, created_at, waveform_truncated FROM projects WHERE id = ?",
@@ -512,8 +527,13 @@ def list_projects(limit: int = 50, offset: int = 0, workspace=None):
         offset = 0
 
     path = _db_path(workspace)
-    conn = sqlite3.connect(str(path), check_same_thread=False)
+    conn = sqlite3.connect(str(path), check_same_thread=False, timeout=5.0)
     try:
+        try:
+            conn.execute("PRAGMA busy_timeout=5000")
+            conn.execute("PRAGMA journal_mode=WAL")
+        except Exception:
+            pass
         _ensure_table(conn)
         cur = conn.execute(
             "SELECT id, prompt, module_name, status, created_at, iterations FROM projects ORDER BY created_at DESC LIMIT ? OFFSET ?",
@@ -540,8 +560,13 @@ def list_projects(limit: int = 50, offset: int = 0, workspace=None):
 
 def count_projects(workspace=None) -> int:
     path = _db_path(workspace)
-    conn = sqlite3.connect(str(path), check_same_thread=False)
+    conn = sqlite3.connect(str(path), check_same_thread=False, timeout=5.0)
     try:
+        try:
+            conn.execute("PRAGMA busy_timeout=5000")
+            conn.execute("PRAGMA journal_mode=WAL")
+        except Exception:
+            pass
         _ensure_table(conn)
         cur = conn.execute("SELECT COUNT(*) FROM projects")
         row = cur.fetchone()
@@ -554,8 +579,13 @@ def delete_project(design_id: str, workspace=None) -> bool:
     if not isinstance(design_id, str) or not design_id:
         return False
     path = _db_path(workspace)
-    conn = sqlite3.connect(str(path), check_same_thread=False)
+    conn = sqlite3.connect(str(path), check_same_thread=False, timeout=5.0)
     try:
+        try:
+            conn.execute("PRAGMA busy_timeout=5000")
+            conn.execute("PRAGMA journal_mode=WAL")
+        except Exception:
+            pass
         _ensure_table(conn)
         cur = conn.execute("DELETE FROM projects WHERE id = ?", (design_id,))
         conn.commit()
