@@ -348,10 +348,10 @@ def _make_provider():
     elif not _placeholder(_zen_key):
         zen_key = _zen_key
     if zen_key:
-        # Model: ZEN_MODEL > LLM_MODEL > default Spark model.
+        # Model: ZEN_MODEL > LLM_MODEL > default free model that actually works (tested 2026-09-05: nemotron-3.5-lightning-free success, muse-spark 500)
         _zen_model = os.getenv("ZEN_MODEL", "").strip()
         _llm_model = os.getenv("LLM_MODEL", "").strip()
-        zen_model = _zen_model or _llm_model or "opencode/muse-spark-1.2-contributor-free"
+        zen_model = _zen_model or _llm_model or "nemotron-3.5-lightning-free"
         # Base URL: OPENCODE_BASE_URL > ZEN_BASE_URL > default remote Zen endpoint.
         # Correct Zen gateway is https://opencode.ai/zen/v1 (verified via opencode --verbose)
         _base_raw = os.getenv("OPENCODE_BASE_URL", "").strip() or os.getenv("ZEN_BASE_URL", "").strip()
@@ -425,7 +425,10 @@ def is_offline() -> bool:
 # reasoning_effort extra_body. For models with no variants, thinking_levels is [].
 # --------------------------------------------------------------------------- #
 CURATED_MODELS = [
-    {"id": "opencode/muse-spark-1.2-contributor-free", "label": "Muse Spark 1.2 (Zen Free)",
+    {"id": "nemotron-3.5-lightning-free", "label": "Nemotron 3.5 Lightning (Zen Free)",
+     "note": "Opencode Zen · free · quality code · actually works (tested)", "tag": "balanced",
+     "thinking_levels": [], "reasoning": True},
+    {"id": "muse-spark-1.2-contributor-free", "label": "Muse Spark 1.2 (Zen Free)",
      "note": "Opencode Zen · free · quality code", "tag": "balanced",
      "thinking_levels": [], "reasoning": True},
     {"id": "opencode/gpt-5.3-codex-spark", "label": "GPT-5.3 Codex Spark",
