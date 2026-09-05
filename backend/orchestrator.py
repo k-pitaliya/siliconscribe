@@ -79,6 +79,7 @@ def pipeline_events(
     max_iterations: int = 3,
     timeout_seconds: int = 30,
     model: Optional[str] = None,
+    reasoning_effort: Optional[str] = None,
 ) -> Iterator[dict]:
     """Yield {stage, ...} events as the pipeline runs."""
     model_label = model or "default"
@@ -107,10 +108,43 @@ def pipeline_events(
         if use_offline:
             off = _get_offline()
             fn = getattr(off, fn_name)
-            return fn(*args, **kwargs)
+            try:
+                return fn(*args, **kwargs)
+            except TypeError as e:
+                if "reasoning_effort" in str(e):
+                    kwargs.pop("reasoning_effort", None)
+                    return fn(*args, **kwargs)
+                raise
         try:
             fn = getattr(llm_service, fn_name)
             return fn(*args, **kwargs)
+        except TypeError as e:
+            # Handle case where mock/test function doesn't accept reasoning_effort
+            if "reasoning_effort" in str(e):
+                kwargs.pop("reasoning_effort", None)
+                try:
+                    fn = getattr(llm_service, fn_name)
+                    return fn(*args, **kwargs)
+                except Exception as e2:
+                    if _is_upstream_error(e2):
+                        logger.warning("LLM upstream failed at %s, falling back to offline: %s", fn_name, str(e2)[:500])
+                        use_offline = True
+                        off = _get_offline()
+                        if fallback_notice is None:
+                            fallback_notice = (
+                                "Zen LLM upstream unavailable — using offline demo (retry in 30s or check Render logs for baseURL). "
+                                "Your prompt was served by curated offline designs (ALU/counter/mux/adder)."
+                            )
+                        fn = getattr(off, fn_name)
+                        try:
+                            return fn(*args, **kwargs)
+                        except TypeError as e3:
+                            if "reasoning_effort" in str(e3):
+                                kwargs.pop("reasoning_effort", None)
+                                return fn(*args, **kwargs)
+                            raise
+                    raise
+            raise
         except Exception as e:
             if _is_upstream_error(e):
                 logger.warning("LLM upstream failed at %s, falling back to offline: %s", fn_name, str(e)[:500])
@@ -124,14 +158,19 @@ def pipeline_events(
                     )
                 # Retry with offline
                 fn = getattr(off, fn_name)
-                # For parse_intent, need to handle _last_exact
-                return fn(*args, **kwargs)
+                try:
+                    return fn(*args, **kwargs)
+                except TypeError as e2:
+                    if "reasoning_effort" in str(e2):
+                        kwargs.pop("reasoning_effort", None)
+                        return fn(*args, **kwargs)
+                    raise
             raise
 
     try:
         # 1. Intent
         try:
-            spec: RTLDesignSpec = _call_llm("parse_intent", prompt, model=model)
+            spec: RTLDesignSpec = _call_llm("parse_intent", prompt, model=model, reasoning_effort=reasoning_effort)
         except Exception as e:
             # If _call_llm already handled fallback, it would have retried; this is non-upstream error
             raise
@@ -154,7 +193,7 @@ def pipeline_events(
                "rtl_spec": spec.model_dump(), "fallback_notice": fallback_notice}
 
         # 2. RTL
-        rtl_code = _call_llm("generate_rtl", spec, target_frequency_mhz, model=model)
+        rtl_code = _call_llm("generate_rtl", spec, target_frequency_mhz, model=model, reasoning_effort=reasoning_effort)
         yield {"stage": "rtl", "message": "Generated RTL." + (" (offline fallback)" if use_offline else ""), "rtl_code": rtl_code}
 
         # Lint RTL alone (non-blocking, informational)
@@ -174,7 +213,7 @@ def pipeline_events(
                 pass  # linter must never break the pipeline
 
         # 3. Testbench
-        tb_code = _call_llm("generate_testbench", rtl_code, spec, model=model)
+        tb_code = _call_llm("generate_testbench", rtl_code, spec, model=model, reasoning_effort=reasoning_effort)
         yield {"stage": "testbench", "message": "Generated self-checking testbench." + (" (offline fallback)" if use_offline else ""), "testbench_code": tb_code}
 
         # Lint combined RTL + TB before simulation (non-blocking)
@@ -194,7 +233,7 @@ def pipeline_events(
                 pass
 
         # 4. Explanation
-        explanation = _call_llm("explain_design", rtl_code, spec, model=model)
+        explanation = _call_llm("explain_design", rtl_code, spec, model=model, reasoning_effort=reasoning_effort)
         yield {"stage": "explanation", "message": explanation, "explanation": explanation}
 
         # 5. Simulate + self-correct
@@ -222,7 +261,7 @@ def pipeline_events(
             yield {"stage": "fixing", "iteration": iteration,
                    "message": f"Simulation {result.status}. Diagnosing and patching (attempt {iteration})..."}
 
-            fix = _call_llm("fix_design", rtl_code, tb_code, result.log_excerpt, model=model)
+            fix = _call_llm("fix_design", rtl_code, tb_code, result.log_excerpt, model=model, reasoning_effort=reasoning_effort)
             new_rtl, new_tb = fix["rtl_code"], fix["testbench_code"]
             new_rtl_hash = _norm_hash(new_rtl)
             cur_hash = _norm_hash(rtl_code)

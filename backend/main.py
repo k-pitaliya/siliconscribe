@@ -202,7 +202,7 @@ async def design_run(request: RunRequest, req: Request):
     """One-shot: generate -> simulate -> self-correct. Returns everything."""
     _check_rate_limit(_get_client_ip(req))
     design_id = _new_design_id()
-    logger.info("design_run id=%s prompt=%s", design_id, request.prompt[:80])
+    logger.info("design_run id=%s prompt=%s model=%s reasoning=%s", design_id, request.prompt[:80], request.model, request.reasoning_effort)
     try:
         result = run_pipeline(
             prompt=request.prompt,
@@ -213,6 +213,7 @@ async def design_run(request: RunRequest, req: Request):
             max_iterations=request.max_iterations,
             timeout_seconds=request.timeout_seconds,
             model=request.model,
+            reasoning_effort=request.reasoning_effort,
         )
         logger.info("design_run id=%s status=%s iterations=%s", design_id, result.status, result.iterations)
         # Persist to SQLite (best-effort, never fail request)
@@ -237,7 +238,7 @@ async def design_stream(request: RunRequest, req: Request):
     """Server-Sent Events stream of each pipeline stage (drives the agent panel)."""
     _check_rate_limit(_get_client_ip(req))
     design_id = _new_design_id()
-    logger.info("design_stream id=%s prompt=%s", design_id, request.prompt[:80])
+    logger.info("design_stream id=%s prompt=%s model=%s reasoning=%s", design_id, request.prompt[:80], request.model, request.reasoning_effort)
 
     def event_source():
         try:
@@ -250,6 +251,7 @@ async def design_stream(request: RunRequest, req: Request):
                 max_iterations=request.max_iterations,
                 timeout_seconds=request.timeout_seconds,
                 model=request.model,
+                reasoning_effort=request.reasoning_effort,
             ):
                 yield f"data: {json.dumps(event)}\n\n"
         except Exception:
@@ -409,7 +411,7 @@ async def uvm_export(request: UVMExportRequest, req: Request):
         logger.exception("uvm_templates import failed")
         raise HTTPException(status_code=500, detail="UVM templates not available")
     try:
-        spec = llm_service.parse_intent(request.prompt, model=request.model)
+        spec = llm_service.parse_intent(request.prompt, model=request.model, reasoning_effort=request.reasoning_effort)
         if request.module_name:
             spec.module_name = request.module_name
         bundle = generate_uvm_bundle(spec)
