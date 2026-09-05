@@ -2,5 +2,16 @@
   "buildCommand": "cd frontend && npm ci --ignore-scripts && npm run build",
   "outputDirectory": "frontend/dist",
   "framework": "vite",
-  "rewrites": [{ "source": "/api/(.*)", "destination": "https://siliconscribe.onrender.com/api/$1" }]
+  "rewrites": [{ "source": "/api/(.*)", "destination": "https://siliconscribe.onrender.com/api/$1" }],
+  "headers": [
+    {
+      "source": "/api/(.*)",
+      "headers": [
+        { "key": "Cache-Control", "value": "no-cache" },
+        { "key": "Connection", "value": "keep-alive" },
+        { "key": "X-Accel-Buffering", "value": "no" }
+      ]
+    }
+  ],
+  "cleanUrls": true
 }

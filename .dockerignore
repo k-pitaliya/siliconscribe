@@ -5,6 +5,12 @@ backend/venv
 backend/__pycache__
 backend/.pytest_cache
 backend/workspace
+workspace
 .git
 *.md
 docs/
+# Secrets - never bake into image (even if present locally after cp .env.example .env)
+**/.env
+backend/.env
+.env
+*.env
