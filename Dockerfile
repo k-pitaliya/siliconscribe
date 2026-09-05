@@ -20,7 +20,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY backend/ ./
 COPY --from=frontend-build /app/frontend/dist ./static
 
-ENV OFFLINE_MODE=1
+ENV OFFLINE_MODE=0
 ENV PYTHONUNBUFFERED=1
 
 EXPOSE 8000
