@@ -1,9 +1,9 @@
 import { useState, useCallback, useEffect, useMemo, type KeyboardEvent, type ReactNode } from 'react'
-import { Activity, Bug, CircleCheck, CircleX, Cpu, FileCode, Info, ListChecks, Search, TriangleExclamationPoint, Workflow } from 'lucide-react'
+import { Activity, ArrowUpDown, Bug, CircleCheck, CircleX, Cpu, FileCode, Info, ListChecks, Search, TriangleExclamationPoint, Workflow } from 'lucide-react'
 import WaveformViewer, { type WaveformMarker } from './WaveformViewer'
 import TestCasesView from './TestCasesView'
 import SchematicView from './SchematicView'
-import type { IterationRecord, Schematic, SimulationResult, StrengthReport, Waveform, SynthesisInfo, LintInfo } from '../types'
+import type { IterationRecord, Schematic, SimulationResult, StrengthReport, UntoggledSignal, Waveform, SynthesisInfo, LintInfo } from '../types'
 
 export type Tab = 'design' | 'results' | 'tests' | 'waveform' | 'schematic'
 
@@ -165,6 +165,7 @@ function ResultsView({
   const StatusIcon = result.status === 'PASS' ? CircleCheck : result.status === 'FAIL' ? CircleX : TriangleExclamationPoint
   const groups = result.check_groups ?? []
   const strengthShown = strength && (strength.status === 'ok' || strength.status === 'partial')
+  const toggle = result.measured_toggle
 
   return (
     <div className="results-view">
@@ -192,7 +193,7 @@ function ResultsView({
         </div>
       )}
 
-      {(strengthShown || synthesis) && (
+      {(strengthShown || synthesis || toggle) && (
         <div className="two-col">
           {strengthShown && strength && (
             <div className="section strength-section" data-testid="strength-section">
@@ -252,6 +253,35 @@ function ResultsView({
                   {synthesis.error ? `Synthesis error: ${synthesis.error}` : 'Synthesis not available: Yosys is not installed, so only the port-level schematic is shown.'}
                 </div>
               )}
+            </div>
+          )}
+          {toggle && (
+            <div className="section toggle-section" data-testid="toggle-section">
+              <h3><ArrowUpDown size={16} aria-hidden="true" /> Toggle coverage (measured)</h3>
+              <div className="section-body">
+                <div data-testid="toggle-summary">
+                  <strong>{toggle.percent}%</strong> of design signal bits switched both ways
+                  <span className="muted"> ({toggle.bits_toggled} of {toggle.bits_total} bits, {toggle.signals} signals)</span>
+                </div>
+                <div className={`bar ${toggle.percent < 50 ? 'weak' : ''}`} aria-hidden="true">
+                  <span style={{ width: `${toggle.percent}%` }} />
+                </div>
+                {toggle.untoggled.length > 0 && (
+                  <div data-testid="toggle-untoggled">
+                    <span className="muted">Never switched:</span>
+                    <ul className="survivors">
+                      {toggle.untoggled.map((u) => (
+                        <li key={u.signal}>{describeUntoggled(u)}</li>
+                      ))}
+                      {toggle.untoggled_more > 0 && <li>and {toggle.untoggled_more} more signal(s)</li>}
+                    </ul>
+                  </div>
+                )}
+                <div className="muted">
+                  Read from the simulator's waveform file, not reported by the testbench.
+                  {toggle.partial ? ' The waveform was cut at the size limit, so this is a lower bound.' : ''}
+                </div>
+              </div>
             </div>
           )}
         </div>
@@ -327,6 +357,24 @@ function ResultsView({
       </details>
     </div>
   )
+}
+
+/** "count[0] never rose or fell", "a never fell", "data[7:4] never rose". */
+export function describeUntoggled(u: UntoggledSignal): string {
+  const span = (bits: number[]) => {
+    if (u.width === 1) return ''
+    const sorted = [...bits].sort((a, b) => b - a)
+    const contiguous = sorted.every((b, i) => i === 0 || sorted[i - 1] - b === 1)
+    if (sorted.length === u.width) return ''                       // the whole signal
+    if (sorted.length === 1) return `[${sorted[0]}]`
+    return contiguous ? `[${sorted[0]}:${sorted[sorted.length - 1]}]` : `[${sorted.join(',')}]`
+  }
+  const same = u.never_rose.length === u.never_fell.length && u.never_rose.every((b) => u.never_fell.includes(b))
+  if (same) return `${u.signal}${span(u.never_rose)} never changed`
+  const parts: string[] = []
+  if (u.never_rose.length) parts.push(`${u.signal}${span(u.never_rose)} never rose`)
+  if (u.never_fell.length) parts.push(`${u.signal}${span(u.never_fell)} never fell`)
+  return parts.join('; ')
 }
 
 function Metric({ label, value, tone }: { label: string; value: string; tone?: 'ok' | 'warn' | 'bad' }) {

@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Tuple, Optional, List
 
 from checks import parse_checks
+from vcd_parser import toggle_coverage
 from models import SimulationResult, SimError
 
 VCD_FILENAME = "design.vcd"
@@ -426,6 +427,10 @@ class IcarusSimulator:
 
         sim_time = _finish_time_ns(log_content)
         check_fields = parse_checks(log_content, pass_count, fail_count)
+        try:
+            measured_toggle = toggle_coverage(vcd_file)
+        except Exception:  # a measurement must never break the verdict
+            measured_toggle = None
 
         return SimulationResult(
             status=status,
@@ -436,6 +441,7 @@ class IcarusSimulator:
             fail_count=fail_count,
             errors=errors,
             waveform_file=str(vcd_file) if vcd_file.exists() else None,
+            measured_toggle=measured_toggle,
             transcript_file=str(log_file),
             log_excerpt=_excerpt(log_content),
             **check_fields,

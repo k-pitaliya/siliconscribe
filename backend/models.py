@@ -107,6 +107,29 @@ class CheckGroup(BaseModel):
     failed: int
 
 
+class UntoggledSignal(BaseModel):
+    """A design signal with bits that never switched in one or both directions."""
+    signal: str
+    width: int
+    never_rose: List[int] = Field(default_factory=list)   # bit positions that never went 0 -> 1
+    never_fell: List[int] = Field(default_factory=list)   # bit positions that never went 1 -> 0
+
+
+class ToggleCoverage(BaseModel):
+    """Toggle coverage MEASURED from the simulator's VCD (not reported by the testbench).
+
+    A bit is covered when it was seen going 0 -> 1 and 1 -> 0. Only signals inside the design
+    under test count; testbench variables, parameters and loop integers do not.
+    """
+    percent: float = 0.0
+    bits_total: int = 0
+    bits_toggled: int = 0
+    signals: int = 0
+    untoggled: List[UntoggledSignal] = Field(default_factory=list)   # capped list, worst first
+    untoggled_more: int = 0                                          # signals not listed
+    partial: bool = False                                            # the VCD was cut at the size cap
+
+
 class SimulationResult(BaseModel):
     status: Literal["PASS", "FAIL", "TIMEOUT", "ERROR"]
     module_name: str
@@ -127,6 +150,8 @@ class SimulationResult(BaseModel):
     checks_total_logged: int = 0
     checks_truncated: bool = False
     checks_consistent: bool = True
+    # Measured from the VCD the simulator wrote (see vcd_parser.toggle_coverage); None when unavailable.
+    measured_toggle: Optional[ToggleCoverage] = None
 
 
 class SimulationRequest(BaseModel):

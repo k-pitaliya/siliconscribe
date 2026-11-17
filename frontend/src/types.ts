@@ -74,6 +74,8 @@ export interface SimulationResult {
   checks_total_logged?: number
   checks_truncated?: boolean
   checks_consistent?: boolean
+  /** Measured from the VCD; absent when no waveform was produced. */
+  measured_toggle?: ToggleCoverage | null
 }
 
 /** Result of re-simulating edited code: the verdict plus the matching waveform. */
@@ -152,6 +154,25 @@ export interface SynthesisInfo {
   warnings?: string[]
   area_estimate?: number | string
   error?: string
+}
+
+/** A design signal with bits that never switched in one or both directions. */
+export interface UntoggledSignal {
+  signal: string
+  width: number
+  never_rose: number[]
+  never_fell: number[]
+}
+
+/** Toggle coverage measured from the simulator's VCD (design signals only). */
+export interface ToggleCoverage {
+  percent: number
+  bits_total: number
+  bits_toggled: number
+  signals: number
+  untoggled: UntoggledSignal[]
+  untoggled_more: number
+  partial: boolean
 }
 
 /** One injected bug the testbench did not notice. */

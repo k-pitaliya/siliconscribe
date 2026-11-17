@@ -1,6 +1,6 @@
 import { render, screen, fireEvent } from '@testing-library/react'
 import { describe, it, expect } from 'vitest'
-import ResultsPanel from '../ResultsPanel'
+import ResultsPanel, { describeUntoggled } from '../ResultsPanel'
 import type { SimulationResult, IterationRecord, Waveform, Schematic, SynthesisInfo, LintInfo, StrengthReport } from '../../types'
 
 const passResult: SimulationResult = {
@@ -343,5 +343,48 @@ describe('ResultsPanel: testbench strength', () => {
     expect(screen.queryByTestId('strength-section')).toBeNull()
     rerender(<ResultsPanel {...base} strength={null} />)
     expect(screen.queryByTestId('strength-section')).toBeNull()
+  })
+})
+
+
+describe('ResultsPanel: measured toggle coverage', () => {
+  const withToggle = (over = {}): SimulationResult => ({
+    ...passResult,
+    measured_toggle: {
+      percent: 85.7, bits_total: 7, bits_toggled: 6, signals: 4, untoggled_more: 0, partial: false,
+      untoggled: [{ signal: 'count', width: 4, never_rose: [0], never_fell: [0] }], ...over,
+    },
+  })
+
+  it('shows the measured percentage, the counts and which bits never switched', () => {
+    render(<ResultsPanel result={withToggle()} waveform={null} schematic={null} history={[]} />)
+    const summary = screen.getByTestId('toggle-summary').textContent ?? ''
+    expect(summary).toContain('85.7%')
+    expect(summary).toContain('6 of 7 bits, 4 signals')
+    expect(screen.getByTestId('toggle-untoggled').textContent).toContain('count[0] never changed')
+    expect(screen.getByTestId('toggle-section').textContent).toContain('not reported by the testbench')
+  })
+
+  it('says when the waveform was cut and when more signals are not listed', () => {
+    render(<ResultsPanel result={withToggle({ partial: true, untoggled_more: 3 })} waveform={null} schematic={null} history={[]} />)
+    const text = screen.getByTestId('toggle-section').textContent ?? ''
+    expect(text).toContain('lower bound')
+    expect(text).toContain('and 3 more signal(s)')
+  })
+
+  it('shows no section when nothing was measured, and no list at 100%', () => {
+    const { rerender } = render(<ResultsPanel result={passResult} waveform={null} schematic={null} history={[]} />)
+    expect(screen.queryByTestId('toggle-section')).toBeNull()
+    rerender(<ResultsPanel result={withToggle({ percent: 100, bits_toggled: 7, untoggled: [] })} waveform={null} schematic={null} history={[]} />)
+    expect(screen.getByTestId('toggle-summary').textContent).toContain('100%')
+    expect(screen.queryByTestId('toggle-untoggled')).toBeNull()
+  })
+
+  it('describes untoggled bits in plain words', () => {
+    expect(describeUntoggled({ signal: 'a', width: 1, never_rose: [], never_fell: [0] })).toBe('a never fell')
+    expect(describeUntoggled({ signal: 'en', width: 1, never_rose: [0], never_fell: [0] })).toBe('en never changed')
+    expect(describeUntoggled({ signal: 'data', width: 8, never_rose: [7, 6, 5, 4], never_fell: [] })).toBe('data[7:4] never rose')
+    expect(describeUntoggled({ signal: 'q', width: 4, never_rose: [3, 2, 1, 0], never_fell: [3, 2, 1, 0] })).toBe('q never changed')
+    expect(describeUntoggled({ signal: 'q', width: 4, never_rose: [3, 1], never_fell: [0] })).toBe('q[3,1] never rose; q[0] never fell')
   })
 })
