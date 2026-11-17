@@ -83,3 +83,31 @@ describe('App: Re-run refreshes everything that belongs to the run', () => {
     await waitFor(() => expect(screen.getByText(/No waveform/)).toBeInTheDocument())
   })
 })
+
+
+describe('App: a provider failure during a run', () => {
+  it('shows the explanation, stops the run timer and lets the user try again', async () => {
+    const quota = "The AI provider's free usage limit has been reached. It resets daily: try again after the reset, or switch to the offline demo."
+    vi.mocked(api.streamDesign).mockImplementation(async (_p, onEvent) => {
+      onEvent({ stage: 'start', message: 'Parsing requirement…' } as never)
+      onEvent({ stage: 'error', message: quota } as never)
+    })
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('Natural Language Requirement'), { target: { value: 'Design a counter' } })
+    fireEvent.click(screen.getByRole('button', { name: /Generate RTL/ }))
+
+    await waitFor(() => expect(screen.getByText(quota)).toBeInTheDocument())      // the reason is on screen
+    expect(screen.queryByTestId('run-timer')).toBeNull()                          // no "Working…" clock left ticking
+    expect(screen.getByRole('button', { name: /Generate RTL/ })).not.toBeDisabled() // can retry immediately
+    expect(screen.queryByText('Internal server error')).toBeNull()
+  })
+
+  it('reports a dropped connection instead of hanging silently', async () => {
+    vi.mocked(api.streamDesign).mockRejectedValue(new Error('The connection closed before the run finished. Please try again.'))
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('Natural Language Requirement'), { target: { value: 'Design a counter' } })
+    fireEvent.click(screen.getByRole('button', { name: /Generate RTL/ }))
+    await waitFor(() => expect(screen.getByText(/connection closed before the run finished/)).toBeInTheDocument())
+    expect(screen.queryByTestId('run-timer')).toBeNull()
+  })
+})
