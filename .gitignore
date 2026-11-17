@@ -30,3 +30,7 @@ frontend/tsconfig.tsbuildinfo
 
 # Docker
 docker-compose.override.yml
+
+# Cell library (fetched, see backend/pdk/README.md)
+backend/pdk/*.lib
+backend/pdk/*.lib.gz
