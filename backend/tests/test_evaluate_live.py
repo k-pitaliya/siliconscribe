@@ -40,13 +40,13 @@ def test_prompt_set_is_well_formed():
 
 def test_summary_separates_first_attempt_repaired_failed_and_excludes_fallbacks(out):
     _write(out, rec("c1"), rec("c2", repairs=2), rec("c3", status="FAIL", repairs=4), rec("c4", fallback=True),
-           rec("c5", warning="Weak testbench", survivors=["`+` to `-`"]))
+           rec("c5", warning="Weak testbench: it caught only 2 of 10", survivors=["`+` to `-`"]))
     text = ev.summarise()
     assert "Prompts run: **5** (1 fell back to the offline demo and are not counted)" in text
     assert "PASS on the first attempt: **2** of 4" in text
     assert "PASS after self-repair: **1** of 4" in text
     assert "Not PASS: **1** of 4" in text
-    assert "offline fallback" in text and "weak-evidence warning" in text and "1 bug(s) missed" in text
+    assert "offline fallback" in text and "weak testbench" in text and "1 bug(s) missed" in text
 
 
 def test_summary_with_no_results_is_explicit(out):
@@ -97,3 +97,13 @@ def test_only_and_redo_select_the_right_prompts(out, monkeypatch):
     monkeypatch.setattr("sys.argv", ["evaluate_live.py", "--only", "c1,s1", "--redo"])
     ev.main()
     assert calls == ["c1", "s1"]
+
+
+def test_the_three_warning_kinds_get_distinct_honest_labels(out):
+    _write(out,
+           rec("c1", repairs=1, warning="The testbench was modified during repair, and the ORIGINAL testbench still reports FAIL"),
+           rec("c2", warning="Weak evidence: the testbench executed only 3 checks"),
+           rec("c3", warning="Weak testbench: it caught only 2 of 10 injected bugs"))
+    text = ev.summarise()
+    assert "testbench changed during repair" in text and "few executed checks" in text and "weak testbench" in text
+    assert "weak-evidence warning" not in text

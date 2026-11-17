@@ -125,8 +125,13 @@ def summarise() -> str:
         notes = []
         if r["fallback"]:
             notes.append("offline fallback")
-        if r.get("warning"):
-            notes.append("weak-evidence warning")
+        w = r.get("warning") or ""
+        if "ORIGINAL testbench" in w:
+            notes.append("testbench changed during repair")
+        if "Weak testbench" in w:
+            notes.append("weak testbench")
+        if "Weak evidence" in w:
+            notes.append("few executed checks")
         if r.get("strength_survivors"):
             notes.append(f"{len(r['strength_survivors'])} bug(s) missed")
         lines.append(f"| {r['id']} | {r['category']} | {r['status']} | {r['repairs']} | "

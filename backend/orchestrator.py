@@ -771,10 +771,33 @@ def pipeline_events(
         logger.exception("pipeline failed")
         # Surface the actionable reason (e.g. mid-run LLM outage) instead of a
         # generic 500. Truncate so logs/stack details never leak to the client.
-        msg = str(e).strip()
-        if not msg or len(msg) > 300:
-            msg = "Internal server error"
-        yield {"stage": "error", "message": msg}
+        yield {"stage": "error", "message": _user_facing_error(e)}
+
+
+_QUOTA_HINTS = ("free usage limit", "free-limit", "freeusagelimit", "rate limit", "quota")
+_TIMEOUT_HINTS = ("timeout", "timed out")
+
+
+def _user_facing_error(e: Exception) -> str:
+    """A short, actionable message for the error event.
+
+    The raw text of an upstream failure can be long (a JSON blob from the provider) and was
+    replaced by a bare "Internal server error" whenever it exceeded 300 characters, which hid the
+    one thing the user needs to know: the free quota is used up, or the model was too slow.
+    """
+    raw = str(e).strip()
+    low = raw.lower()
+    if _is_upstream_error(e) or "llm became unavailable" in low:
+        if any(h in low for h in _QUOTA_HINTS):
+            return ("The AI provider's free usage limit has been reached. It resets daily: try again after "
+                    "the reset, or switch to the offline demo.")
+        if any(h in low for h in _TIMEOUT_HINTS):
+            return ("The AI model did not answer in time. Free models can take minutes per step: try again, "
+                    "or raise LLM_TIMEOUT_SECONDS.")
+        return "The AI provider became unavailable mid-run. Please try again in a moment."
+    if not raw or len(raw) > 300:
+        return "Internal server error"   # never leak stack text or long internal detail to the client
+    return raw
 
 
 def run_pipeline(prompt: str, design_id: str, simulator: IcarusSimulator, **kwargs) -> RunResponse:
