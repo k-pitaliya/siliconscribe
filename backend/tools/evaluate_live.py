@@ -88,6 +88,10 @@ def run_one(pid: str, category: str, prompt: str) -> dict:
         "test_types": [[g["category"], g["passed"], g["total"]] for g in (res.get("check_groups") or [])],
         "strength_killed": strength.get("killed"), "strength_total": strength.get("total"),
         "strength_survivors": [s["description"] for s in strength.get("survivors", [])],
+        "toggle_percent": (res.get("measured_toggle") or {}).get("percent"),
+        "timing_met": (d.get("timing") or {}).get("met"),
+        "timing_fmax_mhz": (d.get("timing") or {}).get("fmax_mhz"),
+        "area_um2": (d.get("timing") or {}).get("area_um2"),
         "warning": d.get("verification_warning"),
         "fallback": bool(d.get("fallback_notice")),
         "provider": getattr(llm_service.get_provider(), "name", "?"),
@@ -95,6 +99,11 @@ def run_one(pid: str, category: str, prompt: str) -> dict:
         "testbench_model": (getattr(llm_service.get_provider(), "stage_models", {}) or {}).get("testbench") or None,
         "finished_at": time.strftime("%Y-%m-%d %H:%M:%S"),
     }
+
+
+def _cell(value, suffix: str = "") -> str:
+    """A table cell: '-' for results recorded before this measurement existed."""
+    return "-" if value is None else f"{value:g}{suffix}"
 
 
 def summarise() -> str:
@@ -118,7 +127,7 @@ def summarise() -> str:
         f"- PASS after self-repair: **{len(repaired)}** of {len(evidence)}",
         f"- Not PASS: **{len(failed)}** of {len(evidence)}",
         f"- Median time per run: **{statistics.median(times):.0f} s**" if times else "- Median time: n/a", "",
-        "| id | type | verdict | repairs | checks | strength | time | notes |", "|---|---|---|---|---|---|---|---|",
+        "| id | type | verdict | repairs | checks | strength | toggle | max MHz | area um2 | time | notes |", "|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for r in recs:
         strength = f"{r['strength_killed']}/{r['strength_total']}" if r.get("strength_total") else "-"
@@ -135,7 +144,8 @@ def summarise() -> str:
         if r.get("strength_survivors"):
             notes.append(f"{len(r['strength_survivors'])} bug(s) missed")
         lines.append(f"| {r['id']} | {r['category']} | {r['status']} | {r['repairs']} | "
-                     f"{r['checks_passed']}/{r['checks_total']} | {strength} | {r['seconds']:.0f} s | {'; '.join(notes)} |")
+                     f"{r['checks_passed']}/{r['checks_total']} | {strength} | {_cell(r.get('toggle_percent'), '%')} | "
+                     f"{_cell(r.get('timing_fmax_mhz'))} | {_cell(r.get('area_um2'))} | {r['seconds']:.0f} s | {'; '.join(notes)} |")
     lines += ["", "Strength = injected bugs caught / injected bugs run (mutation testing of the design's own testbench; "
               "survivors may be equivalent mutants). Raw records: `evaluation/results.jsonl`; designs and testbenches: "
               "`evaluation/artifacts/`.", ""]

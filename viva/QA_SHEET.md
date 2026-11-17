@@ -18,13 +18,13 @@ A minimum count of real check sites in the testbench, a check that it still inst
 It is defence in depth on a developer machine, not a jail. System tasks are an allow-list (file and process access is rejected before compile and before lint), the environment is scrubbed so API keys never reach the simulator, CPU, file-size and memory limits apply (the memory limit is enforced on Linux, not macOS), and at most two simulations run at once. For multi-user use the simulator belongs in a container.
 
 **6. Does it give area, timing or power?**
-No. Yosys runs without a technology library, so it reports generic cell counts, flip-flop and latch counts and a warning when a latch is inferred. The "area" figure is labelled a relative proxy. Real timing would need a liberty file and a timing tool such as OpenSTA, which is future work.
+Timing and area, yes, as a pre-layout estimate; power, no. After a PASS, Yosys maps the design to the open SkyWater 130 nm cell library and OpenSTA (the timing engine used in OpenROAD) reports the worst setup slack at the target clock, the maximum frequency and the area in µm². For example the 4-bit counter is 11 cells, 150 µm², and meets 100 MHz with 9.27 ns slack; the 8-bit ALU misses a 2000 MHz target (maximum about 372 MHz). The limits: one typical corner, no placement or routing so no wire delay, an ideal clock, zero I/O delays, setup analysis only. It answers "is this logic near the target?", not sign-off.
 
 **7. Why Icarus Verilog? What about UVM?**
 It is free and scriptable. Icarus 12.0 accepts most synthesizable SystemVerilog (`logic`, `always_ff`, `return`, `enum`) and rejects a specific set (`break`/`continue`, `disable` of a function, `inside`, streaming operators, concurrent assertions, class constraints). UVM needs the UVM class library, which Icarus does not implement, so UVM is export-only and never simulated.
 
 **8. Is the coverage real coverage?**
-No. It is testbench-reported (pass rate and bins the testbench prints). Instrumented line and toggle coverage would need a tool like Verilator, which is future work. The Test cases tab shows the executed checks by type, which is a different and honest measure.
+Toggle coverage is real: it is measured from the simulator's own waveform file, for design signals only (each bit must be seen going 0 to 1 and 1 to 0). On the deliberately buggy counter it reports "count[0] never changed", which is the bug itself. Line and branch coverage are not measured (that needs an instrumenting simulator such as Verilator); any other coverage number shown is what the testbench prints about itself and is labelled as such.
 
 **9. What did your evaluation show?**
 `[EVAL]` prompts across combinational, sequential and FSM designs with the free DeepSeek model: PASS on the first attempt `[N]`, PASS after repair `[N]`, not PASS `[N]`, median time `[N s]`, and the testbench-strength scores. Runs that fell back to the offline demo are excluded. The raw records are in `backend/evaluation/`.
@@ -42,7 +42,7 @@ Free-tier models are slow: generating the testbench alone has taken 2-3 minutes,
 An automated axe-core audit of every tab, for a passing and a failing run, reports zero violations (structure, names, heading order and colour contrast), and the structural rules run in the test suite. That is an automated audit, not a user study.
 
 **14. What are the main limitations?**
-One model for both stages; free-tier speed and quota; the strength score is a sample of 12 syntactic mutants; no timing or power; testbench-reported coverage; sandbox is not a jail; evaluated on small designs, not full SoC blocks.
+One model for both stages; free-tier speed and quota; the strength score is a sample of 12 syntactic mutants; timing is pre-layout on one corner and there is no power analysis; only toggle coverage is measured; sandbox is not a jail; evaluated on small designs, not full SoC blocks.
 
 **15. What would you do next?**
-A stronger or local second model for the testbench, Verilator coverage, OpenSTA timing with a technology library, a golden reference model check, and container isolation with a job queue for multi-user deployment.
+A stronger or local second model for the testbench, Verilator line coverage, place-and-route with OpenROAD for post-layout timing, a golden reference model check, and container isolation with a job queue for multi-user deployment.

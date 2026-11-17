@@ -30,11 +30,13 @@ Open http://127.0.0.1:5173. The top-right badge must say **Live · deepseek-v4.1
 ## Demo flow (about 8 minutes)
 1. **One sentence.** "SiliconScribe turns plain English into Verilog plus an independent self-checking testbench, runs both in a real simulator, and repairs failures. The simulator decides PASS or FAIL, never the model."
 2. **Show a finished live result first** (Projects, Load): it appears instantly, so the audience sees the product before any waiting.
-3. **Start a live run** (type the prompt, Generate). A live run takes about 2-11 minutes. Talk over the agent timeline: specification, RTL, testbench, simulation, synthesis, testbench strength. The clock under "Working…" proves it is not stuck.
+3. **Start a live run** (type the prompt, Generate). A live run takes about 2-11 minutes. Talk over the run timeline in the sidebar: specification, RTL, testbench, simulation, synthesis, testbench strength, timing. The clock under "Working…" proves it is not stuck.
+   Good moment for the Target clock slider: set 500 MHz before generating and show whether timing is met.
 4. **While it runs, tour the loaded result:**
+   - *Results tab*: the verdict band, then four sections: **Testbench strength** ("caught N of M injected bugs"), **Timing and area** ("meets 100 MHz with +X ns slack", real area in µm² on sky130), **Synthesis**, and **Toggle coverage (measured)**.
    - *Test cases tab*: every executed check with its type; filter to a type; click a row.
-   - *Waveform tab*: grouped signals, value at the cursor, radix, Expand.
-   - *Results tab*: Yosys cell/flip-flop/latch counts and the **Testbench strength** card ("caught N of M injected bugs").
+   - *Waveform tab*: grouped signals, value at the cursor, radix. Every tab is full height.
+   - The theme switch (top right) follows the system; pick whichever reads best on the projector.
 5. **Show a failure on purpose (instant, no model needed).** With a loaded counter in the editor, change the increment in the RTL (for example `count + 1'b1` to `count + 2'd2`) and press **Re-run**. It fails immediately: open **Test cases**, press *Failed*, click a row to see the differing bits, then open **Waveform** (the red flags mark the failed checks; `[` and `]` jump between them). Change the line back and **Re-run** again to return to PASS. This is a real simulation of your edit, not a recording.
    (Do **not** use the "buggy 4-bit counter" example chip with the live model: it is only scripted in offline mode, so with a live model it is just another prompt.)
 6. **Close with limits** (see "Say this / never say this").
@@ -52,4 +54,4 @@ Never pretend an offline or saved result is a fresh live one. The app labels the
 ## Say this / never say this
 **Say:** the simulator decides; PASS needs a validated summary and at least one executed check; the testbench is written from the specification, never from the RTL; the strength card measures whether the testbench could have caught bugs; the sandbox is defence in depth on a developer machine.
 
-**Never say:** "proven correct" (PASS is evidence, not proof); "real area or timing" (Yosys without a technology file gives generic cell counts only); "UVM was simulated" (UVM is export-only); "secure sandbox or jail"; "two independent models" (one model writes both stages; the separate-model setting exists but the free models tried were not reliable).
+**Never say:** "proven correct" (PASS is evidence, not proof); "sign-off timing" or "silicon area" (the timing and area are a pre-layout estimate on one sky130 corner: no wire delay, ideal clock, setup only); "UVM was simulated" (UVM is export-only); "secure sandbox or jail"; "two independent models" (one model writes both stages; the separate-model setting exists but the free models tried were not reliable).
