@@ -4,7 +4,6 @@ import pytest
 
 from orchestrator import run_pipeline, pipeline_events
 from simulator import IcarusSimulator
-import llm_service
 
 needs_iverilog = pytest.mark.skipif(
     shutil.which("iverilog") is None, reason="iverilog not installed"

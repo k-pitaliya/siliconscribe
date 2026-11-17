@@ -391,7 +391,7 @@ def save_project(run_response, prompt: Optional[str] = None, workspace=None):
         _ensure_table(conn)
         conn.execute(
             """
-            INSERT OR REPLACE INTO projects
+            INSERT INTO projects
             (id, prompt, module_name, rtl_spec, rtl_code, testbench_code, explanation, status, pass_count, fail_count, iterations, created_at, waveform_truncated, data)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,

@@ -9,7 +9,6 @@ Docker can add `openroad` later; local without it never breaks.
 
 import shutil
 import subprocess
-import re
 from pathlib import Path
 from typing import Dict, Optional
 

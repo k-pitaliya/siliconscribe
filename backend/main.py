@@ -1,5 +1,8 @@
 import json
 import logging
+import os
+import secrets
+import threading
 import time
 import uuid
 from collections import defaultdict
@@ -7,15 +10,17 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, FileResponse
+from fastapi.responses import StreamingResponse
 
 import llm_service
 from orchestrator import pipeline_events, run_pipeline
-from simulator import IcarusSimulator, VCD_FILENAME, LOG_FILENAME
-from coverage import compute_coverage
-from vcd_parser import parse_vcd
+from simulator import IcarusSimulator
+from cov_metrics import compute_coverage
+from vcd_parser import parse_vcd, ports_from_rtl
+from orchestrator import _tb_check_count
 from models import (
-    SimulationRequest, SimulationResult,
+    SimError,
+    SimulationRequest, SimulationResult, SimulationRerunResponse,
     RunRequest, RunResponse,
     SynthesisRequest,
     UVMExportRequest, UVMExportResponse,
@@ -44,17 +49,30 @@ RATE_LIMIT_WINDOW = 60        # seconds
 RATE_LIMIT_MAX_REQUESTS = 20  # per window
 
 _rate_log: dict[str, list[float]] = defaultdict(list)
+_rate_lock = threading.Lock()  # handlers now run in a thread pool
+
+
+def _trust_proxy_headers() -> bool:
+    return os.getenv("TRUST_PROXY_HEADERS", "").strip().lower() in ("1", "true", "yes", "on")
 
 
 def _get_client_ip(req: Request) -> str:
-    # Systematic: handle Render/Vercel proxy: X-Forwarded-For is set by Render, CF-Connecting-IP by Cloudflare/Vercel
-    # Trust first IP in XFF (original client) when present, else fallback to direct client.host
+    # Forwarded headers are only believable when a trusted proxy sets them. A client that
+    # reaches the app directly can send any X-Forwarded-For / CF-Connecting-IP value, which
+    # let one caller dodge the per-IP limit entirely (review finding, reproduced: 25/25
+    # requests accepted against a 20/min limit). So by default use the socket peer, and
+    # honour the headers only when the deployment says it runs behind a proxy
+    # (TRUST_PROXY_HEADERS=1, set in render.yaml).
+    if not _trust_proxy_headers():
+        return req.client.host if req.client else "unknown"
+    # Behind Render/Vercel the direct peer is a proxy, so XFF is needed. Use the
+    # LAST entry: client-supplied XFF values are prepended, the proxy appends the
+    # address it actually saw.
     xff = req.headers.get("x-forwarded-for")
     if xff:
-        # XFF may be "client, proxy1, proxy2" — take first
-        first = xff.split(",")[0].strip()
-        if first:
-            return first
+        parts = [p.strip() for p in xff.split(",") if p.strip()]
+        if parts:
+            return parts[-1]
     ccip = req.headers.get("cf-connecting-ip")
     if ccip:
         return ccip.strip()
@@ -65,6 +83,11 @@ def _get_client_ip(req: Request) -> str:
 
 
 def _check_rate_limit(ip: str):
+    with _rate_lock:
+        _check_rate_limit_locked(ip)
+
+
+def _check_rate_limit_locked(ip: str):
     now = time.time()
     cutoff = now - RATE_LIMIT_WINDOW
     _rate_log[ip] = [t for t in _rate_log[ip] if t > cutoff]
@@ -103,7 +126,7 @@ app.add_middleware(
         "https://siliconscribe.onrender.com",
     ],
     allow_origin_regex=r"https://.*\.vercel\.app",
-    allow_credentials=True,
+    allow_credentials=False,  # no cookie auth exists; credentials plus a wildcard origin regex was a standing foot-gun
     allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
     allow_headers=["Content-Type", "Authorization"],
 )
@@ -111,10 +134,10 @@ app.add_middleware(
 WORKSPACE = "./workspace"
 simulator = IcarusSimulator(workspace=WORKSPACE)
 
-# Workspace GC on startup (best-effort; do not fail boot if workspace missing)
+# Workspace GC on startup (best-effort; do not fail boot if workspace missing). Done once, at import:
+# a uvicorn/gunicorn worker imports this module exactly when it boots.
 if cleanup_old_workspaces is not None:
     try:
-        # Run eagerly at import so early tests also benefit, but also wire as startup event
         cleanup_old_workspaces(WORKSPACE, ttl_hours=24)
     except Exception:
         logger.exception("startup cleanup failed")
@@ -127,51 +150,11 @@ if db is not None:
         logger.exception("db init failed")
 
 
-@app.on_event("startup")
-async def _startup_gc():
-    if cleanup_old_workspaces is not None:
-        try:
-            removed = cleanup_old_workspaces(WORKSPACE, ttl_hours=24)
-            logger.info("startup GC removed %d stale workspaces", removed)
-        except Exception:
-            logger.exception("startup GC failed")
-    if db is not None:
-        try:
-            db.init_db(WORKSPACE)
-        except Exception:
-            logger.exception("startup db init failed")
-
-
-# Alternative lifespan handler for newer FastAPI (if on_event is deprecated)
-try:
-    from contextlib import asynccontextmanager
-
-    @asynccontextmanager
-    async def lifespan(app: FastAPI):  # type: ignore
-        if cleanup_old_workspaces is not None:
-            try:
-                cleanup_old_workspaces(WORKSPACE, ttl_hours=24)
-            except Exception:
-                logger.exception("lifespan cleanup failed")
-        if db is not None:
-            try:
-                db.init_db(WORKSPACE)
-            except Exception:
-                logger.exception("lifespan db init failed")
-        yield
-
-    # Wire lifespan for newer FastAPI/Starlette if not already set
-    try:
-        if getattr(app, "router", None) is not None and not getattr(app.router, "lifespan_context", None):
-            app.router.lifespan_context = lifespan
-    except Exception:
-        pass
-except Exception:
-    pass
-
 
 def _new_design_id() -> str:
-    return str(uuid.uuid4())[:8]
+    # Full UUID: a truncated id (previously 8 hex chars = 32 bits) can collide,
+    # and the DB write is an INSERT — silent overwrite of another user's project.
+    return uuid.uuid4().hex
 
 
 @app.get("/")
@@ -198,7 +181,7 @@ async def get_models():
 
 
 @app.post("/api/design/run", response_model=RunResponse)
-async def design_run(request: RunRequest, req: Request):
+def design_run(request: RunRequest, req: Request):
     """One-shot: generate -> simulate -> self-correct. Returns everything."""
     _check_rate_limit(_get_client_ip(req))
     design_id = _new_design_id()
@@ -253,6 +236,14 @@ async def design_stream(request: RunRequest, req: Request):
                 model=request.model,
                 reasoning_effort=request.reasoning_effort,
             ):
+                if event.get("stage") == "done" and db is not None:
+                    # The browser uses this streaming route, so it must persist the
+                    # finished project exactly like /api/design/run does; otherwise
+                    # the Projects drawer never lists anything generated in the UI.
+                    try:
+                        db.save_project(RunResponse(**event["response"]), prompt=request.prompt)
+                    except Exception:
+                        logger.exception("db save failed for stream %s", design_id)
                 yield f"data: {json.dumps(event)}\n\n"
         except Exception:
             logger.exception("design_stream id=%s error", design_id)
@@ -265,8 +256,8 @@ async def design_stream(request: RunRequest, req: Request):
     )
 
 
-@app.post("/api/simulation/run", response_model=SimulationResult)
-async def run_simulation(request: SimulationRequest, req: Request):
+@app.post("/api/simulation/run", response_model=SimulationRerunResponse)
+def run_simulation(request: SimulationRequest, req: Request):
     """Simulate a (possibly hand-edited) RTL/testbench pair once. No auto-fix."""
     _check_rate_limit(_get_client_ip(req))
     logger.info("run_simulation id=%s", request.design_id)
@@ -297,9 +288,19 @@ async def run_simulation(request: SimulationRequest, req: Request):
                         setattr(result, attr, None)
                 except Exception:
                     setattr(result, attr, None)
+        if result.status == "PASS" and _tb_check_count(request.testbench_code) == 0:
+            # Same rule as the generation path: a testbench that cannot fail proves nothing.
+            result.status = "ERROR"
+            result.errors.append(SimError(message="The testbench contains no self-checks; refusing to report PASS."))
         result.coverage = compute_coverage(result)
         logger.info("run_simulation id=%s status=%s", request.design_id, result.status)
-        return result
+        waveform = None
+        if result.waveform_file:
+            try:
+                waveform = parse_vcd(result.waveform_file, ports=ports_from_rtl(request.rtl_code))
+            except Exception:
+                logger.exception("waveform parse failed for %s", request.design_id)
+        return SimulationRerunResponse(**result.model_dump(), waveform=waveform)
     except HTTPException:
         raise
     except Exception:
@@ -308,7 +309,7 @@ async def run_simulation(request: SimulationRequest, req: Request):
 
 
 @app.post("/api/synthesis/run")
-async def run_synthesis(request: SynthesisRequest, req: Request):
+def run_synthesis(request: SynthesisRequest, req: Request):
     """Synthesize RTL with Yosys (if available) and return gate-level metrics.
 
     Graceful fallback: when ``yosys`` is not installed the endpoint returns
@@ -336,7 +337,7 @@ async def run_synthesis(request: SynthesisRequest, req: Request):
 
 
 @app.get("/api/projects")
-async def list_projects_endpoint(request: Request, limit: int = 20, offset: int = 0):
+def list_projects_endpoint(request: Request, limit: int = 20, offset: int = 0):
     """List persisted projects, newest first."""
     _check_rate_limit(_get_client_ip(request))
     if limit < 1 or limit > 100:
@@ -357,7 +358,7 @@ async def list_projects_endpoint(request: Request, limit: int = 20, offset: int 
 
 
 @app.get("/api/projects/{design_id}")
-async def get_project_endpoint(design_id: str, request: Request):
+def get_project_endpoint(design_id: str, request: Request):
     """Get full RunResponse for a persisted project."""
     _check_rate_limit(_get_client_ip(request))
     if not DESIGN_ID_RE.match(design_id):
@@ -375,7 +376,7 @@ async def get_project_endpoint(design_id: str, request: Request):
 
 
 @app.delete("/api/projects/{design_id}", status_code=204)
-async def delete_project_endpoint(design_id: str, request: Request):
+def delete_project_endpoint(design_id: str, request: Request):
     """Delete a persisted project."""
     _check_rate_limit(_get_client_ip(request))
     if not DESIGN_ID_RE.match(design_id):
@@ -395,7 +396,7 @@ async def delete_project_endpoint(design_id: str, request: Request):
 
 
 @app.post("/api/uvm/export", response_model=UVMExportResponse)
-async def uvm_export(request: UVMExportRequest, req: Request):
+def uvm_export(request: UVMExportRequest, req: Request):
     """Export a UVM testbench bundle (Questa style) for a spec derived from prompt.
 
     Export-only, never calls Icarus. Uses llm_service.parse_intent to derive
@@ -406,8 +407,7 @@ async def uvm_export(request: UVMExportRequest, req: Request):
     logger.info("uvm_export prompt=%s module_override=%s", request.prompt[:80], request.module_name)
     try:
         from uvm_templates import generate_uvm_bundle, bundle_to_zip_base64
-        from models import RTLDesignSpec
-    except Exception as e:
+    except Exception:
         logger.exception("uvm_templates import failed")
         raise HTTPException(status_code=500, detail="UVM templates not available")
     try:
@@ -437,8 +437,22 @@ async def uvm_export(request: UVMExportRequest, req: Request):
 
 
 @app.post("/api/admin/cleanup")
-async def admin_cleanup(request: Request, ttl_hours: int = 24):
-    """Admin: remove workspace dirs older than TTL (default 24h)."""
+def admin_cleanup(request: Request, ttl_hours: int = 24):
+    """Admin: remove workspace dirs older than TTL (default 24h).
+
+    Requires the ``X-Admin-Token`` header to match the ``ADMIN_TOKEN`` env var.
+    If ADMIN_TOKEN is unset the endpoint is disabled: an unauthenticated delete
+    endpoint is a denial-of-service waiting to happen.
+    """
+    expected = os.getenv("ADMIN_TOKEN", "").strip()
+    if not expected:
+        raise HTTPException(
+            status_code=503,
+            detail="Admin cleanup is disabled. Set ADMIN_TOKEN to enable it.",
+        )
+    supplied = request.headers.get("x-admin-token", "")
+    if not secrets.compare_digest(supplied, expected):
+        raise HTTPException(status_code=403, detail="Forbidden")
     if cleanup_old_workspaces is None:
         raise HTTPException(status_code=500, detail="Internal server error")
     # Validate TTL to prevent abuse: negative/zero would delete everything

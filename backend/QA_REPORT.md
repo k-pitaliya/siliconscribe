@@ -161,7 +161,7 @@ symlink workspace/link → outside → _design_dir("link") → ValueError ✓
 | `llm_service.py` | Providers (Zen→NVIDIA→OpenAI→Offline), curated models | Zen priority, `OFFLINE_MODE=1` forces offline, `CURATED_MODELS` excludes reasoning empty-content models, `OfflineProvider._buggy`, `fix_design` golden RTL | **PASS** |
 | `simulator.py` | Compile/run/parse, `ensure_vcd_dump`, `write_files` 200KB, `MAX_CODE_BYTES` | validate, resolve+is_relative_to, size guard, timeout clamp (fixed), idempotent dump, `_parse_compile_errors`, `parse_results` status table | **PASS** |
 | `vcd_parser.py` | VCD→Waveform, truncation | `MAX_SIGNALS=40` `MAX_CHANGES=2000`, `_bin_to_hex` x/z handling, synthetic & real VCD tests, truncation metadata | **PASS** |
-| `coverage.py` | Lightweight pass_rate + COV bins + toggle/branch | `pass_rate` calc, `COV:` bins, `Toggle coverage: 85%`→85.0, backward compat, generic fallback `Coverage: 90%` | **PASS** |
+| `cov_metrics.py` (was `coverage.py`) | Lightweight pass_rate + COV bins + toggle/branch | `pass_rate` calc, `COV:` bins, `Toggle coverage: 85%`→85.0, backward compat, generic fallback `Coverage: 90%` | **PASS** |
 | `schematic.py` | Port-level + yosys `synthesize_with_yosys` | `build_schematic` grouping, `shutil.which("yosys")` guard, module_name regex, 200KB guard, `Number of cells:` parse, `timeout 30`, JSON netlist | **PASS** |
 | `synthesis.py` | `YosysSynthesizer` wrapper | `workspace.resolve().mkdir`, `available()`, `synthesize` delegating, `build_schematic_hybrid` graceful fallback | **PASS** |
 | `orchestrator.py` | SSE `pipeline_events` + `run_pipeline`, guards | stages `start→intent→rtl→(lint)→testbench→(lint)→explanation→simulate→fixing/fix→(lint)→simulate→synthesis→done`; history `[-1200:]`; `seen_rtl_hashes` oscillation & no-op (now whitespace-insensitive); `compute_coverage(log_explicit)`, `parse_vcd`, `build_schematic` | **PASS** (fixed oscillation) |
@@ -232,7 +232,7 @@ All patches re-verified: `pytest` 23 passed, `vitest` 25 passed, `npm run build`
 | R8 | **Info** | `frontend/package.json` `npm audit` | 3 high vulns: `nanoid ≤3.3.17` (GHSA-...), `postcss ≤8.5.22`, `undici 7.0.0-7.28.0`. | `npm audit fix` (major bumps may require `vite@7` / `postcss@8.4.49`). Verify via `npm audit` after. | — |
 | R9 | **Info** | `frontend` chunk | `dist/index-...js 580 kB >500 kB` warning | `vite: manualChunks: {codemirror: ['@codemirror/language','@uiw/react-codemirror']}` code-split. | — |
 | R10 | **Info** | `backend` `requirements.txt` vs env | Pinned `fastapi==0.135.3` but audit env used `0.141.1`; `openai` not pinned upper bound | Add `pip-compile` / `uv` lock or `>=` range tests; ensure CI installs exact pins. | — |
-| R11 | **Info** | `backend/coverage.py:69` | Generic fallback regex `Coverage:\s*(\d+)%` may match unrelated "Coverage" word in TB comments. | Restrict to line-start `^\s*Coverage` already done but still may false-positive; acceptable for lightweight coverage. | — |
+| R11 | **Info** | `backend/cov_metrics.py:69` | Generic fallback regex `Coverage:\s*(\d+)%` may match unrelated "Coverage" word in TB comments. | Restrict to line-start `^\s*Coverage` already done but still may false-positive; acceptable for lightweight coverage. | — |
 
 ---
 

@@ -31,9 +31,9 @@ def compute_coverage(result: SimulationResult, log: str = "") -> dict:
         "passed": result.pass_count,
         "failed": result.fail_count,
         "pass_rate": pass_rate,
+        # Always present (possibly empty) so consumers can rely on the key.
+        "bins": bins,
     }
-    if bins:
-        cov["bins"] = bins
 
     # --- Extended coverage parsing (toggle / branch / line / functional) ---
     # Accepts variants:

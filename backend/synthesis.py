@@ -2,9 +2,8 @@
 Yosys synthesis wrapper.
 
 Provides :class:`YosysSynthesizer` which delegates to
-:func:`schematic.synthesize_with_yosys` and offers a hybrid
-``build_schematic_hybrid`` that prefers gate-level metrics when yosys is
-installed but gracefully falls back to the port-level block diagram.
+:func:`schematic.synthesize_with_yosys`, returning metrics when yosys is
+installed and a graceful ``available: False`` result when it is not.
 """
 
 import shutil
@@ -50,51 +49,17 @@ class YosysSynthesizer:
             work_dir = self.workspace / f"synth_{module_name}"
         return synthesize_with_yosys(rtl_code, module_name, Path(work_dir))
 
-    def build_schematic_hybrid(
-        self,
-        spec: RTLDesignSpec,
-        rtl_code: str,
-        work_dir: Optional[Path] = None,
-    ) -> Schematic:
-        """Try yosys synthesis, then return a port-level :class:`Schematic`.
-
-        Gate-level rendering (yosys + netlistsvg) is future work, so this
-        method always returns the port-level block diagram today.  It still
-        *attempts* synthesis first so synthesis metrics are populated and
-        failures do not propagate — guaranteeing offline / no-yosys correctness.
-
-        Args:
-            spec: Parsed RTL spec for the port diagram.
-            rtl_code: Verilog source for the top module.
-            work_dir: Optional synthesis scratch dir.
-
-        Returns:
-            Schematic: port-level diagram (fallback is the only diagram today).
-        """
-        # Attempt synthesis for side-effects / metrics, but never fail the
-        # schematic build.  Any yosys errors are swallowed; the caller can
-        # call :meth:`synthesize` separately if it needs the metrics.
-        try:
-            wd = Path(work_dir) if work_dir is not None else self.workspace / f"synth_{spec.module_name}"
-            # We intentionally ignore the return value here; synthesis metrics
-            # are consumed via synthesize() in the orchestrator.  The hybrid
-            # schematic itself remains port-level for now.
-            synthesize_with_yosys(rtl_code, spec.module_name, wd)
-        except Exception:
-            # Graceful fallback — never raise from schematic building.
-            pass
-        return build_schematic(spec)
-
     def synthesize_and_build(
         self,
         spec: RTLDesignSpec,
         rtl_code: str,
         work_dir: Optional[Path] = None,
     ) -> Tuple[Schematic, dict]:
-        """Convenience: return both the schematic and synthesis metrics.
+        """Return both the port-level schematic and synthesis metrics.
 
-        Returns:
-            (Schematic, synthesis_dict)
+        There is deliberately no "hybrid" variant that runs yosys and throws the
+        result away: the orchestrator calls :meth:`synthesize` itself and keeps
+        the metrics, so a second hidden synthesis run would only waste time.
         """
         wd = Path(work_dir) if work_dir is not None else self.workspace / f"synth_{spec.module_name}"
         synthesis = self.synthesize(rtl_code, spec.module_name, work_dir=wd)

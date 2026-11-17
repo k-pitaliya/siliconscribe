@@ -16,18 +16,33 @@ class PortSpec(BaseModel):
     @field_validator("width", mode="before")
     @classmethod
     def coerce_width(cls, v):
-        """Accept numeric strings, parameter names (WIDTH), or plain ints."""
-        # Reject booleans explicitly (bool is subclass of int)
+        """Accept ints, numeric strings and the width spellings models actually use.
+
+        Review finding: "[7:0]", "7:0", "8 bits" and 8.0 were all silently turned into 1,
+        which then fed RTL generation, testbench generation and the weak-evidence floor.
+        A genuine parameter name such as "WIDTH" still defaults to 1 (the testbench
+        instantiates the module with its default parameter).
+        """
+        import re
         if isinstance(v, bool):
             return 1
         if isinstance(v, int):
             return v
+        if isinstance(v, float) and v.is_integer():
+            return int(v)
         if isinstance(v, str):
-            v = v.strip()
-            if v.isdigit():
-                return int(v)
-            # Parameterized width like "WIDTH" — default to 1 (the TB will
-            # instantiate with the module's default parameter).
+            s = v.strip()
+            if s.isdigit():
+                return int(s)
+            m = re.fullmatch(r"\[?\s*(\d+)\s*:\s*(\d+)\s*\]?", s)        # [7:0] / 7:0
+            if m:
+                return abs(int(m.group(1)) - int(m.group(2))) + 1
+            m = re.fullmatch(r"(\d+)\s*-?\s*bits?", s, re.IGNORECASE)         # "8 bits" / "8-bit"
+            if m:
+                return int(m.group(1))
+            m = re.fullmatch(r"(\d+)\.0+", s)                                 # "8.0"
+            if m:
+                return int(m.group(1))
             return 1
         return 1
 
@@ -71,6 +86,27 @@ class SimError(BaseModel):
     message: str = ""
 
 
+class CheckResult(BaseModel):
+    """One comparison made by the testbench (one `CHK|...` transcript line)."""
+    idx: int
+    status: Literal["PASS", "FAIL"]
+    category: str = "other"
+    name: str = ""
+    t: Optional[int] = None            # simulation time in the VCD tick unit
+    expected: Optional[str] = None     # hex text as printed by %0h (may contain x / z)
+    actual: Optional[str] = None
+    detail: str = ""
+    source: Literal["chk", "legacy_fail"] = "chk"
+
+
+class CheckGroup(BaseModel):
+    """Exact counters for one category (never truncated, unlike the row list)."""
+    category: str
+    total: int
+    passed: int
+    failed: int
+
+
 class SimulationResult(BaseModel):
     status: Literal["PASS", "FAIL", "TIMEOUT", "ERROR"]
     module_name: str
@@ -83,6 +119,14 @@ class SimulationResult(BaseModel):
     waveform_file: Optional[str] = None
     transcript_file: Optional[str] = None
     log_excerpt: str = ""
+    # Per-check detail parsed from the transcript (see checks.py). The verdict above is
+    # never taken from these rows; they exist so the UI can show WHAT was tested.
+    checks: List[CheckResult] = Field(default_factory=list)
+    check_groups: List[CheckGroup] = Field(default_factory=list)
+    checks_source: Literal["structured", "legacy", "none"] = "none"
+    checks_total_logged: int = 0
+    checks_truncated: bool = False
+    checks_consistent: bool = True
 
 
 class SimulationRequest(BaseModel):
@@ -108,6 +152,12 @@ class IterationRecord(BaseModel):
     status: str
     fix_summary: str = ""
     fix_type: str = ""
+    diagnosis: Optional[dict] = Field(
+        None,
+        description="Structured root-cause diagnosis from the debugger "
+                    "(symptom, root_cause, fix_location, confidence). "
+                    "None for scripted offline fixes."
+    )
     pass_count: int = 0
     fail_count: int = 0
     log_excerpt: str = ""
@@ -117,15 +167,34 @@ class WaveformSignal(BaseModel):
     name: str
     width: int = 1
     wave: List[dict] = Field(default_factory=list, description="List of {t, v} value changes")
+    # Context the viewer needs to group and order signals sensibly (see vcd_parser.py).
+    path: str = ""                      # hierarchical path, e.g. "testbench.count"
+    scope: str = ""                     # enclosing scope name
+    var_type: str = "wire"              # wire / reg / integer / parameter / real ...
+    role: str = "internal"              # clock | reset | in | out | io | dut_internal | internal | tb | aux | param
+    msb: Optional[int] = None
+    lsb: Optional[int] = None
+    truncated_at: Optional[int] = None  # time of the last stored change if this signal's changes were capped
 
 
 class Waveform(BaseModel):
     timescale: str = "1ns"
+    timescale_ps: Optional[float] = None      # one time unit in picoseconds
+    timescale_defaulted: bool = False         # True when the simulator fell back to its 1 s default
     end_time: int = 0
     signals: List[WaveformSignal] = Field(default_factory=list)
     truncated: bool = False
     dropped_signals: int = 0
     changes_truncated: bool = False
+
+
+class SimulationRerunResponse(SimulationResult):
+    """Result of re-simulating edited code: the verdict AND the matching waveform.
+
+    Without the waveform the Waveform tab kept showing the PRE-edit run next to the new
+    PASS/FAIL (review finding).
+    """
+    waveform: Optional[Waveform] = None
 
 
 class SchematicPort(BaseModel):
@@ -167,6 +236,8 @@ class RunResponse(BaseModel):
     waveform: Optional[Waveform] = None
     schematic: Optional[Schematic] = None
     synthesis: Optional[dict] = None
+    fallback_notice: Optional[str] = None
+    verification_warning: Optional[str] = None
 
 
 class SynthesisRequest(BaseModel):

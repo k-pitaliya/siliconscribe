@@ -11,5 +11,7 @@ services:
         value: "0"
       - key: OPENCODE_API_KEY
         sync: false
+      - key: TRUST_PROXY_HEADERS
+        value: "1"   # Render terminates TLS in front of the app, so X-Forwarded-For is trustworthy
       - key: PYTHONUNBUFFERED
         value: "1"

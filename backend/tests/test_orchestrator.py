@@ -86,7 +86,6 @@ def test_exact_match_no_fallback(tmp_path):
 @needs_iverilog
 def test_oscillation_detection_stops_loop(tmp_path):
     """Regression: if the provider alternates between two RTLs the loop must stop."""
-    import models
     from simulator import IcarusSimulator
 
     _orig_fix = llm_service.OfflineProvider.fix_design
@@ -143,3 +142,257 @@ def test_oscillation_detection_stops_loop(tmp_path):
         assert any("oscillation" in e.get("fix_summary","").lower() or "oscillation" in e.get("message","").lower() or "no change" in e.get("message","").lower() or "no-op" in e.get("fix_summary","").lower() for e in fix_events), f"Guard message missing in {fix_events}"
     finally:
         llm_service.OfflineProvider.fix_design = _orig_fix
+
+
+def test_tb_check_count_detects_self_checks():
+    from orchestrator import _tb_check_count
+
+    tb = (
+        "if (a !== b) fail_count++; else pass_count++;\n"
+        "if (c !== d) begin fail_count += 1; $error(\"bad\"); end\n"
+        "if (e) $fatal(1, \"fatal\");\n"
+        "if (fail_count == 0) $display(\"ALL TESTS PASSED\");\n"
+    )
+    # fail_count++ / fail_count += / $error / $fatal = 4
+    assert _tb_check_count(tb) == 4
+    assert _tb_check_count("initial begin $finish; end") == 0
+
+
+@needs_iverilog
+def test_fix_cannot_delete_testbench_checks(tmp_path, monkeypatch):
+    """A fix that replaces a failing TB with a check-free one must be rejected."""
+    import offline_designs as od
+
+    def _cheating_fix(self, rtl_code, tb_code, log_excerpt, model=None,
+                      reasoning_effort=None, spec=None):
+        return {
+            "rtl_code": od.get_design("counter")["rtl"],  # correct RTL
+            "testbench_code": (
+                "module testbench;\n"
+                "  initial begin\n"
+                "    $display(\"Passed: 1\");\n"
+                "    $display(\"Failed: 0\");\n"
+                "    $display(\"ALL TESTS PASSED\");\n"
+                "    $finish;\n"
+                "  end\n"
+                "endmodule\n"
+            ),
+            "fix_summary": "cheating fix that removes all checks",
+            "fix_type": "test",
+        }
+
+    monkeypatch.setattr(llm_service.OfflineProvider, "fix_design", _cheating_fix)
+    sim = IcarusSimulator(workspace=str(tmp_path))
+    events = list(pipeline_events("Design a buggy 4-bit counter", "d8", sim, max_iterations=2))
+    fix_events = [e for e in events if e["stage"] == "fix"]
+    assert any("Testbench change rejected" in e.get("message", "") for e in fix_events), fix_events
+    done = next(e for e in events if e["stage"] == "done")
+    resp = done["response"]
+    tb_final = resp["testbench_code"] if isinstance(resp, dict) else resp.testbench_code
+    assert "fail_count" in tb_final, "Original self-checking TB must be retained"
+
+
+def test_repair_compile_errors_scopes_wire_to_reg_to_testbench():
+    from orchestrator import _repair_compile_errors
+
+    rtl = "module top; endmodule\n"
+    tb = ("module testbench;\n"
+          "  wire test_valid_w;\n"
+          "  initial begin\n"
+          "    test_valid_w = 1'b1;\n"
+          "  end\n"
+          "endmodule\n")
+    log = ("Compilation failed:\n"
+           "testbench.sv:3: error: test_valid_w is not a valid l-value here\n"
+           "  wire test_valid_w;\n"
+           "       ^~~~~~~~~~~~\n")
+    new_rtl, new_tb, repaired = _repair_compile_errors(rtl, tb, log)
+    assert repaired == ["testbench.sv:test_valid_w"]
+    assert new_rtl == rtl
+    assert "reg test_valid_w;" in new_tb
+    assert "wire test_valid_w;" not in new_tb
+
+
+def test_repair_compile_errors_scopes_wire_to_reg_to_rtl():
+    from orchestrator import _repair_compile_errors
+
+    rtl = ("module top(output reg y);\n"
+           "  wire state;\n"
+           "  always @* state = 1'b1;\n"
+           "  assign y = state;\n"
+           "endmodule\n")
+    tb = "module testbench; top u(); endmodule\n"
+    log = ("design.sv:3: error: state is not a valid l-value here\n"
+           "  always @* state = 1'b1;\n")
+    new_rtl, new_tb, repaired = _repair_compile_errors(rtl, tb, log)
+    assert repaired == ["design.sv:state"]
+    assert "reg state;" in new_rtl
+    assert new_tb == tb
+
+
+def test_repair_compile_errors_ignores_unrelated_failures():
+    from orchestrator import _repair_compile_errors
+
+    rtl = "module top; endmodule\n"
+    tb = "module testbench; endmodule\n"
+    log = "testbench.sv:3: error: syntax error\n"
+    assert _repair_compile_errors(rtl, tb, log) == (rtl, tb, [])
+
+
+def test_compiler_repair_runs_without_calling_llm(monkeypatch, tmp_path):
+    """A wire→reg compile failure is repaired deterministically with a diagnosis."""
+    import models
+
+    class _FakeLive:
+        name = "fake-live"
+        model = "fake-model"
+
+    spec = models.RTLDesignSpec(
+        module_name="host",
+        ports=[models.PortSpec(name="a", direction="input", width=1),
+               models.PortSpec(name="y", direction="output", width=1)],
+        behavior="assign y = a",
+        constraints=["combinational"],
+    )
+    rtl = ("module host(input a, output y);\n"
+           "  assign y = a;\n"
+           "endmodule\n")
+    bad_tb = ("module testbench;\n"
+              "  reg a; wire y;\n"
+              "  wire test_valid_w;\n"
+              "  integer pass_count = 0, fail_count = 0;\n"
+              "  host dut(.a(a), .y(y));\n"
+              "  initial begin\n"
+              "    a = 1'b1; test_valid_w = 1'b1;\n"
+              "    if (test_valid_w !== 1'b1) fail_count = fail_count + 1;\n"
+              "    else pass_count = pass_count + 1;\n"
+              "    $display(\"Passed: %0d\", pass_count);\n"
+              "    $display(\"Failed: %0d\", fail_count);\n"
+              "    $display(\"ALL TESTS PASSED\");\n"
+              "    $finish;\n"
+              "  end\n"
+              "endmodule\n")
+
+    monkeypatch.setattr(llm_service, "get_provider", lambda: _FakeLive())
+    monkeypatch.setattr(llm_service, "parse_intent", lambda *a, **k: spec)
+    monkeypatch.setattr(llm_service, "generate_rtl", lambda *a, **k: rtl)
+    monkeypatch.setattr(llm_service, "generate_testbench", lambda *a, **k: bad_tb)
+    monkeypatch.setattr(llm_service, "explain_design", lambda *a, **k: "x")
+
+    def _must_not_call(*a, **k):
+        raise AssertionError("fix_design must not be called for a mechanical repair")
+
+    monkeypatch.setattr(llm_service, "fix_design", _must_not_call)
+
+    sim = IcarusSimulator(workspace=str(tmp_path))
+    events = list(pipeline_events("Design a passthrough", "d10", sim, max_iterations=2))
+    repairs = [e for e in events if e.get("fix_type") == "compiler_repair"]
+    assert repairs, events
+    diag = repairs[0]["diagnosis"]
+    assert diag["fix_location"] == "testbench.sv"
+    assert "wire" in diag["root_cause"].lower()
+    assert "l-value" in diag["symptom"]
+    done = next(e for e in events if e["stage"] == "done")
+    resp = done["response"]
+    status = resp["status"] if isinstance(resp, dict) else resp.status
+    assert status == "PASS"
+
+
+def test_testbench_only_fix_is_applied(monkeypatch, tmp_path):
+    """A corrected TB oracle with unchanged RTL must not be discarded as a no-op."""
+    import models
+
+    class _FakeLive:
+        name = "fake-live"
+        model = "fake-model"
+
+    spec = models.RTLDesignSpec(
+        module_name="host",
+        ports=[models.PortSpec(name="a", direction="input", width=1),
+               models.PortSpec(name="y", direction="output", width=1)],
+        behavior="assign y = a",
+        constraints=["combinational"],
+    )
+    rtl = ("module host(input a, output y);\n"
+           "  assign y = a;\n"
+           "endmodule\n")
+    bad_tb = ("module testbench;\n"
+              "  reg a; wire y;\n"
+              "  integer pass_count = 0, fail_count = 0;\n"
+              "  host dut(.a(a), .y(y));\n"
+              "  initial begin\n"
+              "    a = 1'b1; #1;\n"
+              "    if (y === 1'b0) pass_count = pass_count + 1;\n"
+              "    else fail_count = fail_count + 1;\n"
+              "    $display(\"Passed: %0d\", pass_count);\n"
+              "    $display(\"Failed: %0d\", fail_count);\n"
+              "    if (fail_count == 0) $display(\"ALL TESTS PASSED\");\n"
+              "    $finish;\n"
+              "  end\n"
+              "endmodule\n")
+    good_tb = bad_tb.replace("if (y === 1'b0)", "if (y === 1'b1)")
+
+    def _tb_only_fix(rtl_code, tb_code, log_excerpt, model=None,
+                     reasoning_effort=None, spec=None):
+        assert rtl_code == rtl
+        return {
+            "rtl_code": rtl,
+            "testbench_code": good_tb,
+            "fix_summary": "Corrected the testbench oracle.",
+            "diagnosis": {"symptom": "1 failed", "root_cause": "oracle inverted",
+                          "fix_location": "testbench.sv", "confidence": "high"},
+            "fix_type": "test",
+        }
+
+    monkeypatch.setattr(llm_service, "get_provider", lambda: _FakeLive())
+    monkeypatch.setattr(llm_service, "parse_intent", lambda *a, **k: spec)
+    monkeypatch.setattr(llm_service, "generate_rtl", lambda *a, **k: rtl)
+    monkeypatch.setattr(llm_service, "generate_testbench", lambda *a, **k: bad_tb)
+    monkeypatch.setattr(llm_service, "explain_design", lambda *a, **k: "x")
+    monkeypatch.setattr(llm_service, "fix_design", _tb_only_fix)
+
+    sim = IcarusSimulator(workspace=str(tmp_path))
+    events = list(pipeline_events("Design a passthrough", "d11", sim, max_iterations=2))
+    fixes = [e for e in events if e["stage"] == "fix" and e.get("fix_type") == "test"]
+    assert fixes, events
+    assert fixes[0]["rtl_code"] == rtl
+    assert "y === 1'b1" in fixes[0]["testbench_code"]
+    done = next(e for e in events if e["stage"] == "done")
+    resp = done["response"]
+    status = resp["status"] if isinstance(resp, dict) else resp.status
+    assert status == "PASS"
+
+
+def test_midrun_upstream_failure_does_not_swap_design(monkeypatch, tmp_path):
+    """Once a live call succeeds, a later outage must fail, not silently offline."""
+    import models
+
+    class _FakeLive:
+        name = "fake-live"
+        model = "fake-model"
+
+    spec = models.RTLDesignSpec(
+        module_name="my_design",
+        ports=[models.PortSpec(name="a", direction="input", width=1)],
+        behavior="pass through",
+        constraints=["combinational"],
+    )
+
+    monkeypatch.setattr(llm_service, "get_provider", lambda: _FakeLive())
+    monkeypatch.setattr(llm_service, "parse_intent", lambda *a, **k: spec)
+
+    def _boom(*a, **k):
+        raise RuntimeError("LLM_UPSTREAM:Connection error")
+
+    monkeypatch.setattr(llm_service, "generate_rtl", _boom)
+    monkeypatch.setattr(llm_service, "generate_testbench", _boom)
+    monkeypatch.setattr(llm_service, "explain_design", lambda *a, **k: "x")
+
+    sim = IcarusSimulator(workspace=str(tmp_path))
+    events = list(pipeline_events("Design a custom widget", "d9", sim, max_iterations=1))
+    error_events = [e for e in events if e["stage"] == "error"]
+    assert error_events, events
+    assert "became unavailable mid-run" in error_events[0]["message"]
+    assert not any(e["stage"] == "done" for e in events)
+    # And no silent switch to the curated offline designs.
+    assert not any(e.get("fallback_notice") for e in events)

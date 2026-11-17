@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import List
 
 from models import SimError
+from simulator import clean_env, sandbox_violations
 
 
 # ---------------------------------------------------------------------------
@@ -124,11 +125,10 @@ def _strip_comments(code: str) -> str:
 def _heuristic_checks(rtl_code: str, tb_code: str = "") -> tuple[List[SimError], List[SimError]]:
     """Pure-python regex heuristics. Returns (errors, warnings).
 
-    When no external tool is available we deliberately classify findings as
-    *warnings* so that ``ok`` remains True (per spec: fallback returns ok True
-    with warnings). Only the most egregious structural issue (module/endmodule
-    mismatch) could be an error, but even that stays a warning in fallback
-    mode to avoid blocking the pipeline when no linter is installed.
+    These findings are structural: a missing semicolon, duplicate module, or
+    module/endmodule mismatch means the code cannot compile. They are returned
+    as *errors* and therefore make ``ok`` False even when no external tool is
+    installed — a linter that calls broken code clean is worse than no linter.
     """
     errors: List[SimError] = []
     warnings: List[SimError] = []
@@ -153,13 +153,13 @@ def _heuristic_checks(rtl_code: str, tb_code: str = "") -> tuple[List[SimError],
             dups.add(m)
         seen.add(m)
     for d in dups:
-        warnings.append(SimError(message=f"Duplicate module definition: '{d}'"))
+        errors.append(SimError(message=f"Duplicate module definition: '{d}'"))
 
     # 2. module / endmodule mismatch
     mod_cnt = len(re.findall(r"\bmodule\b", stripped_combined))
     end_cnt = len(re.findall(r"\bendmodule\b", stripped_combined))
     if mod_cnt != end_cnt:
-        warnings.append(
+        errors.append(
             SimError(message=f"module/endmodule mismatch: {mod_cnt} module(s) vs {end_cnt} endmodule(s)")
         )
 
@@ -210,7 +210,7 @@ def _heuristic_checks(rtl_code: str, tb_code: str = "") -> tuple[List[SimError],
             if _has_assignment(code_without_comment) and not code_without_comment.endswith(";"):
                 # Avoid flagging incomplete assign that ends with operator (multi-line)
                 if code_without_comment[-1] not in ("+", "-", "*", "/", "&", "|", "^", "(", "[", "{", ","):
-                    warnings.append(
+                    errors.append(
                         SimError(line=idx, message=f"Possible missing semicolon: '{stripped[:90]}'")
                     )
             continue
@@ -236,7 +236,7 @@ def _heuristic_checks(rtl_code: str, tb_code: str = "") -> tuple[List[SimError],
             if _has_assignment(code_without_comment):
                 # For cases like `assign b = a` without ';', this catches it.
                 # For multi-line `always` blocks, we still warn; that's acceptable as a heuristic.
-                warnings.append(
+                errors.append(
                     SimError(line=idx, message=f"Possible missing semicolon: '{stripped[:90]}'")
                 )
 
@@ -255,10 +255,11 @@ def _heuristic_checks(rtl_code: str, tb_code: str = "") -> tuple[List[SimError],
                 warnings.append(
                     SimError(message=f"Possible width mismatch: literal width {max_lit}' vs declared max width {max_decl}")
                 )
-        # Check for obvious decimal overflow: e.g. `count <= 16` for 4-bit [3:0] (max 15)
+        # Check for obvious decimal overflow: e.g. `count <= 16` for 4-bit [3:0] (max 15).
+        # Scan comment-free text: a note such as "// names <= 24 chars" is not an assignment.
         # Find assignments of decimal literals without width prefix — runs even when no explicit width literal
         if decl_widths:
-            for m in re.finditer(r"<=\s*(\d+)\s*;?", combined):
+            for m in re.finditer(r"<=\s*(\d+)\s*;?", stripped_combined):
                 try:
                     val = int(m.group(1))
                     # Smallest declared width determines max value; warn if val exceeds its capacity
@@ -270,7 +271,7 @@ def _heuristic_checks(rtl_code: str, tb_code: str = "") -> tuple[List[SimError],
                 except ValueError:
                     pass
             # Also check blocking assignment `= 16`
-            for m in re.finditer(r"=\s*(\d+)\s*;", combined):
+            for m in re.finditer(r"=\s*(\d+)\s*;", stripped_combined):
                 try:
                     # Avoid catching `==` — the regex ensures single `=` followed by digits and `;`
                     # Filter out comparison contexts already handled; just check value magnitude
@@ -321,11 +322,28 @@ class VerilogLinter:
         rtl_code = rtl_code or ""
         tb_code = tb_code or ""
 
-        # Empty input short-circuit: treat as clean (no errors) to satisfy
-        # heuristic-only tests and avoid spurious "No top level modules" error
-        # from iverilog when linting empty strings.
+        # Empty input: there is nothing to compile. Report an error rather than
+        # "clean", otherwise a failed upstream generation looks lint-passing.
         if not rtl_code.strip() and not tb_code.strip():
-            return {"ok": True, "errors": [], "warnings": [], "output": ""}
+            return {
+                "ok": False,
+                "errors": [SimError(message="No Verilog source provided (empty input).")],
+                "warnings": [],
+                "output": "empty input: nothing to lint",
+            }
+
+        # The external compilers parse this text BEFORE the simulator's sandbox policy ever sees it.
+        # A `include "/etc/passwd" is rejected by the simulator, but Verilator echoes the offending
+        # source line in its diagnostics, which would put a local file's contents on screen. So refuse
+        # whatever the simulator would refuse, before any compiler runs.
+        blocked = sandbox_violations(rtl_code, tb_code)
+        if blocked:
+            return {
+                "ok": False,
+                "errors": [SimError(message=f"Source not linted: {v}") for v in blocked],
+                "warnings": [],
+                "output": "rejected by the sandbox policy before linting",
+            }
 
         errors: List[SimError] = []
         warnings: List[SimError] = []
@@ -350,7 +368,8 @@ class VerilogLinter:
                         files.append(str(tb_file))
                     cmd = ["verilator", "--lint-only", "-Wall", "-Wno-DECLFILENAME", "-Wno-UNUSED"] + files
                     result = subprocess.run(
-                        cmd, capture_output=True, text=True, timeout=15
+                        cmd, capture_output=True, text=True, timeout=15,
+                        stdin=subprocess.DEVNULL, cwd=td, env=clean_env(),
                     )
                     tool_output = (result.stderr or "") + (result.stdout or "")
                     output_parts.append(tool_output)
@@ -381,7 +400,8 @@ class VerilogLinter:
                         files.append(str(tb_file))
                     cmd = ["iverilog", "-o", "/dev/null", "-g2012", "-Wall"] + files
                     result = subprocess.run(
-                        cmd, capture_output=True, text=True, timeout=15
+                        cmd, capture_output=True, text=True, timeout=15,
+                        stdin=subprocess.DEVNULL, cwd=td, env=clean_env(),
                     )
                     tool_output = (result.stderr or "") + (result.stdout or "")
                     output_parts.append(tool_output)
@@ -406,19 +426,22 @@ class VerilogLinter:
         # If a tool was used, we still surface heuristic warnings that the tool
         # might have missed (but avoid duplicating exact messages).
         if tool_used is None:
-            # Fallback mode: per spec, return ok True with warnings (even if heuristics found issues)
-            # So we put heuristic errors into warnings to keep ok True unless tool found real errors.
-            # `errors` stays empty in pure-heuristic mode; all findings become warnings.
-            for h in heuristic_errors:
-                warnings.append(h)
+            # No external tool available: heuristics are the ONLY signal we have.
+            # A missing semicolon, duplicate module, or module/endmodule mismatch
+            # is a real error — reporting ok=True here would tell callers that
+            # broken code is clean. Keep them as errors; only genuine advisories
+            # remain warnings.
+            errors.extend(heuristic_errors)
             for h in heuristic_warnings:
                 # Deduplicate by message
                 if not any(h.message == w.message for w in warnings):
                     warnings.append(h)
             if not output_parts:
                 output_parts.append("No lint tool available (verilator/iverilog not found); used heuristic checks.")
-                if warnings:
-                    output_parts.append("\n".join(f"warning: {w.message}" for w in warnings))
+                if errors or warnings:
+                    output_parts.append("\n".join(
+                        [f"error: {e.message}" for e in errors]
+                        + [f"warning: {w.message}" for w in warnings]))
         else:
             # Tool was used: merge heuristic warnings that are not already covered
             for h in heuristic_warnings:

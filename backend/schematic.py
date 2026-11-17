@@ -108,9 +108,17 @@ def synthesize_with_yosys(rtl_code: str, module_name: str, work_dir: Path) -> di
             except ValueError:
                 cell_count = None
 
-        # Heuristic area estimate: no liberty file, so approximate.
-        # ~5 um^2 per generic cell is a plausible order-of-magnitude for demo.
-        area_estimate = float(cell_count * 5.0) if cell_count is not None else None
+        # RELATIVE AREA PROXY — NOT a physical area in um^2.
+        # We run `synth` with NO liberty file, so Yosys maps to its generic gate
+        # library ($__NOT_CELL__, $_AND_, ...). No technology mapping => no real
+        # transistor area, no node/corner, no die area. Reporting "cell_count * 5"
+        # as um^2 would be fabricated. We keep a dimensionless, monotonic proxy so
+        # designs can still be ranked against each other, and we label it
+        # explicitly so no consumer can mistake it for silicon area.
+        # Real um^2 requires: read_liberty <pdk>.lib + abc -D <delay> + stat -tech.
+        RELATIVE_AREA_PER_CELL = 5.0
+        area_estimate = (float(cell_count * RELATIVE_AREA_PER_CELL)
+                         if cell_count is not None else None)
 
         # Try to read JSON netlist if yosys produced it.
         json_netlist = None
@@ -120,11 +128,22 @@ def synthesize_with_yosys(rtl_code: str, module_name: str, work_dir: Path) -> di
             except Exception:
                 json_netlist = None
 
-        ret: dict = {"available": True}
+        ret: dict = {
+            "available": True,
+            # Honesty flags: consumers MUST check these before quoting numbers.
+            "liberty_mapped": False,        # no .lib => no real tech mapping
+            "area_units": "relative_proxy", # dimensionless; NOT um^2
+            "tech_node": None,              # unknown until a PDK liberty is supplied
+        }
         if cell_count is not None:
             ret["cell_count"] = cell_count
         if area_estimate is not None:
             ret["area_estimate"] = area_estimate
+            ret["area_estimate_note"] = (
+                "Relative proxy = cell_count x "
+                f"{RELATIVE_AREA_PER_CELL:g} (generic cells, no liberty/tech map). "
+                "NOT a physical area in um^2."
+            )
         if json_netlist is not None:
             ret["json_netlist"] = json_netlist
 
