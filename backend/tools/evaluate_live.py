@@ -1,0 +1,177 @@
+#!/usr/bin/env python3
+"""Measured live evaluation: run a fixed prompt set through the real pipeline and record the facts.
+
+    cd backend
+    PATH="$HOME/.local/bin:$PATH" env -u OFFLINE_MODE LLM_PROVIDER=opencode-app \\
+        LLM_MODEL=deepseek-v4.1-flash-free python3 tools/evaluate_live.py            # run what is missing
+    python3 tools/evaluate_live.py --only c1,s1                                       # a subset
+    python3 tools/evaluate_live.py --summary                                          # just rebuild summary.md
+
+Design rules (so the numbers can be trusted and a free-tier cut-off loses nothing):
+  * one JSON line per finished prompt is appended to evaluation/results.jsonl IMMEDIATELY;
+  * re-running skips prompts that already have a finished record (resume), unless --redo;
+  * an upstream outage or quota error stops the run (it is not recorded as a design failure);
+  * a run that silently fell back to the scripted offline demo is recorded as `fallback` and is
+    NOT counted as evidence about the model;
+  * it calls the pipeline directly, so it never writes to the projects database.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import statistics
+import sys
+import tempfile
+import time
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+BACKEND = HERE.parent
+sys.path.insert(0, str(BACKEND))
+
+OUT_DIR = BACKEND / "evaluation"
+RESULTS = OUT_DIR / "results.jsonl"
+SUMMARY = OUT_DIR / "summary.md"
+ARTIFACTS = OUT_DIR / "artifacts"
+
+# (id, category, prompt). Spread over combinational, sequential and FSM designs, easy to moderate.
+PROMPTS = [
+    ("c1", "combinational", "Design an 8-to-3 priority encoder with a valid output"),
+    ("c2", "combinational", "Design a 4-bit binary to Gray code converter"),
+    ("c3", "combinational", "Design a 4-bit ripple-carry adder with carry-in and carry-out"),
+    ("c4", "combinational", "Design a 4:1 multiplexer with 8-bit data paths"),
+    ("c5", "combinational", "Design a 3-to-8 decoder with an enable input"),
+    ("c6", "combinational", "Design a 4-bit magnitude comparator with greater, equal and less outputs"),
+    ("c7", "combinational", "Design a 4-bit ALU with add, sub, and, or, xor and overflow detection"),
+    ("s1", "sequential", "Design a 4-bit synchronous up-counter with async reset and enable"),
+    ("s2", "sequential", "Design an 8-bit loadable up/down counter with synchronous reset"),
+    ("s3", "sequential", "Design a 4-bit universal shift register with hold, shift left, shift right and parallel load"),
+    ("s4", "sequential", "Design a serial-in parallel-out 8-bit shift register with synchronous reset"),
+    ("s5", "sequential", "Design a clock divider that divides the input clock by 4 with an asynchronous reset"),
+    ("s6", "sequential", "Design a synchronous FIFO with 8-bit data and depth 4 with full and empty flags"),
+    ("f1", "fsm", "Design a Moore FSM that detects the serial bit sequence 1011 with overlapping allowed"),
+    ("f2", "fsm", "Design a traffic light controller FSM with red, green and yellow states and a synchronous reset"),
+]
+
+
+def load_done() -> dict:
+    done = {}
+    if RESULTS.exists():
+        for line in RESULTS.read_text().splitlines():
+            if line.strip():
+                rec = json.loads(line)
+                done[rec["id"]] = rec          # the last record for an id wins
+    return done
+
+
+def run_one(pid: str, category: str, prompt: str) -> dict:
+    import llm_service
+    from orchestrator import run_pipeline
+    from simulator import IcarusSimulator
+
+    sim = IcarusSimulator(workspace=tempfile.mkdtemp(prefix="eval_"))
+    started = time.time()
+    resp = run_pipeline(prompt, f"ev{pid}", sim, self_correct=True, max_iterations=4, timeout_seconds=30)
+    d = resp.model_dump()
+    res = d["result"] or {}
+    strength = d.get("strength") or {}
+    ARTIFACTS.mkdir(parents=True, exist_ok=True)
+    (ARTIFACTS / f"{pid}_design.sv").write_text(d["rtl_code"])
+    (ARTIFACTS / f"{pid}_testbench.sv").write_text(d["testbench_code"])
+    return {
+        "id": pid, "category": category, "prompt": prompt,
+        "status": d["status"], "repairs": d["iterations"], "seconds": round(time.time() - started, 1),
+        "module": d["rtl_spec"]["module_name"],
+        "checks_passed": res.get("pass_count"), "checks_total": res.get("test_count"),
+        "checks_source": res.get("checks_source"),
+        "test_types": [[g["category"], g["passed"], g["total"]] for g in (res.get("check_groups") or [])],
+        "strength_killed": strength.get("killed"), "strength_total": strength.get("total"),
+        "strength_survivors": [s["description"] for s in strength.get("survivors", [])],
+        "warning": d.get("verification_warning"),
+        "fallback": bool(d.get("fallback_notice")),
+        "provider": getattr(llm_service.get_provider(), "name", "?"),
+        "model": llm_service.current_model(),
+        "testbench_model": (getattr(llm_service.get_provider(), "stage_models", {}) or {}).get("testbench") or None,
+        "finished_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+    }
+
+
+def summarise() -> str:
+    order = {p[0]: i for i, p in enumerate(PROMPTS)}
+    recs = sorted(load_done().values(), key=lambda r: order.get(r["id"], 99))
+    if not recs:
+        return "No results yet.\n"
+    evidence = [r for r in recs if not r["fallback"]]
+    first = [r for r in evidence if r["status"] == "PASS" and r["repairs"] == 0]
+    repaired = [r for r in evidence if r["status"] == "PASS" and r["repairs"] > 0]
+    failed = [r for r in evidence if r["status"] != "PASS"]
+    times = [r["seconds"] for r in evidence]
+    models = sorted({"%s / %s" % (r["provider"], r["model"]) for r in recs})
+    tb_models = sorted({str(r["testbench_model"] or "same as design") for r in recs})
+    lines = [
+        "# Live evaluation", "",
+        "Provider/model: " + ", ".join(models),
+        "Testbench model: " + ", ".join(tb_models), "",
+        f"- Prompts run: **{len(recs)}** ({len(recs) - len(evidence)} fell back to the offline demo and are not counted)",
+        f"- PASS on the first attempt: **{len(first)}** of {len(evidence)}",
+        f"- PASS after self-repair: **{len(repaired)}** of {len(evidence)}",
+        f"- Not PASS: **{len(failed)}** of {len(evidence)}",
+        f"- Median time per run: **{statistics.median(times):.0f} s**" if times else "- Median time: n/a", "",
+        "| id | type | verdict | repairs | checks | strength | time | notes |", "|---|---|---|---|---|---|---|---|",
+    ]
+    for r in recs:
+        strength = f"{r['strength_killed']}/{r['strength_total']}" if r.get("strength_total") else "-"
+        notes = []
+        if r["fallback"]:
+            notes.append("offline fallback")
+        if r.get("warning"):
+            notes.append("weak-evidence warning")
+        if r.get("strength_survivors"):
+            notes.append(f"{len(r['strength_survivors'])} bug(s) missed")
+        lines.append(f"| {r['id']} | {r['category']} | {r['status']} | {r['repairs']} | "
+                     f"{r['checks_passed']}/{r['checks_total']} | {strength} | {r['seconds']:.0f} s | {'; '.join(notes)} |")
+    lines += ["", "Strength = injected bugs caught / injected bugs run (mutation testing of the design's own testbench; "
+              "survivors may be equivalent mutants). Raw records: `evaluation/results.jsonl`; designs and testbenches: "
+              "`evaluation/artifacts/`.", ""]
+    return "\n".join(lines)
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--only", help="comma-separated prompt ids")
+    ap.add_argument("--redo", action="store_true", help="run again even if a record exists")
+    ap.add_argument("--summary", action="store_true", help="only rebuild summary.md")
+    args = ap.parse_args()
+    OUT_DIR.mkdir(exist_ok=True)
+
+    if not args.summary:
+        import llm_service
+        if llm_service.is_offline():
+            print("Refusing to run: the provider is offline (scripted demo), which would measure nothing.")
+            return 2
+        wanted = set(args.only.split(",")) if args.only else None
+        done = load_done()
+        todo = [p for p in PROMPTS if (wanted is None or p[0] in wanted) and (args.redo or p[0] not in done)]
+        print(f"provider={getattr(llm_service.get_provider(), 'name', '?')} model={llm_service.current_model()} "
+              f"to run: {[p[0] for p in todo]}", flush=True)
+        for pid, category, prompt in todo:
+            print(f"[{pid}] {prompt}", flush=True)
+            try:
+                rec = run_one(pid, category, prompt)
+            except Exception as e:  # upstream outage / quota: stop, keep what is finished
+                print(f"  STOP: {type(e).__name__}: {str(e)[:200]}", flush=True)
+                print("  (not recorded as a design failure; re-run later to resume)", flush=True)
+                break
+            with RESULTS.open("a") as f:
+                f.write(json.dumps(rec) + "\n")
+            print(f"  -> {rec['status']} repairs={rec['repairs']} checks={rec['checks_passed']}/{rec['checks_total']} "
+                  f"strength={rec['strength_killed']}/{rec['strength_total']} {rec['seconds']}s"
+                  f"{' FALLBACK' if rec['fallback'] else ''}", flush=True)
+    SUMMARY.write_text(summarise())
+    print(f"summary written to {SUMMARY}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

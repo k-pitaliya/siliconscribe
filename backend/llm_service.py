@@ -15,6 +15,7 @@ app never hard-fails in a demo. Otherwise it tries Zen first, then NVIDIA, then
 OpenAI, then offline.
 """
 
+import logging
 import os
 import json
 import re
@@ -27,6 +28,8 @@ from dotenv import load_dotenv
 
 from models import RTLDesignSpec
 import offline_designs as od
+
+logger = logging.getLogger("siliconscribe.llm")
 
 # override=True so the project's .env wins over any stale shell env vars
 # (e.g. a NVIDIA_API_KEY exported in ~/.zshrc) — otherwise the app can silently
@@ -405,6 +408,8 @@ class OpenAIProvider:
         if reasoning_effort and ":" not in chosen and chosen.startswith("opencode/"):
             # Check if this model actually has that variant - we trust caller, zen will 404 if invalid and fallback will handle
             chosen = f"{chosen}:{reasoning_effort}"
+        # Which model handled which stage (so an independent testbench model is verifiable in the logs).
+        logger.info("llm stage=%s model=%s", stage or "-", chosen)
         # For templated tests that pass reasoning_effort but model is offline, ignore
         create_kwargs = {
             "model": chosen,
@@ -631,6 +636,7 @@ class OpenCodeAppProvider(OpenAIProvider):
         chosen = override or self.stage_models.get(stage or "") or self.model
         if "/" not in chosen:
             chosen = f"opencode/{chosen}"
+        logger.info("llm stage=%s model=%s", stage or "-", chosen)
         message = f"{system}\n\n{user}" if system else user
         cmd = ["opencode", "run", "-m", chosen, "--agent", self.agent,
                "--archived", "--format", "json", message]
@@ -913,7 +919,14 @@ def list_models() -> dict:
         models = [dict(m) for m in CURATED_MODELS]
         if current:
             models.sort(key=lambda m: 0 if m["id"] == current else 1)
-    return {"offline": False, "current": current, "models": models}
+    # Per-stage overrides (LLM_MODEL_TESTBENCH etc.) that differ from the default model. A request that
+    # explicitly picks another model in the UI overrides them, so say where they apply.
+    stage = {s: m for s, m in (getattr(get_provider(), "stage_models", None) or {}).items() if m and m != current}
+    if stage.get("testbench"):
+        for m in models:
+            if m["id"] == current:
+                m["note"] = f"{m['note']} · testbench written by {stage['testbench']}"
+    return {"offline": False, "current": current, "models": models, "stage_models": stage}
 
 
 # --------------------------------------------------------------------------- #
