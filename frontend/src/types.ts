@@ -34,6 +34,27 @@ export interface SimError {
   message: string
 }
 
+/** One comparison made by the testbench (parsed from a `CHK|...` transcript line). */
+export interface CheckResult {
+  idx: number
+  status: 'PASS' | 'FAIL'
+  category: string
+  name: string
+  t: number | null
+  expected: string | null
+  actual: string | null
+  detail: string
+  source: 'chk' | 'legacy_fail'
+}
+
+/** Exact per-category counters (never truncated, unlike the row list). */
+export interface CheckGroup {
+  category: string
+  total: number
+  passed: number
+  failed: number
+}
+
 export interface SimulationResult {
   status: 'PASS' | 'FAIL' | 'TIMEOUT' | 'ERROR'
   module_name: string
@@ -46,25 +67,59 @@ export interface SimulationResult {
   waveform_file: string | null
   transcript_file: string | null
   log_excerpt: string
+  /** Per-check detail; display data only, the verdict never comes from these rows. */
+  checks?: CheckResult[]
+  check_groups?: CheckGroup[]
+  checks_source?: 'structured' | 'legacy' | 'none'
+  checks_total_logged?: number
+  checks_truncated?: boolean
+  checks_consistent?: boolean
+}
+
+/** Result of re-simulating edited code: the verdict plus the matching waveform. */
+export interface SimulationRerun extends SimulationResult {
+  waveform?: Waveform | null
+}
+
+export interface Diagnosis {
+  symptom?: string
+  root_cause?: string
+  fix_location?: string
+  confidence?: 'high' | 'medium' | 'low' | string
 }
 
 export interface IterationRecord {
   iteration: number
   status: string
   fix_summary: string
+  fix_type?: string
+  diagnosis?: Diagnosis | null
   pass_count: number
   fail_count: number
   log_excerpt: string
 }
 
+export type SignalRole =
+  | 'clock' | 'reset' | 'in' | 'out' | 'io' | 'dut_internal' | 'internal' | 'tb' | 'aux' | 'param'
+
 export interface WaveformSignal {
   name: string
   width: number
   wave: { t: number; v: string }[]
+  path?: string
+  scope?: string
+  var_type?: string
+  role?: SignalRole
+  msb?: number | null
+  lsb?: number | null
+  /** Time of the last stored change when this signal's changes were capped. */
+  truncated_at?: number | null
 }
 
 export interface Waveform {
   timescale: string
+  timescale_ps?: number | null
+  timescale_defaulted?: boolean
   end_time: number
   signals: WaveformSignal[]
   truncated: boolean
@@ -112,6 +167,8 @@ export interface RunResponse {
   waveform: Waveform | null
   schematic: Schematic | null
   synthesis?: SynthesisInfo | null
+  fallback_notice?: string | null
+  verification_warning?: string | null
 }
 
 export interface ProjectSummary {
@@ -157,6 +214,7 @@ export interface StreamEvent {
   explanation?: string
   fix_summary?: string
   fix_type?: string
+  diagnosis?: Diagnosis | null
   fallback_notice?: string
   result?: SimulationResult
   response?: RunResponse

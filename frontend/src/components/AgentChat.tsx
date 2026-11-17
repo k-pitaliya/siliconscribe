@@ -1,10 +1,12 @@
 import { useEffect, useRef } from 'react'
+import type { Diagnosis } from '../types'
 
 export interface ChatMessage {
   role: 'ai' | 'user'
   text: string
   stage?: string
   status?: string
+  diagnosis?: Diagnosis | null
 }
 
 interface Props {
@@ -69,6 +71,19 @@ export default function AgentChat({ messages, running, explanation }: Props) {
                 </div>
                 <div className={`msg-bubble ${isAi ? '' : 'user'} ${statusClass}`}>
                   <p>{m.text}</p>
+                  {m.diagnosis && (
+                    <div className="msg-diagnosis" data-testid="chat-diagnosis">
+                      {m.diagnosis.root_cause && (
+                        <div><strong>Root cause:</strong> {m.diagnosis.root_cause}</div>
+                      )}
+                      {m.diagnosis.fix_location && (
+                        <div><strong>Fix location:</strong> {m.diagnosis.fix_location}</div>
+                      )}
+                      {m.diagnosis.confidence && (
+                        <div className="muted">Confidence: {m.diagnosis.confidence}</div>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
             )

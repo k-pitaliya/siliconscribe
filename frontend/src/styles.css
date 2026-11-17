@@ -551,6 +551,47 @@ textarea:focus-visible,
   color: var(--text-muted);
   font-size: 0.75rem;
 }
+.iter {
+  flex-wrap: wrap;
+}
+.iter-diagnosis {
+  flex-basis: 100%;
+  margin-top: 0.35rem;
+  padding: 0.45rem 0.6rem;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.04);
+  border-left: 2px solid var(--warn-amber);
+  font-size: 0.78rem;
+  line-height: 1.45;
+  color: var(--text-main);
+}
+.iter-diagnosis .muted {
+  color: var(--text-muted);
+}
+.msg-diagnosis {
+  margin-top: 0.5rem;
+  padding: 0.5rem 0.6rem;
+  border-radius: 6px;
+  background: rgba(245, 158, 11, 0.08);
+  border-left: 2px solid var(--warn-amber);
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+.degraded-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0.5rem 1rem 0;
+  padding: 0.6rem 0.9rem;
+  border-radius: 8px;
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  color: var(--text-main);
+  font-size: 0.85rem;
+}
+.degraded-banner i {
+  color: var(--warn-amber);
+}
 .error-list {
   margin: 1rem 0;
 }
@@ -799,9 +840,11 @@ textarea:focus-visible,
     transform: translateY(0);
   }
 }
+/* `backwards`, not `forwards`: a forwards fill leaves `transform` on every panel for good, and a
+   transformed ancestor becomes the containing block for position:fixed children (it trapped the
+   expanded results pane inside the centre column). Same entrance, no leftover transform. */
 .workspace > * {
-  opacity: 0;
-  animation: slideUp 0.5s ease-out forwards;
+  animation: slideUp 0.5s ease-out backwards;
 }
 .left-panel {
   animation-delay: 0.1s;
@@ -1001,3 +1044,173 @@ textarea:focus-visible,
     scroll-behavior: auto;
   }
 }
+
+/* Honesty labels: a demo fallback or a thin PASS must never look like a normal PASS. */
+.demo-tag, .weak-tag {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.6rem 0;
+  padding: 0.5rem 0.8rem;
+  border-radius: 8px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  background: rgba(245, 158, 11, 0.16);
+  border: 1px solid rgba(245, 158, 11, 0.5);
+  color: #fcd34d;
+}
+.weak-tag {
+  font-weight: 500;
+  background: rgba(99, 102, 241, 0.12);
+  border-color: rgba(99, 102, 241, 0.4);
+  color: #c7d2fe;
+}
+
+/* === Waveform viewer v2 ============================================================
+   Sticky name column + one shared time scale, so the ruler and the signals cannot drift. */
+.wfv { outline: none; }
+.wfv:focus-visible { box-shadow: 0 0 0 2px var(--accent-primary); border-radius: 10px; }
+.wfv-toolbar { flex-wrap: wrap; margin-bottom: 8px; }
+.wfv-field select,
+.wfv-filter {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-main);
+  border: 1px solid var(--border-glass);
+  border-radius: 8px;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.8rem;
+  color-scheme: dark;
+}
+.wfv-filter { width: 150px; }
+.wfv-btn { padding: 0.25rem 0.6rem; font-size: 0.8rem; }
+.wfv-subbar {
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  font-size: 0.75rem; color: var(--text-muted); margin-bottom: 6px;
+}
+.wfv-link {
+  background: none; border: none; padding: 0; cursor: pointer;
+  color: var(--accent-secondary); font: inherit; text-decoration: underline;
+}
+.wfv-pins { display: inline-flex; gap: 10px; align-items: center; font-family: var(--font-mono); }
+.wfv-pin-a { color: #a5b4fc; }
+.wfv-pin-b { color: #fcd34d; }
+.wfv-hint { opacity: 0.75; }
+.wfv-sr {
+  position: absolute; width: 1px; height: 1px; overflow: hidden;
+  clip: rect(0 0 0 0); white-space: nowrap;
+}
+.wfv-scroll {
+  position: relative; max-height: 460px; background: #05070b;
+  border: 1px solid var(--border-glass); border-radius: 8px; scrollbar-width: thin;
+}
+.wfv-body { display: flex; position: relative; }
+.wfv-names {
+  position: sticky; left: 0; z-index: 3; flex-shrink: 0;
+  background: #0a0d14; border-right: 1px solid var(--border-glass);
+}
+.wfv-head {
+  display: flex; align-items: flex-end; padding: 0 10px 6px;
+  font-family: var(--font-mono); font-size: 11px; color: var(--text-muted);
+}
+.wfv-name, .wfv-group { position: absolute; left: 0; right: 0; display: flex; align-items: center; gap: 6px; padding: 0 10px; }
+.wfv-name { font-family: var(--font-mono); font-size: 12px; white-space: nowrap; overflow: hidden; }
+.wfv-sig-name { color: var(--accent-secondary); overflow: hidden; text-overflow: ellipsis; }
+.wfv-width { color: var(--text-muted); font-size: 11px; }
+.wfv-val {
+  margin-left: auto; color: var(--text-main); background: rgba(99, 102, 241, 0.18);
+  padding: 1px 6px; border-radius: 4px; font-size: 11px;
+}
+.wfv-group {
+  background: #0f1420; border: none; border-top: 1px solid var(--border-glass);
+  color: var(--text-main); font-size: 11px; font-weight: 600; cursor: pointer; text-align: left;
+}
+.wfv-count { color: var(--text-muted); font-weight: 400; }
+.wfv-plot { background: #05070b; border-radius: 0; border: none; flex-shrink: 0; }
+.wfv-ruler-bg { fill: #0a0d14; }
+.wfv-grid { stroke: rgba(255, 255, 255, 0.07); stroke-width: 1; }
+.wfv-tick { fill: var(--text-muted); font-family: var(--font-mono); font-size: 11px; }
+.wfv-stripe { fill: rgba(255, 255, 255, 0.025); }
+.wfv-stripe-alt { fill: transparent; }
+.wfv-group-bg { fill: #0f1420; }
+.wfv-bit { stroke: #10b981; stroke-width: 1.6; }
+.wfv-dense { fill: rgba(16, 185, 129, 0.35); }
+.wfv-bus-x { stroke: #ff6b6b; stroke-width: 1.2; }
+.wfv-bus-z { fill: rgba(251, 191, 36, 0.15); stroke: #fbbf24; stroke-width: 1.2; stroke-dasharray: 3 2; }
+.wfv-cursor { stroke: rgba(255, 255, 255, 0.45); stroke-dasharray: 3 3; pointer-events: none; }
+.wfv-cursor-a { stroke: #a5b4fc; stroke-width: 1.5; pointer-events: none; }
+.wfv-cursor-b { stroke: #fcd34d; stroke-width: 1.5; pointer-events: none; }
+.wfv-marker polygon { fill: #f87171; cursor: pointer; }
+.wfv-marker-line { stroke: rgba(248, 113, 113, 0.35); stroke-width: 1; pointer-events: none; }
+
+/* Fira Code turns "0x" into a multiplication sign; hex values must read literally. */
+.wf-bus-label, .wfv-tick, .wfv-val, .metric-value, .cm-editor, pre, code {
+  font-variant-ligatures: none;
+  font-feature-settings: 'liga' 0, 'calt' 0;
+}
+
+/* === Test cases tab ================================================================ */
+.tcv { display: flex; flex-direction: column; gap: 10px; }
+.tcv-summary { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 0.85rem; }
+.tcv-bar { flex: 1 1 160px; height: 10px; border-radius: 6px; overflow: hidden; background: rgba(239, 68, 68, 0.35); display: flex; }
+.tcv-bar-pass { background: var(--pos-green); height: 100%; }
+.tcv-stat { font-family: var(--font-mono); }
+.tcv-stat.ok { color: #6ee7b7; }
+.tcv-stat.bad { color: #fca5a5; }
+.tcv-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.tcv-chip {
+  display: inline-flex; gap: 6px; align-items: center; cursor: pointer;
+  padding: 3px 10px; border-radius: 999px; font-size: 0.75rem; color: var(--text-main);
+  background: rgba(255, 255, 255, 0.05); border: 1px solid var(--border-glass);
+}
+.tcv-chip[aria-pressed='true'] { background: rgba(99, 102, 241, 0.28); border-color: rgba(99, 102, 241, 0.7); }
+.tcv-chip.has-fail { border-color: rgba(239, 68, 68, 0.6); }
+.tcv-chip-n { font-family: var(--font-mono); color: var(--text-muted); }
+.tcv-controls { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.tcv-controls select, .tcv-controls input {
+  background: rgba(255, 255, 255, 0.05); color: var(--text-main); color-scheme: dark;
+  border: 1px solid var(--border-glass); border-radius: 8px; padding: 0.25rem 0.5rem; font-size: 0.8rem;
+}
+.tcv-seg { display: inline-flex; border: 1px solid var(--border-glass); border-radius: 8px; overflow: hidden; }
+.tcv-seg button {
+  background: transparent; border: none; color: var(--text-muted); padding: 0.25rem 0.7rem;
+  font-size: 0.8rem; cursor: pointer;
+}
+.tcv-seg button[aria-pressed='true'] { background: rgba(99, 102, 241, 0.3); color: var(--text-main); }
+.tcv-note { font-size: 0.78rem; color: #fcd34d; background: rgba(245, 158, 11, 0.12); border: 1px solid rgba(245, 158, 11, 0.35); border-radius: 8px; padding: 6px 10px; }
+.tcv-table { border: 1px solid var(--border-glass); border-radius: 8px; overflow: hidden; }
+.tcv-row, .tcv-headrow {
+  display: grid; grid-template-columns: 52px 92px minmax(120px, 1fr) 82px 92px 92px 64px;
+  align-items: center; gap: 8px; padding: 0 10px; font-size: 0.78rem;
+}
+.tcv-headrow { height: 30px; background: rgba(255, 255, 255, 0.05); color: var(--text-muted); font-weight: 600; }
+.tcv-headrow button { background: none; border: none; color: inherit; font: inherit; text-align: left; cursor: pointer; padding: 0; }
+.tcv-viewport { position: relative; overflow-y: auto; height: 330px; scrollbar-width: thin; }
+.tcv-row {
+  position: absolute; left: 0; right: 0; height: 30px; border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  background: transparent; border-left: 3px solid transparent; border-top: none; border-right: none; color: var(--text-main);
+  text-align: left; cursor: pointer; width: 100%;
+}
+.tcv-row:hover, .tcv-row[aria-selected='true'] { background: rgba(99, 102, 241, 0.14); }
+.tcv-row.fail { border-left-color: #ef4444; background: rgba(239, 68, 68, 0.07); }
+.tcv-cell { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); }
+.tcv-pass { color: #6ee7b7; }
+.tcv-fail { color: #fca5a5; font-weight: 600; }
+.tcv-detail { border: 1px solid var(--border-glass); border-radius: 8px; padding: 10px 12px; display: grid; gap: 6px; font-size: 0.8rem; }
+.tcv-bits { font-family: var(--font-mono); letter-spacing: 0.04em; word-break: break-all; }
+.tcv-bit-diff { background: rgba(239, 68, 68, 0.35); border-radius: 2px; }
+
+.tab-badge { margin-left: 4px; font-family: var(--font-mono); font-size: 0.7rem; opacity: 0.8; }
+
+/* Hex values must read literally everywhere in the new views. */
+.tcv, .tcv *, .wfv, .wfv * { font-variant-ligatures: none; font-feature-settings: 'liga' 0, 'calt' 0; }
+
+/* Results pane: expand to the full window */
+.tab-expand { margin-left: auto; font-size: 0.8rem; }
+.results-pane.is-expanded {
+  position: fixed; inset: 10px; z-index: 60; flex: none;
+  background: #0b0f17; box-shadow: 0 0 0 100vmax rgba(0, 0, 0, 0.7);
+}
+.results-pane.is-expanded .wfv-scroll { max-height: none; }
+.results-pane.is-expanded .tcv-viewport { height: calc(100vh - 300px); min-height: 240px; }
+.wfv-marker.first polygon { fill: #ef4444; stroke: #fff; stroke-width: 1; }
+.wfv-marker-line { stroke: rgba(248, 113, 113, 0.6); }

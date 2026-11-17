@@ -1,8 +1,8 @@
-import type { ModelsResponse, RunResponse, SimulationResult, StreamEvent, ProjectSummary, UVMExportResponse } from './types'
+import type { ModelsResponse, RunResponse, SimulationRerun, StreamEvent, ProjectSummary, UVMExportResponse } from './types'
 export type { ProjectSummary, UVMExportResponse } from './types'
 
 // In dev, Vite proxies /api -> :8000. Override with VITE_API_BASE if needed.
-const BASE = import.meta.env.VITE_API_BASE ?? ''
+const BASE = (import.meta.env.VITE_API_BASE ?? '').replace(/\/+$/, '')
 
 export interface RunParams {
   prompt: string
@@ -27,11 +27,13 @@ export async function getStatus(): Promise<{ provider: string; offline: boolean;
     /* fall through */
   }
   const r = await fetch(`${BASE}/`)
+  if (!r.ok) throw new Error(`status failed: ${r.status}`)
   return r.json()
 }
 
 export async function getModels(): Promise<ModelsResponse> {
   const r = await fetch(`${BASE}/api/models`)
+  if (!r.ok) throw new Error(`models failed: ${r.status} ${await r.text().catch(() => '')}`.trim())
   return r.json()
 }
 
@@ -49,7 +51,7 @@ export async function reSimulate(
   design_id: string,
   rtl_code: string,
   testbench_code: string,
-): Promise<SimulationResult> {
+): Promise<SimulationRerun> {
   const r = await fetch(`${BASE}/api/simulation/run`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -70,13 +72,13 @@ export async function listProjects(limit = 20, offset = 0): Promise<{ total: num
 }
 
 export async function getProject(design_id: string): Promise<RunResponse> {
-  const r = await fetch(`${BASE}/api/projects/${design_id}`)
+  const r = await fetch(`${BASE}/api/projects/${encodeURIComponent(design_id)}`)
   if (!r.ok) throw new Error(`get project failed: ${r.status}`)
   return r.json()
 }
 
 export async function deleteProject(design_id: string): Promise<void> {
-  const r = await fetch(`${BASE}/api/projects/${design_id}`, { method: 'DELETE' })
+  const r = await fetch(`${BASE}/api/projects/${encodeURIComponent(design_id)}`, { method: 'DELETE' })
   if (!r.ok && r.status !== 204) throw new Error(`delete failed: ${r.status}`)
 }
 
@@ -104,22 +106,27 @@ export async function streamDesign(
   if (!resp.ok || !resp.body) {
     const body = await resp.text().catch(() => '')
     // Render free spin-down: first request after 15m idle takes 30-50s, Vercel Hobby timeout 10s → 504
-    if (resp.status === 504 || resp.status === 502 || body.includes('timeout')) {
+    // Status only: matching text in the body also matched the field name `timeout_seconds` in a 422.
+    if (resp.status === 504 || resp.status === 502) {
       throw new Error(`Render is waking up (free tier sleeps after 15m). Please wait 30s and retry. (504)`)
     }
-    // Try to surface backend detail if available
+    // Surface backend detail if the body is JSON. Parse first, then throw
+    // OUTSIDE the try — otherwise the throw is caught by our own catch.
+    let detail = ''
     try {
       const j = JSON.parse(body)
-      if (j.detail) throw new Error(j.detail)
+      if (j && typeof j.detail === 'string') detail = j.detail
     } catch {
-      /* ignore */
+      /* body is not JSON */
     }
+    if (detail) throw new Error(detail)
     throw new Error(`stream failed: ${resp.status} ${body.slice(0, 200)}`.trim())
   }
 
   const reader = resp.body.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
+  let sawFinal = false
 
   for (;;) {
     const { done, value } = await reader.read()
@@ -133,11 +140,18 @@ export async function streamDesign(
       buffer = buffer.slice(sep + 2)
       const line = frame.split('\n').find((l) => l.startsWith('data:'))
       if (!line) continue
+      let event: StreamEvent
       try {
-        onEvent(JSON.parse(line.slice(5).trim()) as StreamEvent)
+        event = JSON.parse(line.slice(5).trim()) as StreamEvent
       } catch {
-        /* ignore malformed frame */
+        continue // malformed frame: ignore it
       }
+      if (event.stage === 'done' || event.stage === 'error') sawFinal = true
+      // Outside the try, so an exception in the consumer is not swallowed as a "bad frame".
+      onEvent(event)
     }
+  }
+  if (!sawFinal && !signal?.aborted) {
+    throw new Error('The connection closed before the run finished. Please try again.')
   }
 }

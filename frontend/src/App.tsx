@@ -3,7 +3,7 @@ import PromptPanel from './components/PromptPanel'
 import CodeEditor from './components/CodeEditor'
 import ResultsPanel from './components/ResultsPanel'
 import AgentChat, { type ChatMessage } from './components/AgentChat'
-import { getStatus, getModels, streamDesign, reSimulate, exportUVM, listProjects, deleteProject, getProject } from './api'
+import { getModels, streamDesign, reSimulate, exportUVM, listProjects, deleteProject, getProject } from './api'
 import type {
   IterationRecord,
   LintInfo,
@@ -36,6 +36,8 @@ export default function App() {
   const [designId, setDesignId] = useState<string>('')
   const [synthesis, setSynthesis] = useState<SynthesisInfo | null>(null)
   const [lintInfo, setLintInfo] = useState<LintInfo | null>(null)
+  const [fallbackNotice, setFallbackNotice] = useState<string>('')
+  const [verificationWarning, setVerificationWarning] = useState<string>('')
 
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
@@ -46,11 +48,11 @@ export default function App() {
   const [projects, setProjects] = useState<ProjectSummary[]>([])
   const [showProjects, setShowProjects] = useState(false)
   const abortRef = useRef<AbortController | null>(null)
+  const lastNoticeRef = useRef<string>('')
 
   useEffect(() => {
-    getStatus()
-      .then((s) => setProvider(s))
-      .catch(() => setProvider({ provider: 'offline', offline: true }))
+    // /api/models already carries provider + offline state; getStatus() would
+    // fetch the same endpoint a second time and could overwrite a newer result.
     getModels()
       .then((m) => {
         setModels(m.models)
@@ -104,6 +106,9 @@ export default function App() {
     setIterations(0)
     setSynthesis(null)
     setLintInfo(null)
+    setFallbackNotice('')
+    setVerificationWarning('')
+    lastNoticeRef.current = ''
     pushMsg({ role: 'user', text: prompt })
 
     const ctrl = new AbortController()
@@ -124,10 +129,12 @@ export default function App() {
           reasoning_effort: thinkingToSend,
         },
         (e) => {
-          if (e.message && ['intent', 'rtl', 'testbench', 'explanation', 'simulate', 'fixing', 'fix', 'lint', 'synthesis', 'done', 'error'].includes(e.stage)) {
-            pushMsg({ role: 'ai', text: e.message, stage: e.stage, status: e.status })
+          if (e.message && ['start', 'intent', 'rtl', 'testbench', 'explanation', 'simulate', 'fixing', 'fix', 'lint', 'synthesis', 'done', 'error'].includes(e.stage)) {
+            pushMsg({ role: 'ai', text: e.message, stage: e.stage, status: e.status, diagnosis: e.diagnosis })
           }
-          if (e.fallback_notice) {
+          if (e.fallback_notice && e.fallback_notice !== lastNoticeRef.current) {
+            lastNoticeRef.current = e.fallback_notice
+            setFallbackNotice(e.fallback_notice)
             pushMsg({ role: 'ai', text: e.fallback_notice, stage: 'intent' })
           }
           if (e.rtl_spec) setModuleName(e.rtl_spec.module_name)
@@ -150,6 +157,8 @@ export default function App() {
             setExplanation(r.explanation)
             setModuleName(r.rtl_spec.module_name)
             if (r.synthesis) setSynthesis(r.synthesis)
+            if (r.fallback_notice) setFallbackNotice(r.fallback_notice)
+            setVerificationWarning(r.verification_warning ?? '')
             refreshProjects()
           }
         },
@@ -168,7 +177,7 @@ export default function App() {
       }
     } finally {
       setRunning(false)
-      abortRef.current = null
+      if (abortRef.current === ctrl) abortRef.current = null
     }
   }
 
@@ -181,8 +190,14 @@ export default function App() {
     setRunning(true)
     pushMsg({ role: 'user', text: 'Re-running edited code…' })
     try {
-      const res = await reSimulate(designId || 'edit', rtl, tb)
+      const { waveform: freshWaveform, ...res } = await reSimulate(designId || 'edit', rtl, tb)
+      // The verdict, the waveform and the test cases all come from THIS run. Leaving the old
+      // waveform, repair timeline or warning on screen would show them next to a new PASS/FAIL.
       setResult(res)
+      setWaveform(freshWaveform ?? null)
+      setHistory([])
+      setIterations(0)
+      setVerificationWarning('')
       pushMsg({
         role: 'ai',
         stage: 'simulate',
@@ -228,6 +243,7 @@ export default function App() {
   }
 
   async function handleLoadProject(id: string) {
+    if (running) return // loading mid-run would be overwritten by the next streamed event
     try {
       const proj = await getProject(id)
       setRtl(proj.rtl_code)
@@ -240,6 +256,8 @@ export default function App() {
       setDesignId(proj.design_id)
       setExplanation(proj.explanation)
       setSynthesis(proj.synthesis ?? null)
+      setFallbackNotice(proj.fallback_notice ?? '')
+      setVerificationWarning(proj.verification_warning ?? '')
       pushMsg({ role: 'ai', text: `Loaded project ${id} (${proj.rtl_spec.module_name})`, stage: 'done', status: proj.status })
       setShowProjects(false)
     } catch (err) {
@@ -266,9 +284,16 @@ export default function App() {
         </div>
         <div className="nav-actions">
           {provider && (
-            <span className={`provider-badge ${provider.offline ? 'offline' : 'live'}`}>
-              <i className={`fa-solid ${provider.offline ? 'fa-plug-circle-xmark' : 'fa-bolt'}`} />
-              {provider.offline ? 'Offline demo' : `Live · ${provider.provider}`}
+            <span
+              className={`provider-badge ${provider.offline || fallbackNotice ? 'offline' : 'live'}`}
+              data-testid="provider-badge"
+            >
+              <i className={`fa-solid ${provider.offline ? 'fa-plug-circle-xmark' : fallbackNotice ? 'fa-triangle-exclamation' : 'fa-bolt'}`} />
+              {provider.offline
+                ? 'Offline demo'
+                : fallbackNotice
+                  ? 'Demo fallback · not AI-generated'
+                  : `Live · ${provider.provider}`}
             </span>
           )}
           <button className="btn btn-secondary" onClick={() => setShowProjects(v => !v)} aria-label="Toggle projects">
@@ -288,6 +313,13 @@ export default function App() {
           )}
         </div>
       </header>
+
+      {fallbackNotice && (
+        <div className="degraded-banner" role="alert" data-testid="degraded-banner">
+          <i className="fa-solid fa-triangle-exclamation" aria-hidden="true" />
+          <span><strong>Degraded mode:</strong> {fallbackNotice}</span>
+        </div>
+      )}
 
       {showProjects && (
         <div className="projects-drawer glass-panel" style={{ marginBottom: '0.75rem', padding: '1rem' }}>
@@ -352,6 +384,8 @@ export default function App() {
             iterations={iterations}
             synthesis={synthesis}
             lint={lintInfo}
+            degraded={!!fallbackNotice}
+            warning={verificationWarning}
           />
         </section>
 

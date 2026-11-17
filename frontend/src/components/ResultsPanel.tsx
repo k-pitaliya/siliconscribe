@@ -1,5 +1,6 @@
-import { useState, useCallback, type KeyboardEvent } from 'react'
-import WaveformViewer from './WaveformViewer'
+import { useState, useCallback, useEffect, useMemo, type KeyboardEvent } from 'react'
+import WaveformViewer, { type WaveformMarker } from './WaveformViewer'
+import TestCasesView from './TestCasesView'
 import SchematicView from './SchematicView'
 import type { IterationRecord, Schematic, SimulationResult, Waveform, SynthesisInfo, LintInfo } from '../types'
 
@@ -11,14 +12,50 @@ interface Props {
   iterations?: number
   synthesis?: SynthesisInfo | null
   lint?: LintInfo | null
+  /** True when the shown result came from the built-in demo, not a live model. */
+  degraded?: boolean
+  /** Set when a PASS rests on too few executed checks. */
+  warning?: string
 }
 
-type Tab = 'waveform' | 'results' | 'schematic'
+type Tab = 'results' | 'tests' | 'waveform' | 'schematic'
 
-const TAB_ORDER: Tab[] = ['results', 'waveform', 'schematic']
+const TAB_ORDER: Tab[] = ['results', 'tests', 'waveform', 'schematic']
 
-export default function ResultsPanel({ result, waveform, schematic, history, iterations, synthesis, lint }: Props) {
+const TAB_META: Record<Tab, { label: string; icon: string }> = {
+  results: { label: 'Results', icon: 'fa-square-check' },
+  tests: { label: 'Test cases', icon: 'fa-list-check' },
+  waveform: { label: 'Waveform', icon: 'fa-chart-line' },
+  schematic: { label: 'Schematic', icon: 'fa-diagram-project' },
+}
+
+export default function ResultsPanel({ result, waveform, schematic, history, iterations, synthesis, lint, degraded, warning }: Props) {
   const [tab, setTab] = useState<Tab>('results')
+  // The pane is small next to the editor; "Expand" lets a long test list or a waveform use the whole window.
+  const [expanded, setExpanded] = useState(false)
+  useEffect(() => {
+    if (!expanded) return undefined
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.key === 'Escape') setExpanded(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [expanded])
+  // Clicking a check in "Test cases" (or a failure flag in the waveform) moves the waveform cursor.
+  const [focus, setFocus] = useState<{ t: number; seq: number } | null>(null)
+
+  const failMarkers = useMemo<WaveformMarker[]>(
+    () =>
+      (result?.checks ?? [])
+        .filter((c) => c.status === 'FAIL' && c.t != null)
+        .map((c) => ({ t: c.t as number, label: c.name })),
+    [result],
+  )
+
+  const showInWaveform = useCallback((t: number) => {
+    setFocus((prev) => ({ t, seq: (prev?.seq ?? 0) + 1 }))
+    setTab('waveform')
+  }, [])
 
   const handleKeyDown = useCallback((e: KeyboardEvent<HTMLDivElement>) => {
     if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
@@ -34,54 +71,60 @@ export default function ResultsPanel({ result, waveform, schematic, history, ite
   }, [tab])
 
   return (
-    <div className="results-pane glass-panel">
+    <div className={`results-pane glass-panel${expanded ? ' is-expanded' : ''}`}>
       <div className="tabs results-tabs" role="tablist" aria-label="Results view tabs" onKeyDown={handleKeyDown}>
+        {TAB_ORDER.map((id) => (
+          <button
+            key={id}
+            role="tab"
+            aria-selected={tab === id}
+            {...(tab === id ? { 'aria-controls': `panel-${id}` } : {})}
+            id={`tab-${id}`}
+            data-tab={id}
+            className={`tab ${tab === id ? 'active' : ''}`}
+            onClick={() => setTab(id)}
+            tabIndex={tab === id ? 0 : -1}
+          >
+            <i className={`fa-solid ${TAB_META[id].icon}`} aria-hidden="true" /> {TAB_META[id].label}
+            {id === 'tests' && result && result.test_count > 0 && (
+              <span className="tab-badge" data-testid="tests-badge"> {result.test_count}</span>
+            )}
+          </button>
+        ))}
         <button
-          role="tab"
-          aria-selected={tab === 'results'}
-          aria-controls="panel-results"
-          id="tab-results"
-          data-tab="results"
-          className={`tab ${tab === 'results' ? 'active' : ''}`}
-          onClick={() => setTab('results')}
-          tabIndex={tab === 'results' ? 0 : -1}
+          className="tab tab-expand"
+          aria-pressed={expanded}
+          aria-label={expanded ? 'Restore results pane' : 'Expand results pane'}
+          title={expanded ? 'Restore (Esc)' : 'Expand to full window'}
+          onClick={() => setExpanded((v) => !v)}
         >
-          <i className="fa-solid fa-square-check" aria-hidden="true" /> Results
-        </button>
-        <button
-          role="tab"
-          aria-selected={tab === 'waveform'}
-          aria-controls="panel-waveform"
-          id="tab-waveform"
-          data-tab="waveform"
-          className={`tab ${tab === 'waveform' ? 'active' : ''}`}
-          onClick={() => setTab('waveform')}
-          tabIndex={tab === 'waveform' ? 0 : -1}
-        >
-          <i className="fa-solid fa-chart-line" aria-hidden="true" /> Waveform
-        </button>
-        <button
-          role="tab"
-          aria-selected={tab === 'schematic'}
-          aria-controls="panel-schematic"
-          id="tab-schematic"
-          data-tab="schematic"
-          className={`tab ${tab === 'schematic' ? 'active' : ''}`}
-          onClick={() => setTab('schematic')}
-          tabIndex={tab === 'schematic' ? 0 : -1}
-        >
-          <i className="fa-solid fa-diagram-project" aria-hidden="true" /> Schematic
+          <i className={`fa-solid ${expanded ? 'fa-compress' : 'fa-expand'}`} aria-hidden="true" />
+          {expanded ? ' Restore' : ' Expand'}
         </button>
       </div>
       <div className="tab-content">
         {tab === 'results' && (
           <div role="tabpanel" id="panel-results" aria-labelledby="tab-results">
-            <ResultsView result={result} history={history} iterations={iterations} synthesis={synthesis} lint={lint} />
+            <ResultsView result={result} history={history} iterations={iterations} synthesis={synthesis} lint={lint} degraded={degraded} warning={warning} />
+          </div>
+        )}
+        {tab === 'tests' && (
+          <div role="tabpanel" id="panel-tests" aria-labelledby="tab-tests">
+            {result ? (
+              <TestCasesView result={result} timescalePs={waveform?.timescale_ps ?? null} onShowInWaveform={showInWaveform} />
+            ) : (
+              <div className="empty-state">No simulation yet. Generate a design to see its test cases.</div>
+            )}
           </div>
         )}
         {tab === 'waveform' && (
           <div role="tabpanel" id="panel-waveform" aria-labelledby="tab-waveform">
-            <WaveformViewer waveform={waveform} />
+            <WaveformViewer
+              waveform={waveform}
+              markers={failMarkers}
+              focusTime={focus?.t ?? null}
+              focusSeq={focus?.seq}
+            />
           </div>
         )}
         {tab === 'schematic' && (
@@ -100,12 +143,16 @@ function ResultsView({
   iterations,
   synthesis,
   lint,
+  degraded,
+  warning,
 }: {
   result: SimulationResult | null
   history: IterationRecord[]
   iterations?: number
   synthesis?: SynthesisInfo | null
   lint?: LintInfo | null
+  degraded?: boolean
+  warning?: string
 }) {
   if (!result) return <div className="empty-state">No simulation yet. Generate a design to see results.</div>
 
@@ -135,6 +182,18 @@ function ResultsView({
         {result.status}
       </div>
 
+      {degraded && (
+        <div className="demo-tag" role="note" data-testid="demo-result-tag">
+          <i className="fa-solid fa-triangle-exclamation" aria-hidden="true" />
+          Built-in demo result: not generated by the AI model for your prompt
+        </div>
+      )}
+      {warning && (
+        <div className="weak-tag" role="note" data-testid="weak-evidence-tag">
+          <i className="fa-solid fa-circle-info" aria-hidden="true" /> {warning}
+        </div>
+      )}
+
       <div className="metric-grid">
         <Metric label="Tests" value={String(result.test_count)} />
         <Metric label="Passed" value={String(result.pass_count)} tone="ok" />
@@ -157,8 +216,10 @@ function ResultsView({
           </h4>
           {synthesis.available ? (
             <div style={{ fontSize: '0.85rem', lineHeight: 1.5 }}>
-              {synthesis.cell_count != null && <div>Cells: <strong>{synthesis.cell_count}</strong></div>}
-              {synthesis.area_estimate != null && <div>Area estimate: <strong>{String(synthesis.area_estimate)} µm²</strong></div>}
+              {synthesis.cell_count != null && <div>Generic cells (unmapped): <strong>{synthesis.cell_count}</strong></div>}
+              {synthesis.area_estimate != null && (
+                <div>Relative area proxy: <strong>{String(synthesis.area_estimate)}</strong> <span className="muted">(cells × 5 — no liberty/tech map, not µm²)</span></div>
+              )}
               {synthesis.cell_count == null && synthesis.area_estimate == null && <div className="muted">Synthesis available — no metrics reported.</div>}
             </div>
           ) : (
@@ -212,6 +273,27 @@ function ResultsView({
               <span className="iter-counts">
                 {h.pass_count}✓ / {h.fail_count}✗
               </span>
+              {h.diagnosis && (
+                <div className="iter-diagnosis" data-testid={`diagnosis-${h.iteration}`}>
+                  {h.diagnosis.root_cause && (
+                    <div><strong>Root cause:</strong> {h.diagnosis.root_cause}</div>
+                  )}
+                  {h.diagnosis.symptom && (
+                    <div><strong>Symptom:</strong> {h.diagnosis.symptom}</div>
+                  )}
+                  {h.diagnosis.fix_location && (
+                    <div><strong>Fix location:</strong> {h.diagnosis.fix_location}</div>
+                  )}
+                  {h.diagnosis.confidence && (
+                    <div className="muted">Confidence: {h.diagnosis.confidence}</div>
+                  )}
+                </div>
+              )}
+              {!h.diagnosis && h.fix_type === 'offline_scripted' && (
+                <div className="iter-diagnosis muted" data-testid={`scripted-${h.iteration}`}>
+                  Scripted offline fix — no root-cause diagnosis was produced.
+                </div>
+              )}
             </div>
           ))}
         </div>
