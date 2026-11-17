@@ -217,6 +217,22 @@ function ResultsView({
           {synthesis.available ? (
             <div style={{ fontSize: '0.85rem', lineHeight: 1.5 }}>
               {synthesis.cell_count != null && <div>Generic cells (unmapped): <strong>{synthesis.cell_count}</strong></div>}
+              {synthesis.flip_flops != null && (
+                <div data-testid="synth-flops">Flip-flops: <strong>{synthesis.flip_flops}</strong> · Latches: <strong>{synthesis.latches ?? 0}</strong></div>
+              )}
+              {synthesis.cell_types && synthesis.cell_types.length > 0 && (
+                <div className="muted" data-testid="synth-types">
+                  {synthesis.cell_types.map(([name, n]) => `${name} ×${n}`).join(' · ')}
+                </div>
+              )}
+              {synthesis.latch_warning && (
+                <div data-testid="synth-latch" style={{ color: 'var(--warn-amber)' }}>
+                  <i className="fa-solid fa-triangle-exclamation" aria-hidden="true" /> {synthesis.latch_warning}
+                </div>
+              )}
+              {synthesis.warnings?.map((w) => (
+                <div key={w} className="muted" data-testid="synth-warning">Yosys: {w}</div>
+              ))}
               {synthesis.area_estimate != null && (
                 <div>Relative area proxy: <strong>{String(synthesis.area_estimate)}</strong> <span className="muted">(cells × 5 — no liberty/tech map, not µm²)</span></div>
               )}

@@ -143,6 +143,13 @@ export interface Schematic {
 export interface SynthesisInfo {
   available: boolean
   cell_count?: number
+  /** Most common generic cell types first, e.g. ["AND", 5]. */
+  cell_types?: [string, number][]
+  flip_flops?: number
+  latches?: number
+  latch_warning?: string
+  /** Yosys' own `Warning:` lines (multiple drivers, loops, ...). */
+  warnings?: string[]
   area_estimate?: number | string
   error?: string
 }

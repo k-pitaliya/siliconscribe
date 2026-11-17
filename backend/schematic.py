@@ -35,6 +35,43 @@ def build_schematic(spec: RTLDesignSpec) -> Schematic:
     )
 
 
+def summarize_netlist(netlist: dict, module_name: str) -> dict | None:
+    """Count what Yosys produced, from the JSON netlist (stable across Yosys versions).
+
+    The printed ``stat`` text changed format between releases ("Number of cells: N" became
+    "N cells"), which silently dropped the count. The netlist is the machine-readable source.
+    Returns ``cell_count``, ``cell_types`` (most common first), ``flip_flops`` and ``latches``,
+    or None when the module is not in the netlist.
+    """
+    modules = (netlist or {}).get("modules") or {}
+    mod = modules.get(module_name) or next(iter(modules.values()), None)
+    if not isinstance(mod, dict):
+        return None
+    counts: dict[str, int] = {}
+    for cell in (mod.get("cells") or {}).values():
+        ctype = str(cell.get("type", "?"))
+        counts[ctype] = counts.get(ctype, 0) + 1
+    ordered = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    return {
+        "cell_count": sum(counts.values()),
+        # "$_DFF_PN0_" -> "DFF_PN0", "$_XOR_" -> "XOR"
+        "cell_types": [[ctype.strip("$_"), n] for ctype, n in ordered[:10]],
+        "flip_flops": sum(n for c, n in counts.items() if "DFF" in c),
+        "latches": sum(n for c, n in counts.items() if "LATCH" in c),
+    }
+
+
+def _yosys_warnings(output: str, limit: int = 5) -> list[str]:
+    """Yosys' own `Warning:` lines (multiple drivers, combinational loops, ...), de-duplicated."""
+    seen: list[str] = []
+    for line in output.splitlines():
+        if line.startswith("Warning:"):
+            msg = line[len("Warning:"):].strip()[:200]
+            if msg and msg not in seen:
+                seen.append(msg)
+    return seen[:limit]
+
+
 def synthesize_with_yosys(rtl_code: str, module_name: str, work_dir: Path) -> dict:
     """
     Try to synthesize ``rtl_code`` with Yosys.
@@ -86,7 +123,7 @@ def synthesize_with_yosys(rtl_code: str, module_name: str, work_dir: Path) -> di
         f"read_verilog -sv {rtl_file}; "
         f"hierarchy -check -top {module_name}; "
         f"proc; opt; synth -top {module_name}; "
-        f"stat; write_json {json_out}"
+        f"check; stat; write_json {json_out}"
     )
 
     try:
@@ -146,6 +183,25 @@ def synthesize_with_yosys(rtl_code: str, module_name: str, work_dir: Path) -> di
             )
         if json_netlist is not None:
             ret["json_netlist"] = json_netlist
+            summary = summarize_netlist(json_netlist, module_name)
+            if summary:
+                # The netlist is authoritative; the text regex above is only a fallback.
+                ret.update(summary)
+                ret["cell_count"] = summary["cell_count"]
+                ret["area_estimate"] = float(summary["cell_count"] * RELATIVE_AREA_PER_CELL)
+                ret["area_estimate_note"] = (
+                    "Relative proxy = cell_count x "
+                    f"{RELATIVE_AREA_PER_CELL:g} (generic cells, no liberty/tech map). "
+                    "NOT a physical area in um^2."
+                )
+                if summary["latches"]:
+                    ret["latch_warning"] = (
+                        f"{summary['latches']} latch(es) inferred: usually an if/case in combinational "
+                        "logic that does not assign every output on every path."
+                    )
+        warnings = _yosys_warnings(output)
+        if warnings:
+            ret["warnings"] = warnings
 
         if result.returncode != 0:
             # Include error excerpt; if we also have cell_count we still surface it.

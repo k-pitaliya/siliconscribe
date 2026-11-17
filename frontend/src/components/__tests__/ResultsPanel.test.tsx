@@ -274,3 +274,21 @@ describe('ResultsPanel: test cases tab and expand', () => {
     expect(screen.getByRole('button', { name: 'Expand results pane' })).toBeInTheDocument()
   })
 })
+
+
+describe('ResultsPanel: richer synthesis report', () => {
+  const base = { result: passResult, waveform: null, schematic: null, history: [] as IterationRecord[] }
+  it('shows cell types, flip-flop and latch counts', () => {
+    const synthesis: SynthesisInfo = { available: true, cell_count: 20, flip_flops: 4, latches: 0, cell_types: [['AND', 5], ['XOR', 3]] }
+    render(<ResultsPanel {...base} synthesis={synthesis} />)
+    expect(screen.getByTestId('synth-flops').textContent).toContain('Flip-flops: 4')
+    expect(screen.getByTestId('synth-types').textContent).toBe('AND ×5 · XOR ×3')
+    expect(screen.queryByTestId('synth-latch')).toBeNull()
+  })
+  it('warns about an inferred latch and shows Yosys warnings', () => {
+    const synthesis: SynthesisInfo = { available: true, cell_count: 2, flip_flops: 0, latches: 1, latch_warning: '1 latch(es) inferred: check your if/case', warnings: ['Found 1 problems'] }
+    render(<ResultsPanel {...base} synthesis={synthesis} />)
+    expect(screen.getByTestId('synth-latch').textContent).toContain('latch')
+    expect(screen.getByTestId('synth-warning').textContent).toContain('Found 1 problems')
+  })
+})
