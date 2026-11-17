@@ -101,6 +101,37 @@ def run_one(pid: str, category: str, prompt: str) -> dict:
     }
 
 
+def backfill() -> int:
+    """Add toggle coverage, timing and area to records saved before those measurements existed.
+
+    Uses only the saved design and testbench (no model call): re-simulates them and times the design.
+    A record is only updated when the re-simulation reproduces its saved verdict.
+    """
+    from simulator import IcarusSimulator
+    from timing import run_timing
+    sim = IcarusSimulator(workspace=tempfile.mkdtemp(prefix="evalbf_"))
+    done, changed = load_done(), 0
+    for pid, rec in done.items():
+        design, tb = ARTIFACTS / f"{pid}_design.sv", ARTIFACTS / f"{pid}_testbench.sv"
+        if rec.get("toggle_percent") is not None or not (design.exists() and tb.exists()):
+            continue
+        res = sim.simulate(f"bf{pid}", design.read_text(), tb.read_text(), timeout=60)
+        if res.status != rec["status"] or res.test_count != rec["checks_total"]:
+            print(f"  {pid}: re-simulation gave {res.status} {res.pass_count}/{res.test_count}, record says "
+                  f"{rec['status']} {rec['checks_passed']}/{rec['checks_total']}: left unchanged")
+            continue
+        rec["toggle_percent"] = res.measured_toggle.percent if res.measured_toggle else None
+        if rec["status"] == "PASS":
+            tm = run_timing(design.read_text(), rec["module"], Path(tempfile.mkdtemp(prefix="evalti_")), 100)
+            rec.update(timing_met=tm.met, timing_fmax_mhz=tm.fmax_mhz, area_um2=tm.area_um2)
+        rec["backfilled"] = True
+        changed += 1
+        print(f"  {pid}: toggle {rec['toggle_percent']}%, max {rec.get('timing_fmax_mhz')} MHz, {rec.get('area_um2')} um2")
+    if changed:
+        RESULTS.write_text("".join(json.dumps(r) + "\n" for r in done.values()))
+    return changed
+
+
 def _cell(value, suffix: str = "") -> str:
     """A table cell: '-' for results recorded before this measurement existed."""
     return "-" if value is None else f"{value:g}{suffix}"
@@ -147,7 +178,8 @@ def summarise() -> str:
                      f"{r['checks_passed']}/{r['checks_total']} | {strength} | {_cell(r.get('toggle_percent'), '%')} | "
                      f"{_cell(r.get('timing_fmax_mhz'))} | {_cell(r.get('area_um2'))} | {r['seconds']:.0f} s | {'; '.join(notes)} |")
     lines += ["", "Strength = injected bugs caught / injected bugs run (mutation testing of the design's own testbench; "
-              "survivors may be equivalent mutants). Raw records: `evaluation/results.jsonl`; designs and testbenches: "
+              "survivors may be equivalent mutants). Toggle = measured toggle coverage of design signals. "
+              "Max MHz and area = pre-layout estimate on sky130 (typical corner, no wire delay, not sign-off). Raw records: `evaluation/results.jsonl`; designs and testbenches: "
               "`evaluation/artifacts/`.", ""]
     return "\n".join(lines)
 
@@ -157,10 +189,13 @@ def main() -> int:
     ap.add_argument("--only", help="comma-separated prompt ids")
     ap.add_argument("--redo", action="store_true", help="run again even if a record exists")
     ap.add_argument("--summary", action="store_true", help="only rebuild summary.md")
+    ap.add_argument("--backfill", action="store_true", help="add toggle/timing to older records from saved artifacts (no model call)")
     args = ap.parse_args()
     OUT_DIR.mkdir(exist_ok=True)
 
-    if not args.summary:
+    if args.backfill:
+        print(f"backfilled {backfill()} record(s)")
+    elif not args.summary:
         import llm_service
         if llm_service.is_offline():
             print("Refusing to run: the provider is offline (scripted demo), which would measure nothing.")

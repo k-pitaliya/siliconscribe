@@ -107,3 +107,26 @@ def test_the_three_warning_kinds_get_distinct_honest_labels(out):
     text = ev.summarise()
     assert "testbench changed during repair" in text and "few executed checks" in text and "weak testbench" in text
     assert "weak-evidence warning" not in text
+
+
+def test_backfill_only_updates_records_whose_saved_verdict_reproduces(out, monkeypatch):
+    """Older records get toggle/timing from their saved files, but never if the re-run disagrees."""
+    import shutil as _sh
+    if _sh.which("iverilog") is None:
+        pytest.skip("iverilog not installed")
+    import offline_designs as od
+    d = od.get_design("adder")
+    (out / "artifacts").mkdir()
+    for pid in ("c1", "c2"):
+        (out / "artifacts" / f"{pid}_design.sv").write_text(d["rtl"])
+        (out / "artifacts" / f"{pid}_testbench.sv").write_text(d["tb"])
+    good = rec("c1")
+    good.update(checks_passed=8, checks_total=8, module="full_adder")
+    wrong = rec("c2")
+    wrong.update(checks_passed=99, checks_total=99)      # does not match what the files produce
+    _write(out, good, wrong)
+    assert ev.backfill() == 1
+    saved = ev.load_done()
+    assert saved["c1"]["toggle_percent"] == 80.0 and saved["c1"]["backfilled"] is True
+    assert "toggle_percent" not in saved["c2"]
+    assert ev.backfill() == 0                                                # idempotent
