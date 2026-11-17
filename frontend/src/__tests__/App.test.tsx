@@ -47,7 +47,7 @@ beforeEach(() => {
 
 async function generate() {
   render(<App />)
-  fireEvent.change(screen.getByLabelText('Natural Language Requirement'), { target: { value: 'Design a counter' } })
+  fireEvent.change(screen.getByLabelText('Describe the block'), { target: { value: 'Design a counter' } })
   fireEvent.click(screen.getByRole('button', { name: /Generate RTL/ }))
   await waitFor(() => expect(screen.getByText(/Only 3 checks ran/)).toBeInTheDocument())
 }
@@ -93,7 +93,7 @@ describe('App: a provider failure during a run', () => {
       onEvent({ stage: 'error', message: quota } as never)
     })
     render(<App />)
-    fireEvent.change(screen.getByLabelText('Natural Language Requirement'), { target: { value: 'Design a counter' } })
+    fireEvent.change(screen.getByLabelText('Describe the block'), { target: { value: 'Design a counter' } })
     fireEvent.click(screen.getByRole('button', { name: /Generate RTL/ }))
 
     await waitFor(() => expect(screen.getByText(quota)).toBeInTheDocument())      // the reason is on screen
@@ -105,9 +105,61 @@ describe('App: a provider failure during a run', () => {
   it('reports a dropped connection instead of hanging silently', async () => {
     vi.mocked(api.streamDesign).mockRejectedValue(new Error('The connection closed before the run finished. Please try again.'))
     render(<App />)
-    fireEvent.change(screen.getByLabelText('Natural Language Requirement'), { target: { value: 'Design a counter' } })
+    fireEvent.change(screen.getByLabelText('Describe the block'), { target: { value: 'Design a counter' } })
     fireEvent.click(screen.getByRole('button', { name: /Generate RTL/ }))
     await waitFor(() => expect(screen.getByText(/connection closed before the run finished/)).toBeInTheDocument())
     expect(screen.queryByTestId('run-timer')).toBeNull()
+  })
+})
+
+
+describe('App: layout behaviour', () => {
+  it('opens Results when a run finishes and shows the run timeline', async () => {
+    await generate()
+    expect(screen.getByRole('tab', { name: /Results/ })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('log', { name: 'Run timeline' }).textContent).toContain('Design a counter')
+  })
+
+  it('first visit explains the flow instead of an empty editor', () => {
+    render(<App />)
+    expect(screen.getByText('Describe a block, get verified RTL')).toBeInTheDocument()
+  })
+
+  it('the theme switch cycles system, light, dark and is remembered', () => {
+    localStorage.removeItem('ss-theme')
+    render(<App />)
+    const btn = screen.getByRole('button', { name: /Theme: system/ })
+    fireEvent.click(btn)
+    expect(document.documentElement.getAttribute('data-theme')).toBe('light')
+    expect(localStorage.getItem('ss-theme')).toBe('light')
+    fireEvent.click(screen.getByRole('button', { name: /Theme: light/ }))
+    expect(document.documentElement.getAttribute('data-theme')).toBe('dark')
+    fireEvent.click(screen.getByRole('button', { name: /Theme: dark/ }))
+    expect(document.documentElement.hasAttribute('data-theme')).toBe(false)
+    expect(localStorage.getItem('ss-theme')).toBeNull()
+  })
+
+  it('the projects menu closes with Escape', async () => {
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: /Projects/ }))
+    expect(screen.getByRole('dialog', { name: 'Recent projects' })).toBeInTheDocument()
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(screen.queryByRole('dialog', { name: 'Recent projects' })).toBeNull()
+  })
+})
+
+
+describe('App: Re-run and the visible tab', () => {
+  it('from the Design tab it opens Results; from another tab it stays put', async () => {
+    await generate()                                                     // a finished run opens Results
+    vi.mocked(api.reSimulate).mockResolvedValue({ ...simResult({ status: 'FAIL', fail_count: 1 }), waveform: wave('x') } as never)
+    fireEvent.click(screen.getByRole('tab', { name: /Design/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Re-run simulation/ }))
+    await waitFor(() => expect(screen.getByRole('tab', { name: /Results/ })).toHaveAttribute('aria-selected', 'true'))
+
+    fireEvent.click(screen.getByRole('tab', { name: /Test cases/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Re-run simulation/ }))
+    await waitFor(() => expect(api.reSimulate).toHaveBeenCalledTimes(2))
+    expect(screen.getByRole('tab', { name: /Test cases/ })).toHaveAttribute('aria-selected', 'true')
   })
 })

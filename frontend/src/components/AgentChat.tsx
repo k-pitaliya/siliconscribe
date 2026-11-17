@@ -1,4 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
+import {
+  Bug, CircleCheck, CircleX, Code, Cpu, Flag, FlaskConical, Lightbulb, LoaderCircle, Play, Search,
+  TriangleExclamationPoint, User, Wrench, Circle,
+} from 'lucide-react'
 import type { Diagnosis } from '../types'
 
 export interface ChatMessage {
@@ -7,6 +11,8 @@ export interface ChatMessage {
   stage?: string
   status?: string
   diagnosis?: Diagnosis | null
+  /** When the event arrived (ms since epoch); used to show how long each step took. */
+  at?: number
 }
 
 interface Props {
@@ -15,21 +21,18 @@ interface Props {
   explanation: string
 }
 
-function stageIcon(stage?: string, status?: string): string {
-  if (stage === 'fix' || stage === 'fixing') return 'fa-screwdriver-wrench'
-  if (stage === 'lint') return 'fa-magnifying-glass'
-  if (stage === 'synthesis') return 'fa-microchip'
-  if (stage === 'strength') return 'fa-bug'
-  if (stage === 'simulate') {
-    if (status === 'PASS') return 'fa-circle-check'
-    if (status === 'FAIL' || status === 'ERROR') return 'fa-circle-xmark'
-    return 'fa-play'
-  }
-  if (stage === 'done') return status === 'PASS' ? 'fa-flag-checkered' : 'fa-triangle-exclamation'
-  if (stage === 'rtl' || stage === 'testbench') return 'fa-code'
-  if (stage === 'intent') return 'fa-lightbulb'
-  if (stage === 'error') return 'fa-triangle-exclamation'
-  return 'fa-robot'
+function stageIcon(stage?: string, status?: string) {
+  if (stage === 'fix' || stage === 'fixing') return Wrench
+  if (stage === 'lint') return Search
+  if (stage === 'synthesis') return Cpu
+  if (stage === 'strength') return Bug
+  if (stage === 'simulate') return status === 'PASS' ? CircleCheck : status === 'FAIL' || status === 'ERROR' ? CircleX : Play
+  if (stage === 'done') return status === 'PASS' ? Flag : TriangleExclamationPoint
+  if (stage === 'rtl') return Code
+  if (stage === 'testbench') return FlaskConical
+  if (stage === 'intent') return Lightbulb
+  if (stage === 'error') return TriangleExclamationPoint
+  return Circle
 }
 
 /** "42s" or "3m 05s". */
@@ -45,7 +48,7 @@ function RunTimer({ messageCount }: { messageCount: number }) {
   const stepStart = useRef(Date.now())
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
-    stepStart.current = Date.now() // a new message arrived: the step clock restarts
+    stepStart.current = Date.now() // a new event arrived: the step clock restarts
     setNow(Date.now())
   }, [messageCount])
   useEffect(() => {
@@ -55,92 +58,65 @@ function RunTimer({ messageCount }: { messageCount: number }) {
   const step = Math.max(0, Math.floor((now - stepStart.current) / 1000))
   const total = Math.max(0, Math.floor((now - runStart.current) / 1000))
   return (
-    <p className="muted" data-testid="run-timer">
+    <span className="run-timer" data-testid="run-timer">
       Working…{' '}
       {/* aria-hidden: a clock inside a live region would be announced every second */}
       <span aria-hidden="true">
-        {formatElapsed(step)} since the last update · {formatElapsed(total)} total
+        {formatElapsed(step)} since the last update, {formatElapsed(total)} total
       </span>
-      {step >= 45 && <span> Free models can take a few minutes per step.</span>}
-    </p>
+      {step >= 45 && <span className="slow"> Free models can take a few minutes per step.</span>}
+    </span>
   )
 }
 
 export default function AgentChat({ messages, running, explanation }: Props) {
   const endRef = useRef<HTMLDivElement>(null)
-  const containerRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
-    // smooth scroll to bottom on new messages
-    endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
+    endRef.current?.scrollIntoView({ block: 'end' })
   }, [messages, running])
 
   return (
-    <aside className="right-panel glass-panel" aria-label="AI Agent chat">
-      <div className="panel-header">
-        <h2>
-          <i className="fa-regular fa-comments" aria-hidden="true" /> AI Agent
-        </h2>
-        <span
-          className={`status-indicator ${running ? 'busy' : 'online'}`}
-          role="status"
-          aria-label={running ? 'Agent busy' : 'Agent online'}
-          title={running ? 'Busy' : 'Online'}
-        />
+    <section className="side-section" aria-label="Run">
+      <div className="run-head">
+        <h2 className="side-title" style={{ marginBottom: 0 }}>Run</h2>
       </div>
-      <div className="chat-container" ref={containerRef}>
-        <div
-          className="chat-messages"
-          role="log"
-          aria-live="polite"
-          aria-relevant="additions"
-          aria-label="Agent conversation"
-        >
-          {messages.map((m, i) => {
-            const isAi = m.role === 'ai'
-            const statusClass =
-              m.status === 'PASS' ? 'ok' : m.status === 'FAIL' || m.status === 'ERROR' || m.stage === 'error' ? 'bad' : ''
-            return (
-              <div key={i} className={`message ${isAi ? 'ai-msg' : 'user-msg'}`}>
-                <div className={`msg-avatar ${isAi ? '' : 'user'}`} aria-hidden="true">
-                  <i className={`fa-solid ${isAi ? stageIcon(m.stage, m.status) : 'fa-user'}`} />
+      {/* The live region wraps a plain list: a list element itself may not take the log role. */}
+      <div role="log" aria-live="polite" aria-relevant="additions" aria-label="Run timeline">
+      <ol className="run-list">
+        {messages.map((m, i) => {
+          const isUser = m.role === 'user'
+          const Icon = isUser ? User : stageIcon(m.stage, m.status)
+          const tone = m.status === 'PASS' ? 'ok' : m.status === 'FAIL' || m.status === 'ERROR' || m.stage === 'error' ? 'bad' : ''
+          const prev = messages[i - 1]
+          const took = m.at && prev?.at && !isUser ? Math.round((m.at - prev.at) / 1000) : null
+          return (
+            <li key={i} className={`run-item ${isUser ? 'user' : ''} ${tone}`}>
+              <Icon size={14} className="ico" aria-hidden="true" />
+              <span className="txt">{m.text}</span>
+              <span className="when">{took != null && took > 0 ? formatElapsed(took) : ''}</span>
+              {m.diagnosis && (
+                <div className="run-diag" data-testid="chat-diagnosis">
+                  {m.diagnosis.root_cause && <div><strong>Root cause:</strong> {m.diagnosis.root_cause}</div>}
+                  {m.diagnosis.fix_location && <div><strong>Fix location:</strong> {m.diagnosis.fix_location}</div>}
+                  {m.diagnosis.confidence && <div className="muted">Confidence: {m.diagnosis.confidence}</div>}
                 </div>
-                <div className={`msg-bubble ${isAi ? '' : 'user'} ${statusClass}`}>
-                  <p>{m.text}</p>
-                  {m.diagnosis && (
-                    <div className="msg-diagnosis" data-testid="chat-diagnosis">
-                      {m.diagnosis.root_cause && (
-                        <div><strong>Root cause:</strong> {m.diagnosis.root_cause}</div>
-                      )}
-                      {m.diagnosis.fix_location && (
-                        <div><strong>Fix location:</strong> {m.diagnosis.fix_location}</div>
-                      )}
-                      {m.diagnosis.confidence && (
-                        <div className="muted">Confidence: {m.diagnosis.confidence}</div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              </div>
-            )
-          })}
-          {running && (
-            <div className="message ai-msg" aria-live="polite">
-              <div className="msg-avatar" aria-hidden="true">
-                <i className="fa-solid fa-circle-notch fa-spin" />
-              </div>
-              <div className="msg-bubble">
-                <RunTimer messageCount={messages.length} />
-              </div>
-            </div>
-          )}
-          <div ref={endRef} tabIndex={-1} aria-hidden="true" />
-        </div>
-        {explanation && messages.length > 0 && messages[messages.length - 1]?.text !== explanation && (
-          <div className="explanation-box" role="note" aria-label="Design explanation">
-            <i className="fa-solid fa-circle-info" aria-hidden="true" /> {explanation}
-          </div>
+              )}
+            </li>
+          )
+        })}
+        {running && (
+          <li className="run-item live">
+            <LoaderCircle size={14} className="ico spin" aria-hidden="true" />
+            <RunTimer messageCount={messages.length} />
+            <span className="when" />
+          </li>
         )}
+      </ol>
       </div>
-    </aside>
+      <div ref={endRef} aria-hidden="true" />
+      {explanation && messages.length > 0 && messages[messages.length - 1]?.text !== explanation && (
+        <p className="explanation-box" aria-label="Design explanation">{explanation}</p>
+      )}
+    </section>
   )
 }

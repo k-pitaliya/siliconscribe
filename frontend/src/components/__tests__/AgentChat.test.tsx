@@ -20,11 +20,11 @@ describe('AgentChat run timer', () => {
   it('counts the time since the last update and the total, and restarts the step clock on a new message', () => {
     const { rerender } = render(<AgentChat messages={msgs(1)} running explanation="" />)
     act(() => { vi.advanceTimersByTime(65_000) })
-    expect(screen.getByTestId('run-timer').textContent).toContain('1m 05s since the last update · 1m 05s total')
+    expect(screen.getByTestId('run-timer').textContent).toContain('1m 05s since the last update, 1m 05s total')
 
     rerender(<AgentChat messages={msgs(2)} running explanation="" />) // a stage finished
     act(() => { vi.advanceTimersByTime(3_000) })
-    expect(screen.getByTestId('run-timer').textContent).toContain('3s since the last update · 1m 08s total')
+    expect(screen.getByTestId('run-timer').textContent).toContain('3s since the last update, 1m 08s total')
   })
 
   it('tells the user a slow step is normal for free models, but not at the start', () => {

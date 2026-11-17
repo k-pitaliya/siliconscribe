@@ -263,15 +263,23 @@ describe('ResultsPanel: test cases tab and expand', () => {
     expect(screen.getByRole('tab', { name: /Schematic/ })).toHaveAttribute('aria-selected', 'true')
   })
 
-  it('expands the pane to the full window and Escape restores it', () => {
-    const { container } = panel()
-    const pane = container.querySelector('.results-pane') as HTMLElement
-    expect(pane.className).not.toContain('is-expanded')
-    fireEvent.click(screen.getByRole('button', { name: 'Expand results pane' }))
-    expect(pane.className).toContain('is-expanded')
-    fireEvent.keyDown(window, { key: 'Escape' })
-    expect(pane.className).not.toContain('is-expanded')
-    expect(screen.getByRole('button', { name: 'Expand results pane' })).toBeInTheDocument()
+  it('puts the code editor in a Design tab that opens first, and follows tab requests', () => {
+    const { rerender } = render(
+      <ResultsPanel result={withChecks} waveform={wave} schematic={null} history={[]} design={<div>editor here</div>} />,
+    )
+    expect(screen.getAllByRole('tab').map((t) => t.textContent?.trim().split(' ')[0])).toEqual(['Design', 'Results', 'Test', 'Waveform', 'Schematic'])
+    expect(screen.getByRole('tab', { name: /Design/ })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByText('editor here')).toBeInTheDocument()
+    rerender(<ResultsPanel result={withChecks} waveform={wave} schematic={null} history={[]} design={<div>editor here</div>} tabRequest={{ tab: 'results', seq: 1 }} />)
+    expect(screen.getByRole('tab', { name: /Results/ })).toHaveAttribute('aria-selected', 'true')
+    fireEvent.click(screen.getByRole('tab', { name: /Design/ }))
+    rerender(<ResultsPanel result={withChecks} waveform={wave} schematic={null} history={[]} design={<div>editor here</div>} tabRequest={{ tab: 'results', seq: 2 }} />)
+    expect(screen.getByRole('tab', { name: /Results/ })).toHaveAttribute('aria-selected', 'true')   // a repeated request still counts
+  })
+
+  it('every view gets the full height: there is no Expand button any more', () => {
+    panel()
+    expect(screen.queryByRole('button', { name: /Expand/ })).toBeNull()
   })
 })
 
@@ -282,7 +290,7 @@ describe('ResultsPanel: richer synthesis report', () => {
     const synthesis: SynthesisInfo = { available: true, cell_count: 20, flip_flops: 4, latches: 0, cell_types: [['AND', 5], ['XOR', 3]] }
     render(<ResultsPanel {...base} synthesis={synthesis} />)
     expect(screen.getByTestId('synth-flops').textContent).toContain('Flip-flops: 4')
-    expect(screen.getByTestId('synth-types').textContent).toBe('AND ×5 · XOR ×3')
+    expect(screen.getByTestId('synth-types').textContent).toBe('AND ×5, XOR ×3')
     expect(screen.queryByTestId('synth-latch')).toBeNull()
   })
   it('warns about an inferred latch and shows Yosys warnings', () => {

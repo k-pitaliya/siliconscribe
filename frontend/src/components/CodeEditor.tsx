@@ -2,6 +2,7 @@ import { useMemo, useState, useCallback, type KeyboardEvent } from 'react'
 import CodeMirror, { EditorView, Prec } from '@uiw/react-codemirror'
 import { HighlightStyle, StreamLanguage, syntaxHighlighting } from '@codemirror/language'
 import { tags } from '@lezer/highlight'
+import { Check, Copy } from 'lucide-react'
 import { verilog } from '@codemirror/legacy-modes/mode/verilog'
 
 // The stock dark theme's comment grey (3.9:1) and variable red (4.4:1) sit just under WCAG AA's 4.5:1 on
@@ -30,12 +31,17 @@ export default function CodeEditor({ rtl, tb, onRtlChange, onTbChange, moduleNam
         'aria-label': tab === 'rtl' ? 'RTL source code editor' : 'Testbench source code editor',
       }),
       // The default gutter grey is 3.9:1 on the editor background; WCAG AA needs 4.5:1.
-      EditorView.theme({
-        '.cm-gutters': { color: '#9aa4b5' },
+      // Highest precedence: the editor's built-in dark theme would otherwise win over these colours.
+      Prec.highest(EditorView.theme({
+        // The editor is one of the two dark "instrument screens": same surface in both themes.
+        '&': { backgroundColor: '#0d1014' },
+        '.cm-gutters': { color: '#9aa4b5', backgroundColor: '#0d1014', borderRight: '1px solid #232a31' },
+        '.cm-activeLine': { backgroundColor: '#151a20' },
+        '.cm-activeLineGutter': { backgroundColor: '#151a20' },
         '.cm-gutterElement': { color: '#9aa4b5' },
         '.cm-gutterElement.cm-activeLineGutter': { color: '#c5cbd6' },
         '.cm-placeholder': { color: '#a3acba' },
-      }),
+      })),
       Prec.highest(syntaxHighlighting(readableTokens)),
     ],
     [tab],
@@ -79,7 +85,7 @@ export default function CodeEditor({ rtl, tb, onRtlChange, onTbChange, moduleNam
   }, [])
 
   return (
-    <div className="editor-pane glass-panel">
+    <div className="editor-pane">
       <div className="tabs editor-tabs">
        {/* The tab list holds only tabs (an ARIA requirement); the Copy button sits beside it. */}
        <div className="tablist" role="tablist" aria-label="Code editor tabs" onKeyDown={onKeyDown}>
@@ -91,7 +97,7 @@ export default function CodeEditor({ rtl, tb, onRtlChange, onTbChange, moduleNam
           className={`tab ${tab === 'rtl' ? 'active' : ''}`}
           onClick={() => setTab('rtl')}
         >
-          <i className="fa-solid fa-code" aria-hidden="true" /> {safeModule}.v
+          {safeModule}.v
         </button>
         <button
           role="tab"
@@ -101,7 +107,7 @@ export default function CodeEditor({ rtl, tb, onRtlChange, onTbChange, moduleNam
           className={`tab ${tab === 'tb' ? 'active' : ''}`}
           onClick={() => setTab('tb')}
         >
-          <i className="fa-solid fa-flask" aria-hidden="true" /> tb_{safeModule}.sv
+          tb_{safeModule}.sv
         </button>
        </div>
         <button
@@ -111,7 +117,7 @@ export default function CodeEditor({ rtl, tb, onRtlChange, onTbChange, moduleNam
           disabled={!value}
           title="Copy code"
         >
-          <i className={`fa-solid ${copied === tab ? 'fa-check' : 'fa-copy'}`} aria-hidden="true" />
+          {copied === tab ? <Check size={14} aria-hidden="true" /> : <Copy size={14} aria-hidden="true" />}
           {copied === tab ? 'Copied' : 'Copy'}
         </button>
       </div>

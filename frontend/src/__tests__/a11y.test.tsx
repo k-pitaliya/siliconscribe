@@ -55,11 +55,10 @@ describe('accessibility (axe-core, structural rules)', () => {
     }
   })
 
-  it('the tab list contains only tabs (the Expand button sits beside it)', () => {
-    render(<ResultsPanel result={result} waveform={wave} schematic={null} history={[]} />)
+  it('the tab list contains only tabs', () => {
+    render(<ResultsPanel result={result} waveform={wave} schematic={null} history={[]} design={<div />} />)
     const list = screen.getByRole('tablist')
     expect([...list.children].every((c) => c.getAttribute('role') === 'tab')).toBe(true)
-    expect(screen.getByRole('button', { name: /Expand results pane/ })).not.toBeNull()
   })
 
   it('the test cases table has no violations with a row selected', async () => {
@@ -90,7 +89,7 @@ describe('accessibility (axe-core, structural rules)', () => {
     const { default: App } = await import('../App')
     const { container } = render(<App />)
     expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1)
-    expect(screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent?.trim())).toEqual(expect.arrayContaining(['Design Prompt', 'AI Agent']))
+    expect(screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent?.trim())).toEqual(expect.arrayContaining(['Describe the block']))
     expect(await violations(container)).toEqual([])
   })
 })

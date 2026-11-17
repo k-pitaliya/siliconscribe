@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
+import { Download, FolderOpen, Monitor, Moon, RotateCw, Square, Sun, TriangleExclamationPoint, X } from 'lucide-react'
 import PromptPanel from './components/PromptPanel'
 import CodeEditor from './components/CodeEditor'
-import ResultsPanel from './components/ResultsPanel'
+import ResultsPanel, { type Tab } from './components/ResultsPanel'
 import AgentChat, { type ChatMessage } from './components/AgentChat'
+import { useTheme } from './theme'
 import { getModels, streamDesign, reSimulate, exportUVM, listProjects, deleteProject, getProject } from './api'
 import type {
   IterationRecord,
@@ -41,12 +43,12 @@ export default function App() {
   const [fallbackNotice, setFallbackNotice] = useState<string>('')
   const [verificationWarning, setVerificationWarning] = useState<string>('')
 
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    {
-      role: 'ai',
-      text: 'Ready. Describe your hardware requirement and I will generate RTL, a testbench, run simulation, and auto-fix failures.',
-    },
-  ])
+  const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [tabRequest, setTabRequest] = useState<{ tab: Tab; seq: number } | null>(null)
+  const showTab = (tab: Tab) => setTabRequest((prev) => ({ tab, seq: (prev?.seq ?? 0) + 1 }))
+  const currentTab = useRef<Tab>('design')
+  const { choice: theme, cycle: cycleTheme } = useTheme()
+  const projectsRef = useRef<HTMLDivElement>(null)
   const [projects, setProjects] = useState<ProjectSummary[]>([])
   const [showProjects, setShowProjects] = useState(false)
   const abortRef = useRef<AbortController | null>(null)
@@ -83,6 +85,17 @@ export default function App() {
     refreshProjects()
   }, [])
 
+  useEffect(() => {
+    if (!showProjects) return undefined
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setShowProjects(false) }
+    const onDown = (e: MouseEvent) => {
+      if (projectsRef.current && !projectsRef.current.contains(e.target as Node)) setShowProjects(false)
+    }
+    window.addEventListener('keydown', onKey)
+    window.addEventListener('mousedown', onDown)
+    return () => { window.removeEventListener('keydown', onKey); window.removeEventListener('mousedown', onDown) }
+  }, [showProjects])
+
   async function refreshProjects() {
     try {
       const r = await listProjects(20, 0)
@@ -92,7 +105,7 @@ export default function App() {
     }
   }
 
-  const pushMsg = (m: ChatMessage) => setMessages((prev) => [...prev, m])
+  const pushMsg = (m: ChatMessage) => setMessages((prev) => [...prev, { ...m, at: Date.now() }])
 
   // When model changes, update thinking level to valid for that model
   const activeModelForThinking = models.find(m => m.id === selectedModel)
@@ -112,7 +125,9 @@ export default function App() {
     setFallbackNotice('')
     setVerificationWarning('')
     lastNoticeRef.current = ''
+    setMessages([]) // the timeline shows this run only
     pushMsg({ role: 'user', text: prompt })
+    showTab('design')
 
     const ctrl = new AbortController()
     abortRef.current = ctrl
@@ -165,6 +180,7 @@ export default function App() {
             if (r.fallback_notice) setFallbackNotice(r.fallback_notice)
             setVerificationWarning(r.verification_warning ?? '')
             refreshProjects()
+            showTab('results')
           }
         },
         ctrl.signal,
@@ -204,6 +220,8 @@ export default function App() {
       setIterations(0)
       setStrength(null) // scored the previous code, not what was just re-run
       setVerificationWarning('')
+      // From the editor, show the new verdict; anywhere else (waveform, test cases) stay where the user is looking.
+      if (currentTab.current === 'design') showTab('results')
       pushMsg({
         role: 'ai',
         stage: 'simulate',
@@ -265,14 +283,17 @@ export default function App() {
       setStrength(proj.strength ?? null)
       setFallbackNotice(proj.fallback_notice ?? '')
       setVerificationWarning(proj.verification_warning ?? '')
-      pushMsg({ role: 'ai', text: `Loaded project ${id} (${proj.rtl_spec.module_name})`, stage: 'done', status: proj.status })
+      pushMsg({ role: 'ai', text: `Loaded project ${proj.rtl_spec.module_name}`, stage: 'done', status: proj.status })
       setShowProjects(false)
+      showTab('results')
     } catch (err) {
       pushMsg({ role: 'ai', text: `Load failed: ${(err as Error).message}`, stage: 'error' })
     }
   }
 
   async function handleDeleteProject(id: string) {
+    const name = projects.find((p) => p.design_id === id)?.module_name ?? 'this project'
+    if (!window.confirm(`Delete ${name}? This cannot be undone.`)) return
     try {
       await deleteProject(id)
       setProjects(prev => prev.filter(p => p.design_id !== id))
@@ -282,123 +303,155 @@ export default function App() {
     }
   }
 
+  const statusKind = provider?.offline ? 'offline' : fallbackNotice ? 'fallback' : 'live'
+  const ThemeIcon = theme === 'light' ? Sun : theme === 'dark' ? Moon : Monitor
+
+  const design = !rtl && !running ? (
+    <Welcome projects={projects} onLoad={handleLoadProject} />
+  ) : (
+    <CodeEditor rtl={rtl} tb={tb} onRtlChange={setRtl} onTbChange={setTb} moduleName={moduleName} />
+  )
+
   return (
     <div className="app-container">
-      <header className="navbar">
-        <h1 className="logo">
-          <i className="fa-solid fa-microchip" aria-hidden="true" />
+      <header className="topbar">
+        <h1 className="brand">
+          <svg width="22" height="22" viewBox="0 0 32 32" aria-hidden="true">
+            <rect width="32" height="32" rx="7" fill="#17191c" />
+            <path d="M5 20h5l3-8 4 12 3-8h7" fill="none" stroke="#f2c230" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
           <span>SiliconScribe</span>
         </h1>
-        <div className="nav-actions">
-          {provider && (
-            <span
-              className={`provider-badge ${provider.offline || fallbackNotice ? 'offline' : 'live'}`}
-              data-testid="provider-badge"
-            >
-              <i className={`fa-solid ${provider.offline ? 'fa-plug-circle-xmark' : fallbackNotice ? 'fa-triangle-exclamation' : 'fa-bolt'}`} />
-              {provider.offline
-                ? 'Offline demo'
-                : fallbackNotice
-                  ? 'Demo fallback · not AI-generated'
-                  : `Live · ${provider.provider}`}
-            </span>
-          )}
-          <button className="btn btn-secondary" onClick={() => setShowProjects(v => !v)} aria-label="Toggle projects">
-            <i className="fa-solid fa-folder-open" aria-hidden="true" /> Projects ({projects.length})
-          </button>
-          <button className="btn btn-secondary" onClick={handleUVMExport} disabled={!rtl || running} aria-label="Export UVM bundle">
-            <i className="fa-solid fa-download" aria-hidden="true" /> UVM
+        {provider && (
+          <span className={`status ${statusKind}`} data-testid="provider-badge" role="status">
+            <span className="dot" aria-hidden="true" />
+            {provider.offline ? 'Offline demo' : fallbackNotice ? 'Demo fallback · not AI-generated' : `Live · ${provider.provider}`}
+          </span>
+        )}
+        <span className="spacer" />
+        <div className="top-actions">
+          <div className="menu-anchor" ref={projectsRef}>
+            <button className="btn" onClick={() => setShowProjects((v) => !v)} aria-expanded={showProjects} aria-haspopup="dialog">
+              <FolderOpen size={15} aria-hidden="true" /> <span className="label">Projects</span>
+              <span className="tab-badge">{projects.length}</span>
+            </button>
+            {showProjects && (
+              <div className="projects-menu" role="dialog" aria-label="Recent projects">
+                <div className="menu-head">
+                  <h2 className="drawer-title">Recent projects</h2>
+                  <button className="btn btn-ghost btn-icon" onClick={() => setShowProjects(false)} aria-label="Close projects">
+                    <X size={16} aria-hidden="true" />
+                  </button>
+                </div>
+                {projects.length === 0 ? (
+                  <div className="empty-state">No projects yet. Generated designs are saved here.</div>
+                ) : (
+                  <ul className="project-list">
+                    {projects.map((p) => (
+                      <li key={p.design_id} className="project-row">
+                        <div className="project-main">
+                          <div className="project-name">{p.module_name} <span className={`pill ${p.status.toLowerCase()}`}>{p.status}</span></div>
+                          <div className="project-sub" title={p.prompt}>{p.prompt}</div>
+                        </div>
+                        <button className="btn" onClick={() => handleLoadProject(p.design_id)}>Open</button>
+                        <button className="btn btn-danger" onClick={() => handleDeleteProject(p.design_id)} aria-label={`Delete ${p.module_name}`}>Delete</button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
+          </div>
+          <button className="btn" onClick={handleUVMExport} disabled={!rtl || running} aria-label="Export UVM bundle">
+            <Download size={15} aria-hidden="true" /> <span className="label">Export UVM</span>
           </button>
           {running ? (
             <button className="btn btn-danger" onClick={handleCancel} aria-label="Stop generation">
-              <i className="fa-solid fa-stop" aria-hidden="true" /> Stop
+              <Square size={13} aria-hidden="true" /> <span className="label">Stop</span>
             </button>
           ) : (
-            <button className="btn btn-secondary" onClick={handleReRun} disabled={!rtl} aria-label="Re-run simulation with edited code">
-              <i className="fa-solid fa-rotate-right" aria-hidden="true" /> Re-run
+            <button className="btn" onClick={handleReRun} disabled={!rtl} aria-label="Re-run simulation with edited code">
+              <RotateCw size={15} aria-hidden="true" /> <span className="label">Re-run</span>
             </button>
           )}
+          <button className="btn btn-ghost btn-icon" onClick={cycleTheme} aria-label={`Theme: ${theme}. Change theme`} title={`Theme: ${theme}`}>
+            <ThemeIcon size={16} aria-hidden="true" />
+          </button>
         </div>
       </header>
 
-      {fallbackNotice && (
+      {fallbackNotice ? (
         <div className="degraded-banner" role="alert" data-testid="degraded-banner">
-          <i className="fa-solid fa-triangle-exclamation" aria-hidden="true" />
+          <TriangleExclamationPoint size={16} aria-hidden="true" />
           <span><strong>Degraded mode:</strong> {fallbackNotice}</span>
         </div>
-      )}
+      ) : <div />}
 
-      {showProjects && (
-        <div className="projects-drawer glass-panel" style={{ marginBottom: '0.75rem', padding: '1rem' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-            <h2 className="drawer-title"><i className="fa-solid fa-folder-open" aria-hidden="true" /> Recent Projects</h2>
-            <button className="btn btn-secondary" onClick={() => setShowProjects(false)}>Close</button>
-          </div>
-          {projects.length === 0 ? (
-            <div className="empty-state">No projects yet. Generate a design to save.</div>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', maxHeight: '300px', overflowY: 'auto' }}>
-              {projects.map(p => (
-                <div key={p.design_id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(255,255,255,0.04)', padding: '0.5rem 0.7rem', borderRadius: '8px' }}>
-                  <div>
-                    <div style={{ fontWeight: 600, fontSize: '0.85rem' }}>{p.module_name} <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>· {p.design_id}</span></div>
-                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{p.prompt.slice(0, 60)} — {p.status} · {p.iterations} iter</div>
-                  </div>
-                  <div style={{ display: 'flex', gap: '0.3rem' }}>
-                    <button className="btn btn-secondary" onClick={() => handleLoadProject(p.design_id)} style={{ padding: '0.3rem 0.6rem' }}>Load</button>
-                    <button className="btn btn-danger" onClick={() => handleDeleteProject(p.design_id)} style={{ padding: '0.3rem 0.6rem' }}>Delete</button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
+      <div className="workspace">
+        <aside className="sidebar" aria-label="Design input and run">
+          <PromptPanel
+            onGenerate={handleGenerate}
+            running={running}
+            models={models}
+            selectedModel={selectedModel}
+            onModelChange={(id) => {
+              setSelectedModel(id)
+              const m = models.find((x) => x.id === id)
+              if (m?.thinking_levels && m.thinking_levels.length > 0) {
+                setSelectedThinking(m.thinking_levels[Math.floor(m.thinking_levels.length / 2)] || m.thinking_levels[0])
+              } else {
+                setSelectedThinking('')
+              }
+            }}
+            selectedThinking={selectedThinking}
+            onThinkingChange={setSelectedThinking}
+            offline={provider?.offline ?? false}
+          >
+            {(messages.length > 0 || running) && <AgentChat messages={messages} running={running} explanation={explanation} />}
+          </PromptPanel>
+        </aside>
 
-      <main className="workspace">
-        <PromptPanel
-          onGenerate={handleGenerate}
-          running={running}
-          models={models}
-          selectedModel={selectedModel}
-          onModelChange={(id) => {
-            setSelectedModel(id)
-            const m = models.find(x => x.id === id)
-            if (m?.thinking_levels && m.thinking_levels.length > 0) {
-              setSelectedThinking(m.thinking_levels[Math.floor(m.thinking_levels.length / 2)] || m.thinking_levels[0])
-            } else {
-              setSelectedThinking('')
-            }
-          }}
-          selectedThinking={selectedThinking}
-          onThinkingChange={setSelectedThinking}
-          offline={provider?.offline ?? false}
+        <ResultsPanel
+          design={design}
+          tabRequest={tabRequest}
+          onTabChange={(t) => { currentTab.current = t }}
+          result={result}
+          waveform={waveform}
+          schematic={schematic}
+          history={history}
+          iterations={iterations}
+          synthesis={synthesis}
+          strength={strength}
+          lint={lintInfo}
+          degraded={!!fallbackNotice}
+          warning={verificationWarning}
         />
+      </div>
+    </div>
+  )
+}
 
-        <section className="center-panel">
-          <CodeEditor
-            rtl={rtl}
-            tb={tb}
-            onRtlChange={setRtl}
-            onTbChange={setTb}
-            moduleName={moduleName}
-          />
-          <ResultsPanel
-            result={result}
-            waveform={waveform}
-            schematic={schematic}
-            history={history}
-            iterations={iterations}
-            synthesis={synthesis}
-            strength={strength}
-            lint={lintInfo}
-            degraded={!!fallbackNotice}
-            warning={verificationWarning}
-          />
-        </section>
-
-        <AgentChat messages={messages} running={running} explanation={explanation} />
-      </main>
+/** First visit: say what the tool does in three steps and offer recent work. */
+function Welcome({ projects, onLoad }: { projects: ProjectSummary[]; onLoad: (id: string) => void }) {
+  return (
+    <div className="welcome">
+      <div className="welcome-inner">
+        <h2>Describe a block, get verified RTL</h2>
+        <p>Write what the hardware should do in plain English. SiliconScribe writes the Verilog and an independent testbench, runs both in a real simulator, and repairs what fails.</p>
+        <ol className="flow">
+          <li><span><b>Specification.</b> Your description becomes ports, widths and behaviour.</span></li>
+          <li><span><b>RTL and testbench.</b> The testbench is written from the specification, never from the RTL.</span></li>
+          <li><span><b>Simulate and report.</b> Every check is listed, failures are repaired, and the testbench is tested by injecting bugs.</span></li>
+        </ol>
+        {projects.length > 0 && (
+          <div className="type-chips" aria-label="Recent projects">
+            <span className="muted" style={{ fontSize: 13, marginRight: 4 }}>Recent:</span>
+            {projects.slice(0, 4).map((p) => (
+              <button key={p.design_id} className="chip" onClick={() => onLoad(p.design_id)}>{p.module_name}</button>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   )
 }
