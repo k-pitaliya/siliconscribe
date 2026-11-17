@@ -68,7 +68,7 @@ def test_rows_are_capped_but_every_failure_is_kept_and_counters_stay_exact():
 def test_category_names_are_normalised_and_limited():
     log = _chk("PASS", "Rand") + _chk("PASS", "Edge Case!") + _chk("PASS", "enable")
     cats = [c.category for c in parse_checks(log, 3, 0)["checks"]]
-    assert cats == ["random", "edge_case", "hold"]
+    assert cats == ["random", "corner", "hold"]  # "Edge Case!" is the same type as "corner"
     many = "".join(_chk("PASS", f"cat{i}") for i in range(30))
     assert len({c.category for c in parse_checks(many, 30, 0)["checks"]}) <= 13  # 12 + "other"
 
@@ -181,3 +181,18 @@ def test_rerun_returns_the_matching_waveform_not_the_old_one(monkeypatch):
     names = {s["name"]: s["role"] for s in good["waveform"]["signals"]}
     assert names.get("clk") == "clock" and names.get("count") == "out" and names.get("enable") == "in"
     assert good["check_groups"] and bad["checks"]
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ("Boundary_Cases", "corner"), ("random_tests", "random"), ("Rnd", "random"), ("Edge Cases", "corner"),
+    ("reset_checks", "reset"), ("Sanity", "directed"), ("full_sweep", "exhaustive"),
+    ("walking_ones", "toggle"), ("undefined", "invalid_input"),
+    ("directed", "directed"), ("hold", "hold"),                       # already canonical
+    ("undefined_opcode", "undefined_opcode"),                         # a specific name is left alone
+    ("test", "test"), ("cases", "cases"),                             # never strip a label down to nothing
+])
+def test_type_names_written_by_different_models_collapse_to_one_chip(raw, expected):
+    log = _chk("PASS", raw, "a") + "Passed: 1\nFailed: 0\n"
+    r = parse_checks(log, 1, 0)
+    assert r["checks"][0].category == expected
+    assert [g.category for g in r["check_groups"]] == [expected]

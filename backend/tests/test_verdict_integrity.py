@@ -4,7 +4,6 @@ Every case below was reproduced against the previous code, where it produced a w
 PASS (verdict forgery) or let a testbench write a file outside its workspace.
 """
 
-import os
 import shutil
 
 import pytest

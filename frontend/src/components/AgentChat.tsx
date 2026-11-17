@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { Diagnosis } from '../types'
 
 export interface ChatMessage {
@@ -29,6 +29,40 @@ function stageIcon(stage?: string, status?: string): string {
   if (stage === 'intent') return 'fa-lightbulb'
   if (stage === 'error') return 'fa-triangle-exclamation'
   return 'fa-robot'
+}
+
+/** "42s" or "3m 05s". */
+export function formatElapsed(seconds: number): string {
+  const m = Math.floor(seconds / 60)
+  return m > 0 ? `${m}m ${String(seconds % 60).padStart(2, '0')}s` : `${seconds}s`
+}
+
+/** Mounted only while a run is active, so it starts counting when the run starts. A live model can
+ *  take minutes per step; a clock makes "slow" look different from "stuck". */
+function RunTimer({ messageCount }: { messageCount: number }) {
+  const runStart = useRef(Date.now())
+  const stepStart = useRef(Date.now())
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    stepStart.current = Date.now() // a new message arrived: the step clock restarts
+    setNow(Date.now())
+  }, [messageCount])
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(id)
+  }, [])
+  const step = Math.max(0, Math.floor((now - stepStart.current) / 1000))
+  const total = Math.max(0, Math.floor((now - runStart.current) / 1000))
+  return (
+    <p className="muted" data-testid="run-timer">
+      Working…{' '}
+      {/* aria-hidden: a clock inside a live region would be announced every second */}
+      <span aria-hidden="true">
+        {formatElapsed(step)} since the last update · {formatElapsed(total)} total
+      </span>
+      {step >= 45 && <span> Free models can take a few minutes per step.</span>}
+    </p>
+  )
 }
 
 export default function AgentChat({ messages, running, explanation }: Props) {
@@ -94,7 +128,7 @@ export default function AgentChat({ messages, running, explanation }: Props) {
                 <i className="fa-solid fa-circle-notch fa-spin" />
               </div>
               <div className="msg-bubble">
-                <p className="muted">Working…</p>
+                <RunTimer messageCount={messages.length} />
               </div>
             </div>
           )}

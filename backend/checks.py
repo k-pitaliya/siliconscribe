@@ -23,10 +23,19 @@ MAX_ROWS = 1000          # rows returned to the UI
 MAX_FAIL_ROWS = 200      # every failure is kept first, up to this many
 MAX_CATEGORIES = 12      # extra categories are folded into "other"
 _SYNONYMS = {
-    "rand": "random", "rnd": "random", "randomized": "random", "randomised": "random",
-    "edge": "corner", "corner_case": "corner", "corners": "corner",
-    "enable": "hold", "phase": "protocol", "exhaust": "exhaustive",
+    "rand": "random", "rnd": "random", "randomized": "random", "randomised": "random", "stress": "random",
+    "constrained_random": "random",
+    "edge": "corner", "corners": "corner", "boundary": "corner", "boundaries": "corner", "limit": "corner",
+    "enable": "hold", "phase": "protocol", "exhaust": "exhaustive", "full": "exhaustive",
+    "full_sweep": "exhaustive", "all_combinations": "exhaustive", "sweep": "exhaustive",
+    "basic": "directed", "sanity": "directed", "smoke": "directed", "functional": "directed",
+    "rst": "reset", "reset_behavior": "reset", "reset_behaviour": "reset", "power_up": "reset",
+    "walking": "toggle", "walking_ones": "toggle", "walking_zeros": "toggle",
+    "undefined": "invalid_input", "illegal": "invalid_input", "invalid": "invalid_input",
 }
+# "boundary_cases", "random_tests", "reset_checks" -> "boundary", "random", "reset": models pad the
+# type with a generic word that would otherwise give every phrasing its own chip.
+_GENERIC_SUFFIX_RE = re.compile(r"_(?:tests?|cases?|checks?|vectors?|phase)$")
 _LEGACY_RE = re.compile(r"^[ \t]*FAIL\w*[ \t]*:?[ \t]*(.*)$", re.MULTILINE)
 _KV_RE = re.compile(r"(\w+)=([^\s,;]+)")
 _EXP_KEYS = ("expected", "exp", "golden", "want")
@@ -35,6 +44,9 @@ _ACT_KEYS = ("got", "actual", "result", "res")
 
 def _category(raw: str, seen: dict) -> str:
     slug = re.sub(r"[^a-z0-9]+", "_", raw.strip().lower()).strip("_")[:24] or "other"
+    stripped = _GENERIC_SUFFIX_RE.sub("", slug)
+    if stripped:
+        slug = stripped
     slug = _SYNONYMS.get(slug, slug)
     if slug not in seen and len(seen) >= MAX_CATEGORIES:
         slug = "other"

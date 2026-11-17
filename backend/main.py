@@ -20,7 +20,7 @@ from vcd_parser import parse_vcd, ports_from_rtl
 from orchestrator import _tb_check_count
 from models import (
     SimError,
-    SimulationRequest, SimulationResult, SimulationRerunResponse,
+    SimulationRequest, SimulationRerunResponse,
     RunRequest, RunResponse,
     SynthesisRequest,
     UVMExportRequest, UVMExportResponse,
