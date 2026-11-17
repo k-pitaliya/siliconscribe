@@ -203,7 +203,7 @@ export default function TestCasesView({ result, timescalePs = null, onShowInWave
       </div>
 
       <div className="tcv-table">
-        <div className="tcv-headrow" role="row">
+        <div className="tcv-headrow">
           <button onClick={() => setSortBy('order')} title="Sort by run order">#</button>
           <button onClick={() => setSortBy('category')} title="Sort by type">Type</button>
           <span>Test</span>

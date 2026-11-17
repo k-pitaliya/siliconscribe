@@ -77,9 +77,9 @@ export default function AgentChat({ messages, running, explanation }: Props) {
   return (
     <aside className="right-panel glass-panel" aria-label="AI Agent chat">
       <div className="panel-header">
-        <h3>
+        <h2>
           <i className="fa-regular fa-comments" aria-hidden="true" /> AI Agent
-        </h3>
+        </h2>
         <span
           className={`status-indicator ${running ? 'busy' : 'online'}`}
           role="status"

@@ -285,10 +285,10 @@ export default function App() {
   return (
     <div className="app-container">
       <header className="navbar">
-        <div className="logo">
-          <i className="fa-solid fa-microchip" />
+        <h1 className="logo">
+          <i className="fa-solid fa-microchip" aria-hidden="true" />
           <span>SiliconScribe</span>
-        </div>
+        </h1>
         <div className="nav-actions">
           {provider && (
             <span
@@ -331,7 +331,7 @@ export default function App() {
       {showProjects && (
         <div className="projects-drawer glass-panel" style={{ marginBottom: '0.75rem', padding: '1rem' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-            <h3><i className="fa-solid fa-folder-open" /> Recent Projects</h3>
+            <h2 className="drawer-title"><i className="fa-solid fa-folder-open" aria-hidden="true" /> Recent Projects</h2>
             <button className="btn btn-secondary" onClick={() => setShowProjects(false)}>Close</button>
           </div>
           {projects.length === 0 ? (

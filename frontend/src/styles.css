@@ -126,7 +126,7 @@ body {
   cursor: not-allowed;
 }
 .btn-primary {
-  background: var(--accent-primary);
+  background: #595ceb; /* 5.0:1 with white text (the brand #6366f1 is 4.47:1, just under WCAG AA) */
   color: white;
   box-shadow: 0 4px 14px var(--accent-glow);
 }
@@ -173,14 +173,14 @@ body {
   justify-content: space-between;
   align-items: center;
 }
-.panel-header h3 {
+.panel-header h2 {
   font-size: 1rem;
   font-weight: 600;
   display: flex;
   align-items: center;
   gap: 0.5rem;
 }
-.panel-header h3 i {
+.panel-header h2 i {
   color: var(--accent-secondary);
 }
 .panel-content {
@@ -503,8 +503,8 @@ textarea:focus-visible,
 .iteration-timeline {
   margin: 1rem 0;
 }
-.iteration-timeline h4,
-.error-list h4 {
+.iteration-timeline h3,
+.error-list h3 {
   font-size: 0.85rem;
   color: var(--text-muted);
   margin-bottom: 0.5rem;
@@ -1214,3 +1214,9 @@ textarea:focus-visible,
 .results-pane.is-expanded .tcv-viewport { height: calc(100vh - 300px); min-height: 240px; }
 .wfv-marker.first polygon { fill: #ef4444; stroke: #fff; stroke-width: 1; }
 .wfv-marker-line { stroke: rgba(248, 113, 113, 0.6); }
+
+/* Tab lists contain only tabs; the Copy / Expand buttons sit beside them in the same row. */
+.tablist { display: flex; gap: 0.5rem; }
+h1.logo { margin: 0; }
+
+.drawer-title { font-size: 1.17em; font-weight: 700; margin: 0; }

@@ -1,7 +1,15 @@
 import { useMemo, useState, useCallback, type KeyboardEvent } from 'react'
-import CodeMirror from '@uiw/react-codemirror'
-import { StreamLanguage } from '@codemirror/language'
+import CodeMirror, { EditorView, Prec } from '@uiw/react-codemirror'
+import { HighlightStyle, StreamLanguage, syntaxHighlighting } from '@codemirror/language'
+import { tags } from '@lezer/highlight'
 import { verilog } from '@codemirror/legacy-modes/mode/verilog'
+
+// The stock dark theme's comment grey (3.9:1) and variable red (4.4:1) sit just under WCAG AA's 4.5:1 on
+// the editor background. Lighten only those two tones; every other token colour is unchanged.
+const readableTokens = HighlightStyle.define([
+  { tag: tags.comment, color: '#9aa4b5' },
+  { tag: tags.variableName, color: '#ee858e' },
+])
 
 interface Props {
   rtl: string
@@ -14,7 +22,24 @@ interface Props {
 export default function CodeEditor({ rtl, tb, onRtlChange, onTbChange, moduleName }: Props) {
   const [tab, setTab] = useState<'rtl' | 'tb'>('rtl')
   const [copied, setCopied] = useState<string | null>(null)
-  const extensions = useMemo(() => [StreamLanguage.define(verilog)], [])
+  const extensions = useMemo(
+    () => [
+      StreamLanguage.define(verilog),
+      // The editable area is a text box with no label of its own: name it for screen readers.
+      EditorView.contentAttributes.of({
+        'aria-label': tab === 'rtl' ? 'RTL source code editor' : 'Testbench source code editor',
+      }),
+      // The default gutter grey is 3.9:1 on the editor background; WCAG AA needs 4.5:1.
+      EditorView.theme({
+        '.cm-gutters': { color: '#9aa4b5' },
+        '.cm-gutterElement': { color: '#9aa4b5' },
+        '.cm-gutterElement.cm-activeLineGutter': { color: '#c5cbd6' },
+        '.cm-placeholder': { color: '#a3acba' },
+      }),
+      Prec.highest(syntaxHighlighting(readableTokens)),
+    ],
+    [tab],
+  )
 
   // fallback when moduleName is empty before first generation
   const safeModule = (moduleName && moduleName.trim()) ? moduleName.trim() : 'design'
@@ -55,7 +80,9 @@ export default function CodeEditor({ rtl, tb, onRtlChange, onTbChange, moduleNam
 
   return (
     <div className="editor-pane glass-panel">
-      <div className="tabs editor-tabs" role="tablist" aria-label="Code editor tabs" onKeyDown={onKeyDown}>
+      <div className="tabs editor-tabs">
+       {/* The tab list holds only tabs (an ARIA requirement); the Copy button sits beside it. */}
+       <div className="tablist" role="tablist" aria-label="Code editor tabs" onKeyDown={onKeyDown}>
         <button
           role="tab"
           aria-selected={tab === 'rtl'}
@@ -76,6 +103,7 @@ export default function CodeEditor({ rtl, tb, onRtlChange, onTbChange, moduleNam
         >
           <i className="fa-solid fa-flask" aria-hidden="true" /> tb_{safeModule}.sv
         </button>
+       </div>
         <button
           className="copy-btn"
           onClick={handleCopy}

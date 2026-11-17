@@ -67,9 +67,9 @@ export default function PromptPanel({
   return (
     <aside className="left-panel glass-panel">
       <div className="panel-header">
-        <h3>
+        <h2>
           <i className="fa-solid fa-wand-magic-sparkles" /> Design Prompt
-        </h3>
+        </h2>
       </div>
       <div className="panel-content">
         <div className="session-group">

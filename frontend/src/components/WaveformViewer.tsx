@@ -343,7 +343,7 @@ export default function WaveformViewer({ waveform, markers = [], focusTime = nul
             width={plotW}
             height={bodyH}
             viewBox={`0 0 ${plotW} ${bodyH}`}
-            role="img"
+            role="group"
             aria-label={`Waveform plot with ${allCount} signals`}
             onMouseMove={(e) => setHover(timeAt(e))}
             onMouseLeave={() => setHover(null)}
@@ -380,8 +380,7 @@ export default function WaveformViewer({ waveform, markers = [], focusTime = nul
                 <g
                   key={`mk-${i}-${m.t}`}
                   className={`wfv-marker${m.t === markerTimes[0] ? ' first' : ''}`}
-                  role="button"
-                  tabIndex={-1}
+                  role="img" /* informative flag; keyboard users step between failures with [ and ] */
                   aria-label={`Failed check at ${fmt(m.t)}`}
                   onClick={(e) => {
                     e.stopPropagation()

@@ -73,7 +73,9 @@ export default function ResultsPanel({ result, waveform, schematic, history, ite
 
   return (
     <div className={`results-pane glass-panel${expanded ? ' is-expanded' : ''}`}>
-      <div className="tabs results-tabs" role="tablist" aria-label="Results view tabs" onKeyDown={handleKeyDown}>
+      <div className="tabs results-tabs">
+       {/* The tab list holds only tabs (an ARIA requirement); Expand sits beside it. */}
+       <div className="tablist" role="tablist" aria-label="Results view tabs" onKeyDown={handleKeyDown}>
         {TAB_ORDER.map((id) => (
           <button
             key={id}
@@ -92,6 +94,7 @@ export default function ResultsPanel({ result, waveform, schematic, history, ite
             )}
           </button>
         ))}
+       </div>
         <button
           className="tab tab-expand"
           aria-pressed={expanded}
@@ -214,9 +217,9 @@ function ResultsView({
           borderLeft: `3px solid ${synthesis.available ? 'var(--accent-primary)' : 'var(--text-muted)'}`,
           borderRadius: 8,
         }}>
-          <h4 style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
+          <h3 style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
             <i className="fa-solid fa-microchip" aria-hidden="true" /> Synthesis {synthesis.available ? '(yosys)' : ''}
-          </h4>
+          </h3>
           {synthesis.available ? (
             <div style={{ fontSize: '0.85rem', lineHeight: 1.5 }}>
               {synthesis.cell_count != null && <div>Generic cells (unmapped): <strong>{synthesis.cell_count}</strong></div>}
@@ -259,9 +262,9 @@ function ResultsView({
           borderLeft: `3px solid ${strength.killed === strength.total ? 'var(--pos-green)' : 'var(--warn-amber)'}`,
           borderRadius: 8,
         }}>
-          <h4 style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
+          <h3 style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
             <i className="fa-solid fa-bug" aria-hidden="true" /> Testbench strength
-          </h4>
+          </h3>
           <div style={{ fontSize: '0.85rem', lineHeight: 1.5 }}>
             <div data-testid="strength-summary">
               Caught <strong>{strength.killed} of {strength.total}</strong> injected bugs
@@ -294,9 +297,9 @@ function ResultsView({
           borderLeft: `3px solid ${lint.errors.length ? 'var(--neg-red)' : 'var(--warn-amber)'}`,
           borderRadius: 8,
         }}>
-          <h4 style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: 6 }}>
+          <h3 style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: 6 }}>
             <i className="fa-solid fa-magnifying-glass" aria-hidden="true" /> Lint {lint.ok ? '— ok' : `— ${lint.errors.length} error(s), ${lint.warnings.length} warning(s)`}
-          </h4>
+          </h3>
           {lint.errors.length > 0 && (
             <div style={{ marginBottom: 6 }}>
               {lint.errors.slice(0, 5).map((e, i) => (
@@ -318,7 +321,7 @@ function ResultsView({
 
       {showTimeline && (
         <div className="iteration-timeline">
-          <h4>Self-correction loop</h4>
+          <h3>Self-correction loop</h3>
           {history.map((h) => (
             <div key={h.iteration} className={`iter ${h.status.toLowerCase()}`}>
               <span className="iter-badge">#{h.iteration}</span>
@@ -355,7 +358,7 @@ function ResultsView({
 
       {result.errors.length > 0 && (
         <div className="error-list">
-          <h4>Errors</h4>
+          <h3>Errors</h3>
           {result.errors.slice(0, 8).map((e, i) => (
             <div key={i} className="error-line">
               {e.line != null ? `L${e.line}: ` : ''}
@@ -367,7 +370,7 @@ function ResultsView({
 
       <details className="log-details" open={result.status !== 'PASS'}>
         <summary>Simulation log</summary>
-        <pre className="log-pre">{result.log_excerpt.slice(0, 2500)}{result.log_excerpt.length > 2500 ? '\n… truncated (2500 chars shown)' : ''}</pre>
+        <pre className="log-pre" tabIndex={0} role="region" aria-label="Simulation log output">{result.log_excerpt.slice(0, 2500)}{result.log_excerpt.length > 2500 ? '\n… truncated (2500 chars shown)' : ''}</pre>
       </details>
     </div>
   )
