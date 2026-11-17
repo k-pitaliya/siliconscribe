@@ -175,6 +175,27 @@ export interface ToggleCoverage {
   partial: boolean
 }
 
+/** Pre-layout timing and mapped area (Yosys + OpenSTA, sky130 typical corner). */
+export interface TimingReport {
+  available: boolean
+  library: string
+  clock?: string | null
+  target_mhz: number
+  period_ns: number
+  slack_ns?: number | null
+  met?: boolean | null
+  fmax_mhz?: number | null
+  critical_start?: string | null
+  critical_end?: string | null
+  critical_delay_ns?: number | null
+  area_um2?: number | null
+  cell_count?: number | null
+  flip_flops?: number | null
+  cells: [string, number][]
+  note: string
+  error?: string | null
+}
+
 /** One injected bug the testbench did not notice. */
 export interface MutantInfo {
   description: string
@@ -215,6 +236,7 @@ export interface RunResponse {
   fallback_notice?: string | null
   verification_warning?: string | null
   strength?: StrengthReport | null
+  timing?: TimingReport | null
 }
 
 export interface ProjectSummary {
@@ -249,6 +271,7 @@ export interface StreamEvent {
     | 'lint'
     | 'synthesis'
     | 'strength'
+    | 'timing'
     | 'done'
     | 'error'
   message?: string
@@ -268,4 +291,5 @@ export interface StreamEvent {
   synthesis?: SynthesisInfo
   lint?: LintInfo
   strength?: StrengthReport
+  timing?: TimingReport
 }

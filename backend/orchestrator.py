@@ -35,6 +35,7 @@ from typing import Iterator, Optional
 import llm_service
 from cov_metrics import compute_coverage
 from mutation import run_strength, weak_strength_note
+from timing import missing_requirements as timing_missing, run_timing, timing_message
 from schematic import build_schematic
 from simulator import IcarusSimulator
 from vcd_parser import parse_vcd
@@ -104,6 +105,9 @@ def _tb_problems(tb: str, module_name: str) -> list[str]:
 
 # Mutation-based testbench strength is on by default; set STRENGTH_ENABLED=0 to skip it.
 STRENGTH_ENABLED = os.getenv("STRENGTH_ENABLED", "1").strip().lower() not in ("0", "false", "no", "off")
+
+# Pre-layout timing runs after a PASS when Yosys, OpenSTA and the cell library are present.
+TIMING_ENABLED = os.getenv("TIMING_ENABLED", "1").strip().lower() not in ("0", "false", "no", "off")
 
 # A PASS is only as good as the checks behind it. Below this many executed checks
 # (or fewer than the whole input space for tiny combinational blocks) the app
@@ -742,6 +746,17 @@ def pipeline_events(
             except Exception:  # a failed extra check must not break the run
                 logger.exception("strength check failed")
                 strength = None
+        # Timing: only for a design that passed, and only when the tools exist (otherwise the
+        # result simply has no timing section; nothing is estimated or invented).
+        timing = None
+        if result.status == "PASS" and TIMING_ENABLED and not timing_missing():
+            try:
+                timing = run_timing(rtl_code, spec.module_name,
+                                    simulator.workspace / (design_id[:26] + "_ti"), target_frequency_mhz)
+                yield {"stage": "timing", "timing": timing.model_dump(), "message": timing_message(timing)}
+            except Exception:  # a failed extra check must not break the run
+                logger.exception("timing check failed")
+                timing = None
         warning_text = " ".join(
             n for n in (weak_verification_note(spec, result), weak_strength_note(strength), oracle_note) if n
         ) or None
@@ -762,6 +777,7 @@ def pipeline_events(
             fallback_notice=fallback_notice,
             verification_warning=warning_text,
             strength=strength,
+            timing=timing,
         )
         yield {"stage": "done", "status": result.status,
                "message": _final_message(result, iteration),

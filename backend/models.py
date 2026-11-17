@@ -265,6 +265,37 @@ class StrengthReport(BaseModel):
     seconds: float = 0.0
 
 
+class TimingReport(BaseModel):
+    """Pre-layout timing and mapped area (Yosys + OpenSTA on the sky130 library). See timing.py."""
+    available: bool = False
+    library: str = ""
+    clock: Optional[str] = None
+    target_mhz: float = 100.0
+    period_ns: float = 10.0
+    slack_ns: Optional[float] = None          # worst setup slack; negative = too slow for the target
+    met: Optional[bool] = None
+    fmax_mhz: Optional[float] = None
+    critical_start: Optional[str] = None
+    critical_end: Optional[str] = None
+    critical_delay_ns: Optional[float] = None
+    area_um2: Optional[float] = None
+    sequential_area_um2: Optional[float] = None
+    cell_count: Optional[int] = None
+    flip_flops: Optional[int] = None
+    cells: List[list] = Field(default_factory=list)      # [[cell name, count], ...] most common first
+    power_mw: Optional[float] = None
+    note: str = ""
+    error: Optional[str] = None
+    seconds: float = 0.0
+
+
+class TimingRequest(BaseModel):
+    """Request body for POST /api/timing/run."""
+    rtl_code: str = Field(..., max_length=100000)
+    module_name: str = Field(..., max_length=64, pattern=r"^[A-Za-z_][A-Za-z0-9_]*$")
+    target_frequency_mhz: Optional[int] = Field(None, ge=1, le=10000)
+
+
 class RunResponse(BaseModel):
     design_id: str
     rtl_spec: RTLDesignSpec
@@ -281,6 +312,7 @@ class RunResponse(BaseModel):
     fallback_notice: Optional[str] = None
     verification_warning: Optional[str] = None
     strength: Optional[StrengthReport] = None
+    timing: Optional[TimingReport] = None
 
 
 class SynthesisRequest(BaseModel):

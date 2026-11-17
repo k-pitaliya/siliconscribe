@@ -16,6 +16,7 @@ import type {
   SimulationResult,
   StrengthReport,
   SynthesisInfo,
+  TimingReport,
   Waveform,
 } from './types'
 
@@ -39,6 +40,7 @@ export default function App() {
   const [designId, setDesignId] = useState<string>('')
   const [synthesis, setSynthesis] = useState<SynthesisInfo | null>(null)
   const [strength, setStrength] = useState<StrengthReport | null>(null)
+  const [timing, setTiming] = useState<TimingReport | null>(null)
   const [lintInfo, setLintInfo] = useState<LintInfo | null>(null)
   const [fallbackNotice, setFallbackNotice] = useState<string>('')
   const [verificationWarning, setVerificationWarning] = useState<string>('')
@@ -121,6 +123,7 @@ export default function App() {
     setIterations(0)
     setSynthesis(null)
     setStrength(null)
+    setTiming(null)
     setLintInfo(null)
     setFallbackNotice('')
     setVerificationWarning('')
@@ -147,7 +150,7 @@ export default function App() {
           reasoning_effort: thinkingToSend,
         },
         (e) => {
-          if (e.message && ['start', 'intent', 'rtl', 'testbench', 'explanation', 'simulate', 'fixing', 'fix', 'lint', 'synthesis', 'strength', 'done', 'error'].includes(e.stage)) {
+          if (e.message && ['start', 'intent', 'rtl', 'testbench', 'explanation', 'simulate', 'fixing', 'fix', 'lint', 'synthesis', 'strength', 'timing', 'done', 'error'].includes(e.stage)) {
             pushMsg({ role: 'ai', text: e.message, stage: e.stage, status: e.status, diagnosis: e.diagnosis })
           }
           if (e.fallback_notice && e.fallback_notice !== lastNoticeRef.current) {
@@ -162,6 +165,7 @@ export default function App() {
           if (e.result) setResult(e.result)
           if (e.synthesis) setSynthesis(e.synthesis)
           if (e.strength) setStrength(e.strength)
+          if (e.timing) setTiming(e.timing)
           if (e.lint) setLintInfo(e.lint as LintInfo)
           if (e.stage === 'done' && e.response) {
             const r: RunResponse = e.response
@@ -177,6 +181,7 @@ export default function App() {
             setModuleName(r.rtl_spec.module_name)
             if (r.synthesis) setSynthesis(r.synthesis)
             setStrength(r.strength ?? null)
+            setTiming(r.timing ?? null)
             if (r.fallback_notice) setFallbackNotice(r.fallback_notice)
             setVerificationWarning(r.verification_warning ?? '')
             refreshProjects()
@@ -219,6 +224,7 @@ export default function App() {
       setHistory([])
       setIterations(0)
       setStrength(null) // scored the previous code, not what was just re-run
+      setTiming(null) // timed the previous code
       setVerificationWarning('')
       // From the editor, show the new verdict; anywhere else (waveform, test cases) stay where the user is looking.
       if (currentTab.current === 'design') showTab('results')
@@ -281,6 +287,7 @@ export default function App() {
       setExplanation(proj.explanation)
       setSynthesis(proj.synthesis ?? null)
       setStrength(proj.strength ?? null)
+      setTiming(proj.timing ?? null)
       setFallbackNotice(proj.fallback_notice ?? '')
       setVerificationWarning(proj.verification_warning ?? '')
       pushMsg({ role: 'ai', text: `Loaded project ${proj.rtl_spec.module_name}`, stage: 'done', status: proj.status })
@@ -422,6 +429,7 @@ export default function App() {
           iterations={iterations}
           synthesis={synthesis}
           strength={strength}
+          timing={timing}
           lint={lintInfo}
           degraded={!!fallbackNotice}
           warning={verificationWarning}

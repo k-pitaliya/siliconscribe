@@ -1,9 +1,9 @@
 import { useState, useCallback, useEffect, useMemo, type KeyboardEvent, type ReactNode } from 'react'
-import { Activity, ArrowUpDown, Bug, CircleCheck, CircleX, Cpu, FileCode, Info, ListChecks, Search, TriangleExclamationPoint, Workflow } from 'lucide-react'
+import { Activity, ArrowUpDown, Timer, Bug, CircleCheck, CircleX, Cpu, FileCode, Info, ListChecks, Search, TriangleExclamationPoint, Workflow } from 'lucide-react'
 import WaveformViewer, { type WaveformMarker } from './WaveformViewer'
 import TestCasesView from './TestCasesView'
 import SchematicView from './SchematicView'
-import type { IterationRecord, Schematic, SimulationResult, StrengthReport, UntoggledSignal, Waveform, SynthesisInfo, LintInfo } from '../types'
+import type { IterationRecord, Schematic, SimulationResult, StrengthReport, TimingReport, UntoggledSignal, Waveform, SynthesisInfo, LintInfo } from '../types'
 
 export type Tab = 'design' | 'results' | 'tests' | 'waveform' | 'schematic'
 
@@ -15,6 +15,7 @@ interface Props {
   iterations?: number
   synthesis?: SynthesisInfo | null
   strength?: StrengthReport | null
+  timing?: TimingReport | null
   lint?: LintInfo | null
   /** True when the shown result came from the built-in demo, not a live model. */
   degraded?: boolean
@@ -37,7 +38,7 @@ const TAB_META: Record<Tab, { label: string; Icon: typeof Activity }> = {
 }
 
 export default function ResultsPanel({
-  result, waveform, schematic, history, iterations, synthesis, strength, lint, degraded, warning, design, tabRequest, onTabChange,
+  result, waveform, schematic, history, iterations, synthesis, strength, timing, lint, degraded, warning, design, tabRequest, onTabChange,
 }: Props) {
   // Depend on whether there IS a design tab, not on the element itself: the element is new on every
   // render, and re-running the request effect each render would override the user's own tab clicks.
@@ -112,7 +113,7 @@ export default function ResultsPanel({
         )}
         {tab === 'results' && (
           <div className="tab-panel padded" role="tabpanel" id="panel-results" aria-labelledby="tab-results">
-            <ResultsView result={result} history={history} iterations={iterations} synthesis={synthesis} strength={strength}
+            <ResultsView result={result} history={history} iterations={iterations} synthesis={synthesis} strength={strength} timing={timing}
               lint={lint} degraded={degraded} warning={warning} onOpenTests={() => setTab('tests')} />
           </div>
         )}
@@ -141,13 +142,14 @@ export default function ResultsPanel({
 }
 
 function ResultsView({
-  result, history, iterations, synthesis, strength, lint, degraded, warning, onOpenTests,
+  result, history, iterations, synthesis, strength, timing, lint, degraded, warning, onOpenTests,
 }: {
   result: SimulationResult | null
   history: IterationRecord[]
   iterations?: number
   synthesis?: SynthesisInfo | null
   strength?: StrengthReport | null
+  timing?: TimingReport | null
   lint?: LintInfo | null
   degraded?: boolean
   warning?: string
@@ -166,6 +168,8 @@ function ResultsView({
   const groups = result.check_groups ?? []
   const strengthShown = strength && (strength.status === 'ok' || strength.status === 'partial')
   const toggle = result.measured_toggle
+  const timingShown = !!timing && timing.available
+  const mappedArea = timingShown && timing?.area_um2 != null
 
   return (
     <div className="results-view">
@@ -193,7 +197,7 @@ function ResultsView({
         </div>
       )}
 
-      {(strengthShown || synthesis || toggle) && (
+      {(strengthShown || synthesis || toggle || timingShown) && (
         <div className="two-col">
           {strengthShown && strength && (
             <div className="section strength-section" data-testid="strength-section">
@@ -243,7 +247,7 @@ function ResultsView({
                   {synthesis.warnings?.map((w) => (
                     <div key={w} className="muted" data-testid="synth-warning">Yosys: {w}</div>
                   ))}
-                  {synthesis.area_estimate != null && (
+                  {synthesis.area_estimate != null && !mappedArea && (
                     <div>Relative area proxy: <strong>{String(synthesis.area_estimate)}</strong> <span className="muted">(cells × 5, no technology library, not µm²)</span></div>
                   )}
                   {synthesis.cell_count == null && synthesis.area_estimate == null && <div className="muted">Synthesis ran but reported no metrics.</div>}
@@ -253,6 +257,34 @@ function ResultsView({
                   {synthesis.error ? `Synthesis error: ${synthesis.error}` : 'Synthesis not available: Yosys is not installed, so only the port-level schematic is shown.'}
                 </div>
               )}
+            </div>
+          )}
+          {timingShown && timing && (
+            <div className="section timing-section" data-testid="timing-section">
+              <h3><Timer size={16} aria-hidden="true" /> Timing and area (pre-layout)</h3>
+              <div className="section-body">
+                {timing.slack_ns != null ? (
+                  <div data-testid="timing-summary" style={timing.met ? undefined : { color: 'var(--fail)' }}>
+                    <strong>{timing.met ? 'Meets' : 'Misses'} {timing.target_mhz} MHz</strong>
+                    {' '}with {timing.slack_ns >= 0 ? '+' : ''}{timing.slack_ns.toFixed(2)} ns slack
+                    {timing.fmax_mhz != null && <span className="muted"> (maximum about {Math.round(timing.fmax_mhz)} MHz)</span>}
+                  </div>
+                ) : (
+                  <div data-testid="timing-summary" className="muted">{timing.error ?? 'No timing result.'}</div>
+                )}
+                {timing.critical_start && timing.critical_end && (
+                  <div>Slowest path: <span className="mono">{timing.critical_start}</span> to <span className="mono">{timing.critical_end}</span>
+                    {timing.critical_delay_ns != null && <>, {timing.critical_delay_ns.toFixed(2)} ns</>}</div>
+                )}
+                {timing.area_um2 != null && (
+                  <div data-testid="timing-area">Mapped area: <strong>{timing.area_um2.toFixed(1)} µm²</strong> in {timing.cell_count} cells
+                    {timing.flip_flops ? `, ${timing.flip_flops} flip-flops` : ''}</div>
+                )}
+                {timing.cells.length > 0 && (
+                  <div className="muted mono">{timing.cells.map(([n, c]) => `${n} ×${c}`).join(', ')}</div>
+                )}
+                <div className="muted">{timing.library}. {timing.note}</div>
+              </div>
             </div>
           )}
           {toggle && (

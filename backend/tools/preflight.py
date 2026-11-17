@@ -80,6 +80,16 @@ def check_yosys() -> None:
     record("OK" if rc == 0 else "WARN", "Yosys", out.strip().splitlines()[0][:60] if out.strip() else f"exit {rc}")
 
 
+def check_timing() -> None:
+    from timing import missing_requirements
+    missing = missing_requirements()
+    if missing:
+        record("WARN", "Timing (OpenSTA)", "not available, missing: " + ", ".join(missing))
+        return
+    rc, out = run(["sta", "-version"])
+    record("OK" if rc == 0 else "WARN", "Timing (OpenSTA)", f"version {out.strip()[:20]}, sky130 library present")
+
+
 def check_offline_pipeline() -> bool:
     # llm_service is imported by main() BEFORE this runs, with the environment the user intends for
     # the live demo; get_provider() re-reads OFFLINE_MODE on every call, so setting it only for this
@@ -96,6 +106,8 @@ def check_offline_pipeline() -> bool:
         extras = []
         if r.strength and r.strength.total:
             extras.append(f"strength {r.strength.killed}/{r.strength.total}")
+        if r.timing and r.timing.slack_ns is not None:
+            extras.append(f"slack {r.timing.slack_ns:+.2f} ns")
         if r.synthesis and r.synthesis.get("available"):
             extras.append(f"{r.synthesis.get('cell_count', '?')} cells")
         record("OK" if ok else "FAIL", "Offline demo pipeline",
@@ -196,6 +208,7 @@ def main() -> int:
 
     check_simulator()
     check_yosys()
+    check_timing()
     offline_ok = check_offline_pipeline()
     live_cfg = check_live_config()
     live_ok = check_live_call() if (args.live and live_cfg) else None

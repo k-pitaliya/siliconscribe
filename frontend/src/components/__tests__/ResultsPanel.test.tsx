@@ -1,7 +1,7 @@
 import { render, screen, fireEvent } from '@testing-library/react'
 import { describe, it, expect } from 'vitest'
 import ResultsPanel, { describeUntoggled } from '../ResultsPanel'
-import type { SimulationResult, IterationRecord, Waveform, Schematic, SynthesisInfo, LintInfo, StrengthReport } from '../../types'
+import type { SimulationResult, IterationRecord, Waveform, Schematic, SynthesisInfo, LintInfo, StrengthReport, TimingReport } from '../../types'
 
 const passResult: SimulationResult = {
   status: 'PASS',
@@ -386,5 +386,52 @@ describe('ResultsPanel: measured toggle coverage', () => {
     expect(describeUntoggled({ signal: 'data', width: 8, never_rose: [7, 6, 5, 4], never_fell: [] })).toBe('data[7:4] never rose')
     expect(describeUntoggled({ signal: 'q', width: 4, never_rose: [3, 2, 1, 0], never_fell: [3, 2, 1, 0] })).toBe('q never changed')
     expect(describeUntoggled({ signal: 'q', width: 4, never_rose: [3, 1], never_fell: [0] })).toBe('q[3,1] never rose; q[0] never fell')
+  })
+})
+
+
+describe('ResultsPanel: timing and mapped area', () => {
+  const base = { result: passResult, waveform: null, schematic: null, history: [] as IterationRecord[] }
+  const timing = (over: Partial<TimingReport> = {}): TimingReport => ({
+    available: true, library: 'sky130_fd_sc_hd, typical corner (25 C, 1.8 V)', clock: 'clk', target_mhz: 100, period_ns: 10,
+    slack_ns: 9.27, met: true, fmax_mhz: 1369.9, critical_start: '_14_', critical_end: '_17_', critical_delay_ns: 0.6,
+    area_um2: 150.144, cell_count: 11, flip_flops: 4, cells: [['dfrtp_1', 4], ['xnor2_1', 3]],
+    note: 'Pre-layout estimate on one typical corner. Not sign-off timing.', ...over,
+  })
+
+  it('says whether the target clock is met, with slack, maximum frequency, path and real area', () => {
+    render(<ResultsPanel {...base} timing={timing()} />)
+    const s = screen.getByTestId('timing-summary').textContent ?? ''
+    expect(s).toContain('Meets 100 MHz')
+    expect(s).toContain('+9.27 ns slack')
+    expect(s).toContain('maximum about 1370 MHz')
+    expect(screen.getByTestId('timing-area').textContent).toContain('150.1 µm² in 11 cells, 4 flip-flops')
+    const all = screen.getByTestId('timing-section').textContent ?? ''
+    expect(all).toContain('_14_')
+    expect(all).toContain('Not sign-off timing')                  // the limits are always shown
+  })
+
+  it('shows a missed target with negative slack', () => {
+    render(<ResultsPanel {...base} timing={timing({ met: false, slack_ns: -2.19, fmax_mhz: 371.7, target_mhz: 2000 })} />)
+    const s = screen.getByTestId('timing-summary').textContent ?? ''
+    expect(s).toContain('Misses 2000 MHz')
+    expect(s).toContain('-2.19 ns slack')
+  })
+
+  it('replaces the made-up area proxy once real mapped area exists', () => {
+    const synthesis: SynthesisInfo = { available: true, cell_count: 10, area_estimate: 50 }
+    const { rerender } = render(<ResultsPanel {...base} synthesis={synthesis} />)
+    expect(screen.getByTestId('synthesis-section').textContent).toContain('Relative area proxy')
+    rerender(<ResultsPanel {...base} synthesis={synthesis} timing={timing()} />)
+    expect(screen.getByTestId('synthesis-section').textContent).not.toContain('Relative area proxy')
+  })
+
+  it('shows the reason when no path could be timed, and nothing when timing is unavailable', () => {
+    const { rerender } = render(<ResultsPanel {...base} timing={timing({ slack_ns: null, met: null, fmax_mhz: null, error: 'OpenSTA reported no constrained path.' })} />)
+    expect(screen.getByTestId('timing-summary').textContent).toContain('no constrained path')
+    rerender(<ResultsPanel {...base} timing={timing({ available: false })} />)
+    expect(screen.queryByTestId('timing-section')).toBeNull()
+    rerender(<ResultsPanel {...base} timing={null} />)
+    expect(screen.queryByTestId('timing-section')).toBeNull()
   })
 })

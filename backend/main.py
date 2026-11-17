@@ -22,7 +22,7 @@ from models import (
     SimError,
     SimulationRequest, SimulationRerunResponse,
     RunRequest, RunResponse,
-    SynthesisRequest,
+    SynthesisRequest, TimingRequest, TimingReport,
     UVMExportRequest, UVMExportResponse,
     DESIGN_ID_RE,
 )
@@ -393,6 +393,15 @@ def delete_project_endpoint(design_id: str, request: Request):
     from fastapi.responses import Response
 
     return Response(status_code=204)
+
+
+@app.post("/api/timing/run", response_model=TimingReport)
+def run_timing_route(request: TimingRequest, req: Request):
+    """Map the RTL to sky130 cells and report pre-layout timing at the target clock."""
+    _check_rate_limit(_get_client_ip(req))
+    from timing import run_timing
+    return run_timing(request.rtl_code, request.module_name,
+                      Path(WORKSPACE) / ("ti_" + _new_design_id()[:24]), request.target_frequency_mhz)
 
 
 @app.post("/api/uvm/export", response_model=UVMExportResponse)
