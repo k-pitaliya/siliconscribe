@@ -33,6 +33,7 @@ const firstRun = {
   result: simResult(), waveform: wave('first_run_signal'), schematic: null,
   iteration_history: [{ iteration: 1, status: 'FAIL' }, { iteration: 2, status: 'PASS' }], iterations: 2,
   verification_warning: 'Only 3 checks ran.', fallback_notice: null,
+  strength: { status: 'ok', total: 6, killed: 5, invalid: 0, survivors: [{ description: '`^` to `|`', line: 7 }], note: '', seconds: 0.4 },
 } as unknown as RunResponse
 
 beforeEach(() => {
@@ -54,6 +55,7 @@ async function generate() {
 describe('App: Re-run refreshes everything that belongs to the run', () => {
   it('replaces the waveform and clears the repair timeline and the weak-evidence warning', async () => {
     await generate()
+    expect(screen.getByTestId('strength-summary').textContent).toContain('Caught 5 of 6')
     fireEvent.click(screen.getByRole('tab', { name: /Waveform/ }))
     expect(screen.getByText('first_run_signal')).toBeInTheDocument()
 
@@ -68,6 +70,7 @@ describe('App: Re-run refreshes everything that belongs to the run', () => {
 
     fireEvent.click(screen.getByRole('tab', { name: /Results/ }))
     expect(screen.queryByText(/Only 3 checks ran/)).toBeNull() // that warning described the old run
+    expect(screen.queryByTestId('strength-section')).toBeNull() // it scored the old code, not the edited code
     expect(screen.getByText('FAIL')).toBeInTheDocument()
   })
 

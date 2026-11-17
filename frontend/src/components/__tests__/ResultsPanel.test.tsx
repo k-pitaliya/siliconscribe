@@ -1,7 +1,7 @@
 import { render, screen, fireEvent } from '@testing-library/react'
 import { describe, it, expect } from 'vitest'
 import ResultsPanel from '../ResultsPanel'
-import type { SimulationResult, IterationRecord, Waveform, Schematic, SynthesisInfo, LintInfo } from '../../types'
+import type { SimulationResult, IterationRecord, Waveform, Schematic, SynthesisInfo, LintInfo, StrengthReport } from '../../types'
 
 const passResult: SimulationResult = {
   status: 'PASS',
@@ -290,5 +290,42 @@ describe('ResultsPanel: richer synthesis report', () => {
     render(<ResultsPanel {...base} synthesis={synthesis} />)
     expect(screen.getByTestId('synth-latch').textContent).toContain('latch')
     expect(screen.getByTestId('synth-warning').textContent).toContain('Found 1 problems')
+  })
+})
+
+
+describe('ResultsPanel: testbench strength', () => {
+  const base = { result: passResult, waveform: null, schematic: null, history: [] as IterationRecord[] }
+  const report = (over: Partial<StrengthReport> = {}): StrengthReport => ({
+    status: 'ok', total: 10, killed: 8, invalid: 1, seconds: 1.2,
+    survivors: [{ description: '`+` to `-`', line: 12 }, { description: '`posedge` to `negedge`', line: 9 }],
+    note: 'A survivor is a change the testbench did not notice; some survivors may be equivalent.', ...over,
+  })
+
+  it('shows how many injected bugs were caught and which were missed, with the honest caveat', () => {
+    render(<ResultsPanel {...base} strength={report()} />)
+    expect(screen.getByTestId('strength-summary').textContent).toContain('Caught 8 of 10 injected bugs')
+    const survivors = screen.getByTestId('strength-survivors').textContent ?? ''
+    expect(survivors).toContain('line 12: `+` to `-`')
+    expect(survivors).toContain('line 9')
+    expect(screen.getByTestId('strength-section').textContent).toContain('may be equivalent')
+  })
+
+  it('omits the survivor list when every bug was caught', () => {
+    render(<ResultsPanel {...base} strength={report({ killed: 10, survivors: [] })} />)
+    expect(screen.getByTestId('strength-summary').textContent).toContain('Caught 10 of 10')
+    expect(screen.queryByTestId('strength-survivors')).toBeNull()
+  })
+
+  it('says when the run stopped at the time limit', () => {
+    render(<ResultsPanel {...base} strength={report({ status: 'partial' })} />)
+    expect(screen.getByTestId('strength-summary').textContent).toContain('stopped early')
+  })
+
+  it('shows nothing when strength was skipped or absent', () => {
+    const { rerender } = render(<ResultsPanel {...base} strength={report({ status: 'skipped', total: 0, killed: 0 })} />)
+    expect(screen.queryByTestId('strength-section')).toBeNull()
+    rerender(<ResultsPanel {...base} strength={null} />)
+    expect(screen.queryByTestId('strength-section')).toBeNull()
   })
 })

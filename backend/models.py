@@ -223,6 +223,23 @@ class RunRequest(BaseModel):
     )
 
 
+class MutantInfo(BaseModel):
+    """One injected bug the testbench did NOT notice."""
+    description: str
+    line: int
+
+
+class StrengthReport(BaseModel):
+    """How many injected bugs the design's own testbench caught (mutation testing)."""
+    status: str = "skipped"            # "ok" | "partial" (time budget hit) | "skipped"
+    total: int = 0                      # mutants that compiled and were run
+    killed: int = 0                     # of those, how many the testbench caught
+    invalid: int = 0                    # injected changes that did not compile (not counted)
+    survivors: List[MutantInfo] = Field(default_factory=list)
+    note: str = ""
+    seconds: float = 0.0
+
+
 class RunResponse(BaseModel):
     design_id: str
     rtl_spec: RTLDesignSpec
@@ -238,6 +255,7 @@ class RunResponse(BaseModel):
     synthesis: Optional[dict] = None
     fallback_notice: Optional[str] = None
     verification_warning: Optional[str] = None
+    strength: Optional[StrengthReport] = None
 
 
 class SynthesisRequest(BaseModel):

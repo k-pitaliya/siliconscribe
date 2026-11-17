@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect, useMemo, type KeyboardEvent } from 'r
 import WaveformViewer, { type WaveformMarker } from './WaveformViewer'
 import TestCasesView from './TestCasesView'
 import SchematicView from './SchematicView'
-import type { IterationRecord, Schematic, SimulationResult, Waveform, SynthesisInfo, LintInfo } from '../types'
+import type { IterationRecord, Schematic, SimulationResult, StrengthReport, Waveform, SynthesisInfo, LintInfo } from '../types'
 
 interface Props {
   result: SimulationResult | null
@@ -11,6 +11,7 @@ interface Props {
   history: IterationRecord[]
   iterations?: number
   synthesis?: SynthesisInfo | null
+  strength?: StrengthReport | null
   lint?: LintInfo | null
   /** True when the shown result came from the built-in demo, not a live model. */
   degraded?: boolean
@@ -29,7 +30,7 @@ const TAB_META: Record<Tab, { label: string; icon: string }> = {
   schematic: { label: 'Schematic', icon: 'fa-diagram-project' },
 }
 
-export default function ResultsPanel({ result, waveform, schematic, history, iterations, synthesis, lint, degraded, warning }: Props) {
+export default function ResultsPanel({ result, waveform, schematic, history, iterations, synthesis, strength, lint, degraded, warning }: Props) {
   const [tab, setTab] = useState<Tab>('results')
   // The pane is small next to the editor; "Expand" lets a long test list or a waveform use the whole window.
   const [expanded, setExpanded] = useState(false)
@@ -105,7 +106,7 @@ export default function ResultsPanel({ result, waveform, schematic, history, ite
       <div className="tab-content">
         {tab === 'results' && (
           <div role="tabpanel" id="panel-results" aria-labelledby="tab-results">
-            <ResultsView result={result} history={history} iterations={iterations} synthesis={synthesis} lint={lint} degraded={degraded} warning={warning} />
+            <ResultsView result={result} history={history} iterations={iterations} synthesis={synthesis} strength={strength} lint={lint} degraded={degraded} warning={warning} />
           </div>
         )}
         {tab === 'tests' && (
@@ -142,6 +143,7 @@ function ResultsView({
   history,
   iterations,
   synthesis,
+  strength,
   lint,
   degraded,
   warning,
@@ -150,6 +152,7 @@ function ResultsView({
   history: IterationRecord[]
   iterations?: number
   synthesis?: SynthesisInfo | null
+  strength?: StrengthReport | null
   lint?: LintInfo | null
   degraded?: boolean
   warning?: string
@@ -243,6 +246,41 @@ function ResultsView({
               {synthesis.error ? `Synthesis error: ${synthesis.error}` : 'Synthesis not available (yosys not installed — showing port-level schematic)'}
             </div>
           )}
+        </div>
+      )}
+
+      {/* Testbench strength: did the testbench notice injected bugs? */}
+      {strength && (strength.status === 'ok' || strength.status === 'partial') && (
+        <div className="strength-section" data-testid="strength-section" style={{
+          margin: '1rem 0',
+          padding: '0.75rem 0.9rem',
+          background: 'rgba(99,102,241,0.08)',
+          border: '1px solid var(--border-glass)',
+          borderLeft: `3px solid ${strength.killed === strength.total ? 'var(--pos-green)' : 'var(--warn-amber)'}`,
+          borderRadius: 8,
+        }}>
+          <h4 style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
+            <i className="fa-solid fa-bug" aria-hidden="true" /> Testbench strength
+          </h4>
+          <div style={{ fontSize: '0.85rem', lineHeight: 1.5 }}>
+            <div data-testid="strength-summary">
+              Caught <strong>{strength.killed} of {strength.total}</strong> injected bugs
+              {strength.status === 'partial' && <span className="muted"> (stopped early at the time limit)</span>}
+            </div>
+            {strength.survivors.length > 0 && (
+              <div data-testid="strength-survivors" style={{ marginTop: 4 }}>
+                <span className="muted">Not noticed by the testbench:</span>
+                <ul style={{ margin: '2px 0 0 1.1rem', padding: 0 }}>
+                  {strength.survivors.map((s) => (
+                    <li key={`${s.line}-${s.description}`} style={{ fontFamily: 'var(--font-mono)', fontSize: '0.8rem' }}>
+                      line {s.line}: {s.description}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {strength.note && <div className="muted" style={{ marginTop: 4, fontSize: '0.78rem' }}>{strength.note}</div>}
+          </div>
         </div>
       )}
 

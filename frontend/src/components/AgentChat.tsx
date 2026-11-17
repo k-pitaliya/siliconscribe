@@ -19,6 +19,7 @@ function stageIcon(stage?: string, status?: string): string {
   if (stage === 'fix' || stage === 'fixing') return 'fa-screwdriver-wrench'
   if (stage === 'lint') return 'fa-magnifying-glass'
   if (stage === 'synthesis') return 'fa-microchip'
+  if (stage === 'strength') return 'fa-bug'
   if (stage === 'simulate') {
     if (status === 'PASS') return 'fa-circle-check'
     if (status === 'FAIL' || status === 'ERROR') return 'fa-circle-xmark'

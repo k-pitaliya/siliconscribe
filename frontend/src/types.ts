@@ -154,6 +154,23 @@ export interface SynthesisInfo {
   error?: string
 }
 
+/** One injected bug the testbench did not notice. */
+export interface MutantInfo {
+  description: string
+  line: number
+}
+
+/** Mutation testing of the design's own testbench: how many injected bugs it caught. */
+export interface StrengthReport {
+  status: 'ok' | 'partial' | 'skipped'
+  total: number
+  killed: number
+  invalid: number
+  survivors: MutantInfo[]
+  note: string
+  seconds: number
+}
+
 export interface LintInfo {
   ok: boolean
   errors: SimError[]
@@ -176,6 +193,7 @@ export interface RunResponse {
   synthesis?: SynthesisInfo | null
   fallback_notice?: string | null
   verification_warning?: string | null
+  strength?: StrengthReport | null
 }
 
 export interface ProjectSummary {
@@ -209,6 +227,7 @@ export interface StreamEvent {
     | 'fix'
     | 'lint'
     | 'synthesis'
+    | 'strength'
     | 'done'
     | 'error'
   message?: string
@@ -227,4 +246,5 @@ export interface StreamEvent {
   response?: RunResponse
   synthesis?: SynthesisInfo
   lint?: LintInfo
+  strength?: StrengthReport
 }

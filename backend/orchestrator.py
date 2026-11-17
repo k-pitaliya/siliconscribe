@@ -27,12 +27,14 @@ Linter integration (non-blocking):
 
 import hashlib
 import logging
+import os
 import re
 from pathlib import Path
 from typing import Iterator, Optional
 
 import llm_service
 from cov_metrics import compute_coverage
+from mutation import run_strength, weak_strength_note
 from schematic import build_schematic
 from simulator import IcarusSimulator
 from vcd_parser import parse_vcd
@@ -99,6 +101,9 @@ def _tb_problems(tb: str, module_name: str) -> list[str]:
         problems.append(f"it does not instantiate the DUT module '{module_name}'")
     return problems
 
+
+# Mutation-based testbench strength is on by default; set STRENGTH_ENABLED=0 to skip it.
+STRENGTH_ENABLED = os.getenv("STRENGTH_ENABLED", "1").strip().lower() not in ("0", "false", "no", "off")
 
 # A PASS is only as good as the checks behind it. Below this many executed checks
 # (or fewer than the whole input space for tiny combinational blocks) the app
@@ -724,8 +729,21 @@ def pipeline_events(
                         f"({orig.fail_count} failed). Review the testbench change before trusting this PASS.")
             except Exception:  # a failed extra check must not break the run
                 logger.exception("original-testbench comparison failed")
+        # Testbench strength: only meaningful for a design whose real run passed. Mutation testing
+        # of the design (see mutation.py) asks whether this testbench could have caught a bug.
+        strength = None
+        if result.status == "PASS" and STRENGTH_ENABLED:
+            try:
+                strength = run_strength(simulator, design_id, rtl_code, tb_code)
+                if strength.status in ("ok", "partial"):
+                    yield {"stage": "strength", "strength": strength.model_dump(),
+                           "message": (f"Testbench strength: caught {strength.killed} of "
+                                       f"{strength.total} injected bugs.")}
+            except Exception:  # a failed extra check must not break the run
+                logger.exception("strength check failed")
+                strength = None
         warning_text = " ".join(
-            n for n in (weak_verification_note(spec, result), oracle_note) if n
+            n for n in (weak_verification_note(spec, result), weak_strength_note(strength), oracle_note) if n
         ) or None
 
         response = RunResponse(
@@ -743,6 +761,7 @@ def pipeline_events(
             synthesis=synthesis,
             fallback_notice=fallback_notice,
             verification_warning=warning_text,
+            strength=strength,
         )
         yield {"stage": "done", "status": result.status,
                "message": _final_message(result, iteration),
