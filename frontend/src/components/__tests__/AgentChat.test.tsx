@@ -46,3 +46,21 @@ describe('AgentChat run timer', () => {
     expect(screen.queryByTestId('run-timer')).toBeNull()
   })
 })
+
+
+describe('AgentChat finished steps', () => {
+  const steps = [
+    { role: 'ai' as const, text: 'Parsing requirement (provider: x, model: y)...', stage: 'start' },
+    { role: 'ai' as const, text: 'RTL generated.', stage: 'rtl' },
+  ]
+
+  it('drops the in-progress ellipsis once a later step has arrived', () => {
+    render(<AgentChat messages={steps} running explanation="" />)
+    expect(screen.getByText('Parsing requirement (provider: x, model: y).')).toBeTruthy()
+  })
+
+  it('keeps the ellipsis on the step that is still running', () => {
+    render(<AgentChat messages={steps.slice(0, 1)} running explanation="" />)
+    expect(screen.getByText('Parsing requirement (provider: x, model: y)...')).toBeTruthy()
+  })
+})

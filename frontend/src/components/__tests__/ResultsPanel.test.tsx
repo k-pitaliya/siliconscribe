@@ -325,6 +325,14 @@ describe('ResultsPanel: testbench strength', () => {
     expect(screen.queryByTestId('strength-survivors')).toBeNull()
   })
 
+  it('colours the bar amber only below the weak-testbench threshold (half caught)', () => {
+    const bar = () => screen.getByTestId('strength-section').querySelector('.bar') as HTMLElement
+    const { rerender } = render(<ResultsPanel {...base} strength={report({ killed: 7, total: 8 })} />)
+    expect(bar().classList.contains('weak')).toBe(false)
+    rerender(<ResultsPanel {...base} strength={report({ killed: 3, total: 8 })} />)
+    expect(bar().classList.contains('weak')).toBe(true)
+  })
+
   it('says when the run stopped at the time limit', () => {
     render(<ResultsPanel {...base} strength={report({ status: 'partial' })} />)
     expect(screen.getByTestId('strength-summary').textContent).toContain('stopped early')

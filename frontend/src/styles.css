@@ -326,7 +326,7 @@ textarea::placeholder, input::placeholder { color: var(--ink-3); }
 .two-col { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
 .bar { height: 6px; border-radius: 3px; background: var(--panel-2); border: 1px solid var(--line); overflow: hidden; max-width: 240px; }
 .bar > span { display: block; height: 100%; background: var(--pass); }
-.bar.partial > span { background: var(--warn); }
+.bar.weak > span { background: var(--warn); }
 .survivors { margin: 4px 0 0; padding-left: 18px; font-family: var(--font-mono); font-size: 12px; }
 .type-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .type-chip { font-size: 12px; border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px; background: var(--panel); }

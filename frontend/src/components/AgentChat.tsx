@@ -31,6 +31,7 @@ function stageIcon(stage?: string, status?: string) {
   if (stage === 'rtl') return Code
   if (stage === 'testbench') return FlaskConical
   if (stage === 'intent') return Lightbulb
+  if (stage === 'start') return Play
   if (stage === 'error') return TriangleExclamationPoint
   return Circle
 }
@@ -92,7 +93,9 @@ export default function AgentChat({ messages, running, explanation }: Props) {
           return (
             <li key={i} className={`run-item ${isUser ? 'user' : ''} ${tone}`}>
               <Icon size={14} className="ico" aria-hidden="true" />
-              <span className="txt">{m.text}</span>
+              {/* A finished step keeps its trailing "..." in the event text; drop it once a later
+                  step has arrived so the timeline does not look stuck. */}
+              <span className="txt">{i < messages.length - 1 || !running ? m.text.replace(/(\.\.\.|…)$/, '.') : m.text}</span>
               <span className="when">{took != null && took > 0 ? formatElapsed(took) : ''}</span>
               {m.diagnosis && (
                 <div className="run-diag" data-testid="chat-diagnosis">

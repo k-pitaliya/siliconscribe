@@ -202,7 +202,8 @@ function ResultsView({
                   Caught <strong>{strength.killed} of {strength.total}</strong> injected bugs
                   {strength.status === 'partial' && <span className="muted"> (stopped early at the time limit)</span>}
                 </div>
-                <div className={`bar ${strength.killed === strength.total ? '' : 'partial'}`} aria-hidden="true">
+                {/* Same threshold as the backend's weak-testbench warning: amber only when under half were caught. */}
+                <div className={`bar ${strength.total && strength.killed / strength.total < 0.5 ? 'weak' : ''}`} aria-hidden="true">
                   <span style={{ width: `${strength.total ? (100 * strength.killed) / strength.total : 0}%` }} />
                 </div>
                 {strength.survivors.length > 0 && (
