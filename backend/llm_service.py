@@ -28,6 +28,7 @@ from dotenv import load_dotenv
 
 from models import RTLDesignSpec
 import offline_designs as od
+import model_catalog
 
 logger = logging.getLogger("siliconscribe.llm")
 
@@ -35,6 +36,10 @@ logger = logging.getLogger("siliconscribe.llm")
 # (e.g. a NVIDIA_API_KEY exported in ~/.zshrc) — otherwise the app can silently
 # authenticate with the wrong key.
 load_dotenv(override=True)
+
+
+class ModelNotAvailable(RuntimeError):
+    """The model the user picked cannot be used here (not set up, malformed). The message is shown to the user as is."""
 
 
 class LLMUpstreamError(RuntimeError):
@@ -392,6 +397,14 @@ class OpenAIProvider:
             for s in ("intent", "rtl", "testbench", "explain", "fix")
         }
 
+    def _extra_body(self, reasoning_effort: Optional[str], chosen: str) -> dict:
+        """Extra request fields. For opencode models with variants the `:variant` suffix is primary; both
+        common gateway spellings are sent to maximise compatibility. Providers whose API rejects unknown
+        fields (Cloudflare) override this."""
+        if reasoning_effort:
+            return {"reasoning_effort": reasoning_effort, "reasoning": {"effort": reasoning_effort}}
+        return {"reasoning": {"enabled": False}}
+
     def _chat(self, system: Optional[str], user: str, temperature: float,
               mini: bool = False, model: Optional[str] = None, reasoning_effort: Optional[str] = None,
               stage: Optional[str] = None) -> str:
@@ -422,14 +435,7 @@ class OpenAIProvider:
         # disable hidden reasoning: reasoning tokens count against max_tokens, so
         # a long RTL/testbench can burn the whole budget and return no content.
         # (Observed: 8192/8192 tokens were reasoning, finish_reason="length".)
-        extra = {}
-        if reasoning_effort:
-            # For opencode models with variants, the suffix is primary; also try
-            # both common gateway spellings to maximize compatibility.
-            extra["reasoning_effort"] = reasoning_effort
-            extra["reasoning"] = {"effort": reasoning_effort}
-        else:
-            extra["reasoning"] = {"enabled": False}
+        extra = self._extra_body(reasoning_effort, chosen)
         if extra:
             create_kwargs["extra_body"] = extra
         try:
@@ -632,10 +638,12 @@ class OpenCodeAppProvider(OpenAIProvider):
     def _chat(self, system: Optional[str], user: str, temperature: float,
               mini: bool = False, model: Optional[str] = None, reasoning_effort: Optional[str] = None,
               stage: Optional[str] = None) -> str:
-        override = model if (model and model != self.model) else None
+        # `deepseek-v4.1-flash-free` (LLM_MODEL) and `opencode/deepseek-v4.1-flash-free` (the menu) are one model.
+        override = model if (model and model_catalog.normalize_opencode_id(model) != model_catalog.normalize_opencode_id(self.model)) else None
         chosen = override or self.stage_models.get(stage or "") or self.model
-        if "/" not in chosen:
-            chosen = f"opencode/{chosen}"
+        chosen = model_catalog.normalize_opencode_id(chosen)
+        if not model_catalog.is_valid_model_id(chosen):    # becomes an argument of `opencode run -m`: never a flag
+            raise ModelNotAvailable("That model name is not valid.")
         logger.info("llm stage=%s model=%s", stage or "-", chosen)
         message = f"{system}\n\n{user}" if system else user
         cmd = ["opencode", "run", "-m", chosen, "--agent", self.agent,
@@ -671,6 +679,23 @@ class OpenCodeAppProvider(OpenAIProvider):
         if not content:
             raise LLMUpstreamError(f"LLM_UPSTREAM:EmptyContent: opencode model={chosen} returned no text")
         return content
+
+
+class CloudflareProvider(OpenAIProvider):
+    """Cloudflare Workers AI through its OpenAI-compatible endpoint (/accounts/{id}/ai/v1/chat/completions).
+
+    Same chat code as every other OpenAI-compatible provider; the differences are the account-scoped base
+    URL, the Bearer API token, no `reasoning` request field (Workers AI is strict about unknown fields), and
+    no per-stage model routing (LLM_MODEL_<STAGE> names OpenCode models, which Cloudflare does not know).
+    """
+
+    def __init__(self, account_id: str, token: str, model: str = model_catalog.DEFAULT_CLOUDFLARE_MODEL):
+        super().__init__(api_key=token, base_url=model_catalog.cloudflare_base_url(account_id), model=model, name="cloudflare")
+        self.stage_models = {}
+
+    def _extra_body(self, reasoning_effort: Optional[str], chosen: str) -> dict:
+        # Only the gpt-oss models document a reasoning effort; every other model gets a plain request.
+        return {"reasoning_effort": reasoning_effort} if reasoning_effort and "gpt-oss" in chosen else {}
 
 
 class OfflineProvider:
@@ -835,11 +860,47 @@ _provider = _make_provider()
 _offline_provider = _provider if isinstance(_provider, OfflineProvider) else OfflineProvider()
 
 
-def get_provider():
+_cloudflare_cache: dict = {}
+
+
+def _cloudflare_provider() -> "CloudflareProvider":
+    cfg = model_catalog.cloudflare_config()
+    if cfg is None:
+        raise ModelNotAvailable("Cloudflare is not set up. Start the backend with CLOUDFLARE_ACCOUNT_ID and "
+                                "CLOUDFLARE_API_TOKEN set, or pick an OpenCode model.")
+    if _cloudflare_cache.get("key") != cfg:                       # rebuilt only if the credentials change
+        _cloudflare_cache["key"] = cfg
+        _cloudflare_cache["provider"] = CloudflareProvider(*cfg)
+    return _cloudflare_cache["provider"]
+
+
+def get_provider(model: Optional[str] = None):
+    """The provider that serves *model*: Cloudflare for `@cf/...` ids, otherwise the configured provider."""
     # Dynamic check: OFFLINE_MODE=1 must always force offline even if _provider was cached as zen
     if _is_offline_env():
         return _offline_provider
+    if model and model_catalog.is_cloudflare_id(model):
+        return _cloudflare_provider()
     return _provider
+
+
+def current_model_id() -> Optional[str]:
+    """The configured model as the model menu spells it (`opencode/<name>` for the OpenCode app)."""
+    current = current_model()
+    if current and isinstance(_provider, OpenCodeAppProvider):
+        return model_catalog.normalize_opencode_id(current)
+    return current
+
+
+def is_default_model(model: Optional[str]) -> bool:
+    """True when *model* is absent or is the configured model (spelled with or without the `opencode/` prefix)."""
+    if not model:
+        return True
+    current = current_model()
+    if not current:
+        return False
+    return model_catalog.normalize_opencode_id(model) == model_catalog.normalize_opencode_id(current) \
+        if isinstance(_provider, OpenCodeAppProvider) else model == current
 
 
 def is_offline() -> bool:
@@ -891,42 +952,61 @@ def current_model() -> Optional[str]:
     return getattr(prov, "model", None) if not is_offline() else None
 
 
-def list_models() -> dict:
-    """Models the user can choose for generation.
+def list_models(include_paid: bool = False, refresh: bool = False) -> dict:
+    """Models the user can choose for generation, grouped by where they run.
 
-    The configured provider's model is authoritative. Listing curated Zen/NVIDIA
-    IDs while a custom OpenAI-compatible gateway (e.g. OpenRouter) is active made
-    the UI send an unusable model name, which then triggered a silent degraded
-    fallback. If the configured model is not in the curated catalog, expose only
-    that model so the UI cannot select an incompatible one.
+    * The OpenCode app (LLM_PROVIDER=opencode-app): every model `opencode models` reports. Models whose name
+      says free come first; the rest are listed only with include_paid (they may use credits on the account;
+      their price is not known from here, so they are never called "paid" for certain).
+    * Any other configured provider: the curated list, or only the configured model (an unusable name sent
+      by the UI used to trigger a silent degraded fallback).
+    * Cloudflare Workers AI: its models when CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN are set.
+    The reply keeps the older keys (offline, current, models, stage_models) and adds `providers` and `paid_hidden`.
     """
     if is_offline():
-        return {"offline": True, "current": "offline", "models": [
+        return {"offline": True, "current": "offline", "providers": [], "paid_hidden": 0, "models": [
             {"id": "offline", "label": "Offline Demo", "note": "Scripted designs, no LLM", "tag": "fast"},
         ]}
     current = current_model()
-    curated_ids = {m["id"] for m in CURATED_MODELS}
-    if current and current not in curated_ids:
-        models = [{
-            "id": current,
-            "label": current.split("/")[-1],
-            "note": "Configured provider model",
-            "tag": "balanced",
-            "thinking_levels": [],
-            "reasoning": False,
-        }]
+    prov = get_provider()
+    hidden = 0
+    if isinstance(prov, OpenCodeAppProvider):
+        current_id = model_catalog.normalize_opencode_id(current) if current else None
+        catalog = model_catalog.opencode_models(refresh)
+        models = [m for m in catalog if m["free"] or include_paid or m["id"] == current_id]
+        hidden = len(catalog) - len(models)
+        if current_id and not any(m["id"] == current_id for m in models):       # configured but not in the app's list
+            models.insert(0, {"id": current_id, "label": current_id.split("/", 1)[-1], "provider": "opencode", "group": "OpenCode",
+                              "free": None, "note": "Configured model", "tag": "balanced", "thinking_levels": [], "reasoning": False})
+        models.sort(key=lambda m: 0 if m["id"] == current_id else 1)             # stable: the configured model first
+        current = current_id
     else:
-        models = [dict(m) for m in CURATED_MODELS]
-        if current:
-            models.sort(key=lambda m: 0 if m["id"] == current else 1)
+        curated_ids = {m["id"] for m in CURATED_MODELS}
+        if current and current not in curated_ids:
+            models = [{"id": current, "label": current.split("/")[-1], "note": "Configured provider model", "tag": "balanced",
+                       "thinking_levels": [], "reasoning": False}]
+        else:
+            models = [dict(m) for m in CURATED_MODELS]
+            if current:
+                models.sort(key=lambda m: 0 if m["id"] == current else 1)
+        for m in models:
+            m.setdefault("provider", "opencode")
+            m.setdefault("group", "Models")
+            m.setdefault("free", None)
+    providers = [{"id": "opencode", "label": "OpenCode", "available": bool(models), "count": len(models),
+                  "hint": None if models else "No models were found. Is the OpenCode app installed and signed in?"}]
+    cf = model_catalog.cloudflare_status(refresh)
+    providers.append({"id": "cloudflare", "label": "Cloudflare", "available": cf["available"], "count": len(cf["models"]), "hint": cf["hint"]})
+    models = models + cf["models"]
     # Per-stage overrides (LLM_MODEL_TESTBENCH etc.) that differ from the default model. A request that
     # explicitly picks another model in the UI overrides them, so say where they apply.
-    stage = {s: m for s, m in (getattr(get_provider(), "stage_models", None) or {}).items() if m and m != current}
+    stage = {s: m for s, m in (getattr(prov, "stage_models", None) or {}).items() if m and m != current}
     if stage.get("testbench"):
         for m in models:
             if m["id"] == current:
                 m["note"] = f"{m['note']} · testbench written by {stage['testbench']}"
-    return {"offline": False, "current": current, "models": models, "stage_models": stage}
+    return {"offline": False, "current": current, "models": models, "stage_models": stage,
+            "providers": providers, "paid_hidden": hidden}
 
 
 # --------------------------------------------------------------------------- #
@@ -935,7 +1015,7 @@ def list_models() -> dict:
 # reasoning_effort is actual (low/medium/high/xhigh) for models with variants, not fake.
 # --------------------------------------------------------------------------- #
 def parse_intent(prompt: str, model: Optional[str] = None, reasoning_effort: Optional[str] = None) -> RTLDesignSpec:
-    prov = get_provider()
+    prov = get_provider(model)
     if isinstance(prov, OfflineProvider):
         prov._buggy = od.is_buggy_request(prompt)
     try:
@@ -948,7 +1028,7 @@ def parse_intent(prompt: str, model: Optional[str] = None, reasoning_effort: Opt
 
 def generate_rtl(spec: RTLDesignSpec, freq_hint: Optional[int] = None,
                  model: Optional[str] = None, reasoning_effort: Optional[str] = None) -> str:
-    prov = get_provider()
+    prov = get_provider(model)
     try:
         return prov.generate_rtl(spec, freq_hint, model=model, reasoning_effort=reasoning_effort)
     except TypeError as e:
@@ -958,7 +1038,7 @@ def generate_rtl(spec: RTLDesignSpec, freq_hint: Optional[int] = None,
 
 
 def generate_testbench(rtl_code: str, spec: RTLDesignSpec, model: Optional[str] = None, reasoning_effort: Optional[str] = None) -> str:
-    prov = get_provider()
+    prov = get_provider(model)
     try:
         return prov.generate_testbench(rtl_code, spec, model=model, reasoning_effort=reasoning_effort)
     except TypeError as e:
@@ -968,7 +1048,7 @@ def generate_testbench(rtl_code: str, spec: RTLDesignSpec, model: Optional[str] 
 
 
 def explain_design(rtl_code: str, spec: RTLDesignSpec, model: Optional[str] = None, reasoning_effort: Optional[str] = None) -> str:
-    prov = get_provider()
+    prov = get_provider(model)
     try:
         return prov.explain_design(rtl_code, spec, model=model, reasoning_effort=reasoning_effort)
     except TypeError as e:
@@ -980,7 +1060,7 @@ def explain_design(rtl_code: str, spec: RTLDesignSpec, model: Optional[str] = No
 def fix_design(rtl_code: str, tb_code: str, log: str, model: Optional[str] = None,
                reasoning_effort: Optional[str] = None,
                spec: Optional[RTLDesignSpec] = None) -> dict:
-    prov = get_provider()
+    prov = get_provider(model)
     try:
         return prov.fix_design(rtl_code, tb_code, log, model=model,
                                reasoning_effort=reasoning_effort, spec=spec)

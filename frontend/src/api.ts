@@ -31,8 +31,12 @@ export async function getStatus(): Promise<{ provider: string; offline: boolean;
   return r.json()
 }
 
-export async function getModels(): Promise<ModelsResponse> {
-  const r = await fetch(`${BASE}/api/models`)
+export async function getModels(opts: { includePaid?: boolean; refresh?: boolean } = {}): Promise<ModelsResponse> {
+  // Only non-default options go in the query, so the default request stays a plain /api/models.
+  const q = new URLSearchParams()
+  if (opts.includePaid) q.set('include_paid', 'true')
+  if (opts.refresh) q.set('refresh', 'true')
+  const r = await fetch(`${BASE}/api/models${q.size ? `?${q}` : ''}`)
   if (!r.ok) throw new Error(`models failed: ${r.status} ${await r.text().catch(() => '')}`.trim())
   return r.json()
 }

@@ -5,12 +5,31 @@ export interface ModelInfo {
   tag: 'accurate' | 'balanced' | 'fast' | string
   thinking_levels?: string[]
   reasoning?: boolean
+  /** 'opencode' | 'opencode-go' | 'nvidia' | 'openrouter' | 'cloudflare' | other */
+  provider?: string
+  /** Label for the <optgroup>, e.g. 'OpenCode', 'OpenCode Go', 'Cloudflare Workers AI' */
+  group?: string
+  /** true = free to use, false = paid, null/undefined = unknown */
+  free?: boolean | null
+}
+
+export interface ProviderInfo {
+  /** 'opencode' | 'cloudflare' */
+  id: string
+  label: string
+  available: boolean
+  /** What to do when not available */
+  hint?: string | null
+  count: number
 }
 
 export interface ModelsResponse {
   offline: boolean
   current: string | null
   models: ModelInfo[]
+  providers?: ProviderInfo[]
+  paid_hidden?: number
+  stage_models?: Record<string, string>
 }
 
 export interface PortSpec {
@@ -237,6 +256,8 @@ export interface RunResponse {
   verification_warning?: string | null
   strength?: StrengthReport | null
   timing?: TimingReport | null
+  /** The model that wrote the design (`provider/name`), or 'offline demo'. */
+  model?: string | null
 }
 
 export interface ProjectSummary {

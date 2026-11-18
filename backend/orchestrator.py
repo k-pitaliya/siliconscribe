@@ -322,9 +322,17 @@ def pipeline_events(
     reasoning_effort: Optional[str] = None,
 ) -> Iterator[dict]:
     """Yield {stage, ...} events as the pipeline runs."""
-    model_label = model or "default"
+    model_label = model or llm_service.current_model_id() or "default"
+    try:
+        # Only a Cloudflare id needs the routed lookup; everything else is the configured provider.
+        provider_name = (llm_service.get_provider(model) if llm_service.model_catalog.is_cloudflare_id(model)
+                         else llm_service.get_provider()).name
+    except llm_service.ModelNotAvailable:       # Cloudflare chosen but not set up: the first call reports it
+        provider_name = "cloudflare"
     yield {"stage": "start",
-           "message": f"Parsing requirement (provider: {llm_service.get_provider().name}, model: {model_label})..."}
+           "message": f"Parsing requirement (provider: {provider_name}, model: {model_label})..."}
+    # A model the user deliberately picked is never silently replaced by the scripted offline demo.
+    explicit_model = bool(model) and not llm_service.is_default_model(model)
 
     # Systematic fallback state: local to this pipeline run, never mutates global singleton
     use_offline = False
@@ -404,6 +412,8 @@ def pipeline_events(
                 raise RuntimeError(
                     f"LLM became unavailable mid-run at '{fn_name}': {str(e)[:300]}"
                 ) from e
+            if explicit_model:
+                raise RuntimeError(_chosen_model_problem(model, e)) from e
             logger.warning("LLM upstream failed at %s, falling back to offline: %s",
                            fn_name, str(e)[:500])
             use_offline = True
@@ -779,6 +789,7 @@ def pipeline_events(
             verification_warning=warning_text,
             strength=strength,
             timing=timing,
+            model=("offline demo" if use_offline else _model_used(model)),
         )
         yield {"stage": "done", "status": result.status,
                "message": _final_message(result, iteration),
@@ -793,6 +804,29 @@ def pipeline_events(
 
 _QUOTA_HINTS = ("free usage limit", "free-limit", "freeusagelimit", "rate limit", "quota")
 _TIMEOUT_HINTS = ("timeout", "timed out")
+
+
+def _model_used(model: Optional[str]) -> Optional[str]:
+    """The model that wrote the design, spelled the way the model menu spells it."""
+    if model and not llm_service.is_default_model(model):
+        return model
+    return llm_service.current_model_id()
+
+
+def _chosen_model_problem(model: Optional[str], e: Exception) -> str:
+    """Why the model the user picked did not work, and what to do. Short, plain, no provider internals."""
+    low = str(e).lower()
+    if any(h in low for h in _QUOTA_HINTS):
+        why = "its usage limit has been reached"
+    elif any(h in low for h in _TIMEOUT_HINTS):
+        why = "it did not answer in time"
+    elif any(h in low for h in ("401", "403", "unauthor", "forbidden", "authentication", "api key", "token")):
+        why = "the provider did not accept the credentials or the model is not available to this account"
+    elif any(h in low for h in ("404", "not found", "unknown model", "does not exist")):
+        why = "the provider does not know this model"
+    else:
+        why = "the provider returned an error"
+    return f"The model you chose ({model}) could not be used: {why}. Pick another model from the Model menu."
 
 
 def _user_facing_error(e: Exception) -> str:
@@ -810,7 +844,7 @@ def _user_facing_error(e: Exception) -> str:
                     "the reset, or switch to the offline demo.")
         if any(h in low for h in _TIMEOUT_HINTS):
             return ("The AI model did not answer in time. Free models can take minutes per step: try again, "
-                    "or raise LLM_TIMEOUT_SECONDS.")
+                    "pick another model from the Model menu, or raise LLM_TIMEOUT_SECONDS.")
         return "The AI provider became unavailable mid-run. Please try again in a moment."
     if not raw or len(raw) > 300:
         return "Internal server error"   # never leak stack text or long internal detail to the client

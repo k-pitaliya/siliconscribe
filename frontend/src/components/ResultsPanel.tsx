@@ -16,6 +16,8 @@ interface Props {
   synthesis?: SynthesisInfo | null
   strength?: StrengthReport | null
   timing?: TimingReport | null
+  /** The model that wrote the design, so a result is never attributed to the wrong one after switching models. */
+  model?: string | null
   lint?: LintInfo | null
   /** True when the shown result came from the built-in demo, not a live model. */
   degraded?: boolean
@@ -38,7 +40,7 @@ const TAB_META: Record<Tab, { label: string; Icon: typeof Activity }> = {
 }
 
 export default function ResultsPanel({
-  result, waveform, schematic, history, iterations, synthesis, strength, timing, lint, degraded, warning, design, tabRequest, onTabChange,
+  result, waveform, schematic, history, iterations, synthesis, strength, timing, model, lint, degraded, warning, design, tabRequest, onTabChange,
 }: Props) {
   // Depend on whether there IS a design tab, not on the element itself: the element is new on every
   // render, and re-running the request effect each render would override the user's own tab clicks.
@@ -114,7 +116,7 @@ export default function ResultsPanel({
         {tab === 'results' && (
           <div className="tab-panel padded" role="tabpanel" id="panel-results" aria-labelledby="tab-results">
             <ResultsView result={result} history={history} iterations={iterations} synthesis={synthesis} strength={strength} timing={timing}
-              lint={lint} degraded={degraded} warning={warning} onOpenTests={() => setTab('tests')} />
+              model={model} lint={lint} degraded={degraded} warning={warning} onOpenTests={() => setTab('tests')} />
           </div>
         )}
         {tab === 'tests' && (
@@ -142,7 +144,7 @@ export default function ResultsPanel({
 }
 
 function ResultsView({
-  result, history, iterations, synthesis, strength, timing, lint, degraded, warning, onOpenTests,
+  result, history, iterations, synthesis, strength, timing, model, lint, degraded, warning, onOpenTests,
 }: {
   result: SimulationResult | null
   history: IterationRecord[]
@@ -150,6 +152,7 @@ function ResultsView({
   synthesis?: SynthesisInfo | null
   strength?: StrengthReport | null
   timing?: TimingReport | null
+  model?: string | null
   lint?: LintInfo | null
   degraded?: boolean
   warning?: string
@@ -184,6 +187,9 @@ function ResultsView({
         <Metric label="Failed" value={String(result.fail_count)} tone={result.fail_count ? 'bad' : undefined} />
         <Metric label="Pass rate" value={passRate != null ? `${passRate}%` : '—'} tone={passTone} />
       </div>
+      {model && model !== 'offline demo' && (
+        <div className="model-used muted" data-testid="model-used">Written by <span className="mono">{model}</span></div>
+      )}
 
       {degraded && (
         <div className="notice demo-tag" role="note" data-testid="demo-result-tag">

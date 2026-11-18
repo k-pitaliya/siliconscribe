@@ -11,6 +11,7 @@ import type {
   LintInfo,
   ModelInfo,
   ProjectSummary,
+  ProviderInfo,
   RunResponse,
   Schematic,
   SimulationResult,
@@ -20,11 +21,25 @@ import type {
   Waveform,
 } from './types'
 
+/** localStorage that never throws (private windows, blocked storage). */
+function readStored(key: string): string | null {
+  try { return window.localStorage.getItem(key) } catch { return null }
+}
+function writeStored(key: string, value: string): void {
+  try { window.localStorage.setItem(key, value) } catch { /* the choice just is not remembered */ }
+}
+
 export default function App() {
   const [provider, setProvider] = useState<{ provider: string; offline: boolean } | null>(null)
   const [models, setModels] = useState<ModelInfo[]>([])
   const [selectedModel, setSelectedModel] = useState<string>('')
   const [selectedThinking, setSelectedThinking] = useState<string>('')
+  const [providers, setProviders] = useState<ProviderInfo[]>([])
+  const [paidHidden, setPaidHidden] = useState(0)
+  const [includePaid, setIncludePaid] = useState<boolean>(() => readStored('ss-include-paid') === 'true')
+  const [refreshingModels, setRefreshingModels] = useState(false)
+  const [usedModel, setUsedModel] = useState<string | null>(null)
+  const selectedModelRef = useRef('')
   const [running, setRunning] = useState(false)
 
   const [rtl, setRtl] = useState('')
@@ -56,21 +71,25 @@ export default function App() {
   const abortRef = useRef<AbortController | null>(null)
   const lastNoticeRef = useRef<string>('')
 
-  useEffect(() => {
+  selectedModelRef.current = selectedModel
+
+  // Reads the model menu (OpenCode's list and Cloudflare). The current choice is kept when it is still offered; on first
+  // load the last remembered choice is restored if it is offered; otherwise the server's default model is used.
+  function loadModels(refresh = false) {
+    if (refresh) setRefreshingModels(true)
     // /api/models already carries provider + offline state; getStatus() would
     // fetch the same endpoint a second time and could overwrite a newer result.
-    getModels()
+    return getModels({ includePaid, refresh })
       .then((m) => {
         setModels(m.models)
-        const firstId = m.current ?? m.models[0]?.id ?? ''
-        setSelectedModel(firstId)
-        // Set default thinking level for first model (if it has variants)
-        const firstModel = m.models.find(x => x.id === firstId)
-        if (firstModel?.thinking_levels && firstModel.thinking_levels.length > 0) {
-          // Default to middle level or first
-          const levels = firstModel.thinking_levels
-          setSelectedThinking(levels[Math.floor(levels.length / 2)] || levels[0])
-        }
+        setProviders(m.providers ?? [])
+        setPaidHidden(m.paid_hidden ?? 0)
+        const offered = (id: string | null | undefined) => !!id && m.models.some((x) => x.id === id)
+        const pick = [selectedModelRef.current, readStored('ss-model')].find(offered) ?? m.current ?? m.models[0]?.id ?? ''
+        setSelectedModel(pick)
+        // Default thinking level for a model that has variants (middle one), none otherwise
+        const levels = m.models.find((x) => x.id === pick)?.thinking_levels ?? []
+        setSelectedThinking(levels.length > 0 ? (levels[Math.floor(levels.length / 2)] || levels[0]) : '')
         // Always sync provider from models (live zen or offline) — fixes Vercel getStatus HTML vs /api/models Live mismatch
         if (m.offline) {
           setProvider({ provider: 'offline', offline: true })
@@ -84,8 +103,23 @@ export default function App() {
         setSelectedModel('offline')
         setProvider({ provider: 'offline', offline: true })
       })
-    refreshProjects()
-  }, [])
+      .finally(() => setRefreshingModels(false))
+  }
+
+  useEffect(() => { loadModels() }, [includePaid]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { refreshProjects() }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  /** The user picked a model in the menu: use it, remember it, and set a sensible thinking level for it. */
+  function chooseModel(id: string) {
+    setSelectedModel(id)
+    writeStored('ss-model', id)
+    const m = models.find((x) => x.id === id)
+    if (m?.thinking_levels && m.thinking_levels.length > 0) {
+      setSelectedThinking(m.thinking_levels[Math.floor(m.thinking_levels.length / 2)] || m.thinking_levels[0])
+    } else {
+      setSelectedThinking('')
+    }
+  }
 
   useEffect(() => {
     if (!showProjects) return undefined
@@ -124,6 +158,7 @@ export default function App() {
     setSynthesis(null)
     setStrength(null)
     setTiming(null)
+    setUsedModel(null)
     setLintInfo(null)
     setFallbackNotice('')
     setVerificationWarning('')
@@ -182,6 +217,7 @@ export default function App() {
             if (r.synthesis) setSynthesis(r.synthesis)
             setStrength(r.strength ?? null)
             setTiming(r.timing ?? null)
+            setUsedModel(r.model ?? null)
             if (r.fallback_notice) setFallbackNotice(r.fallback_notice)
             setVerificationWarning(r.verification_warning ?? '')
             refreshProjects()
@@ -225,6 +261,7 @@ export default function App() {
       setIterations(0)
       setStrength(null) // scored the previous code, not what was just re-run
       setTiming(null) // timed the previous code
+      setUsedModel(null) // the edited code is not what the model wrote
       setVerificationWarning('')
       // From the editor, show the new verdict; anywhere else (waveform, test cases) stay where the user is looking.
       if (currentTab.current === 'design') showTab('results')
@@ -288,6 +325,7 @@ export default function App() {
       setSynthesis(proj.synthesis ?? null)
       setStrength(proj.strength ?? null)
       setTiming(proj.timing ?? null)
+      setUsedModel(proj.model ?? null)
       setFallbackNotice(proj.fallback_notice ?? '')
       setVerificationWarning(proj.verification_warning ?? '')
       pushMsg({ role: 'ai', text: `Loaded project ${proj.rtl_spec.module_name}`, stage: 'done', status: proj.status })
@@ -401,15 +439,13 @@ export default function App() {
             running={running}
             models={models}
             selectedModel={selectedModel}
-            onModelChange={(id) => {
-              setSelectedModel(id)
-              const m = models.find((x) => x.id === id)
-              if (m?.thinking_levels && m.thinking_levels.length > 0) {
-                setSelectedThinking(m.thinking_levels[Math.floor(m.thinking_levels.length / 2)] || m.thinking_levels[0])
-              } else {
-                setSelectedThinking('')
-              }
-            }}
+            onModelChange={chooseModel}
+            providers={providers}
+            paidHidden={paidHidden}
+            includePaid={includePaid}
+            onIncludePaidChange={(v) => { setIncludePaid(v); writeStored('ss-include-paid', String(v)) }}
+            onRefreshModels={() => { void loadModels(true) }}
+            refreshingModels={refreshingModels}
             selectedThinking={selectedThinking}
             onThinkingChange={setSelectedThinking}
             offline={provider?.offline ?? false}
@@ -430,6 +466,7 @@ export default function App() {
           synthesis={synthesis}
           strength={strength}
           timing={timing}
+          model={usedModel}
           lint={lintInfo}
           degraded={!!fallbackNotice}
           warning={verificationWarning}

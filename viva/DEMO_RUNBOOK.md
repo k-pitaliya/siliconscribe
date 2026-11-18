@@ -46,6 +46,7 @@ Open http://127.0.0.1:5173. The top-right badge must say **Live · deepseek-v4.1
 | Problem | What to do | What to say |
 |---|---|---|
 | Live run is slow | Keep talking over the timeline; switch to the loaded result | "Free models can take minutes; the timer shows it is working." |
+| The model stalls or says it could not be used | Pick another free model in the **Model** menu (for example `hy4-flash-free` or `beam-free`) and run again; Cloudflare is the second tab if it is set up | "Free models vary; the menu lists every one the OpenCode app offers." |
 | Live run errors or quota is out | Projects, Load the saved result | "This is a saved live run from earlier." |
 | Backend will not start with the live model | `OFFLINE_MODE=1` with the same uvicorn command (then the "buggy 4-bit counter" chip is scripted and shows a failure and a repair) | "This is the scripted offline demo; the badge says so." |
 | Everything fails | Open `backend/evaluation/summary.md` and `artifacts/` | "These are the recorded live results." |

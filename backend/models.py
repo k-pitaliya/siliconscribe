@@ -65,7 +65,7 @@ class GenerateRequest(BaseModel):
     prompt: str = Field(..., max_length=2000, description="Natural language design prompt")
     include_testbench: bool = Field(True, description="Generate testbench along with RTL")
     target_frequency_mhz: Optional[int] = Field(None, ge=1, le=10000, description="Target clock frequency hint")
-    model: Optional[str] = Field(None, max_length=100, description="Override LLM model for this request")
+    model: Optional[str] = Field(None, max_length=100, pattern=r"^[A-Za-z0-9@][A-Za-z0-9._:/@+-]{0,99}$", description="Override LLM model for this request")
     reasoning_effort: Optional[Literal["low", "medium", "high", "xhigh", "max"]] = Field(
         None, description="Thinking level / reasoning effort for the model (actual, not display). Only for models that support it."
     )
@@ -242,7 +242,7 @@ class RunRequest(BaseModel):
     self_correct: bool = Field(True, description="Enable auto-fix loop")
     max_iterations: int = Field(5, ge=0, le=10, description="Max self-correction iterations")
     timeout_seconds: int = Field(30, ge=1, le=120, description="Per-simulation timeout")
-    model: Optional[str] = Field(None, max_length=100, description="Override LLM model for this run")
+    model: Optional[str] = Field(None, max_length=100, pattern=r"^[A-Za-z0-9@][A-Za-z0-9._:/@+-]{0,99}$", description="Override LLM model for this run")
     reasoning_effort: Optional[Literal["low", "medium", "high", "xhigh", "max"]] = Field(
         None, description="Thinking level / reasoning effort (actual, model-specific). Only for models with variants."
     )
@@ -313,6 +313,7 @@ class RunResponse(BaseModel):
     verification_warning: Optional[str] = None
     strength: Optional[StrengthReport] = None
     timing: Optional[TimingReport] = None
+    model: Optional[str] = None             # the model that wrote the design (`provider/name`), so a switched model is visible
 
 
 class SynthesisRequest(BaseModel):
@@ -344,7 +345,7 @@ class UVMExportRequest(BaseModel):
         description="Optional override for DUT module name (valid Verilog identifier)",
     )
     target_frequency_mhz: Optional[int] = Field(None, ge=1, le=10000, description="Optional clock hint, unused for UVM but kept for parity")
-    model: Optional[str] = Field(None, max_length=100, description="Optional LLM model override")
+    model: Optional[str] = Field(None, max_length=100, pattern=r"^[A-Za-z0-9@][A-Za-z0-9._:/@+-]{0,99}$", description="Optional LLM model override")
     reasoning_effort: Optional[Literal["low", "medium", "high", "xhigh", "max"]] = Field(
         None, description="Thinking level / reasoning effort (actual, model-specific)."
     )

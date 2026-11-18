@@ -175,9 +175,16 @@ async def health():
 
 
 @app.get("/api/models")
-async def get_models():
-    """List the models the user can choose for generation (empty when offline)."""
-    return llm_service.list_models()
+def get_models(req: Request, include_paid: bool = False, refresh: bool = False):
+    """Models the user can choose for generation: the OpenCode app's list and Cloudflare Workers AI.
+
+    `include_paid` also lists the models not marked free (they may use credits). `refresh` re-reads both
+    catalogues instead of the cache, and is rate limited because it calls out. A plain `def`: listing can
+    wait on a subprocess and on the network, which must not block the event loop.
+    """
+    if refresh:
+        _check_rate_limit(_get_client_ip(req))
+    return llm_service.list_models(include_paid=include_paid, refresh=refresh)
 
 
 @app.post("/api/design/run", response_model=RunResponse)

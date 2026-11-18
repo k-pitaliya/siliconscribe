@@ -1,6 +1,7 @@
 import { useState, type KeyboardEvent, type ReactNode } from 'react'
 import { LoaderCircle } from 'lucide-react'
-import type { ModelInfo } from '../types'
+import ModelPicker from './ModelPicker'
+import type { ModelInfo, ProviderInfo } from '../types'
 
 // Short chip label, full prompt that it fills in.
 const EXAMPLES: [string, string][] = [
@@ -18,6 +19,14 @@ interface Props {
   models: ModelInfo[]
   selectedModel: string
   onModelChange: (id: string) => void
+  /** OpenCode / Cloudflare availability, from /api/models. */
+  providers?: ProviderInfo[]
+  /** Models not marked free that the list is hiding. */
+  paidHidden?: number
+  includePaid?: boolean
+  onIncludePaidChange?: (v: boolean) => void
+  onRefreshModels?: () => void
+  refreshingModels?: boolean
   selectedThinking?: string
   onThinkingChange?: (level: string) => void
   offline: boolean
@@ -26,7 +35,8 @@ interface Props {
 }
 
 export default function PromptPanel({
-  onGenerate, running, models, selectedModel, onModelChange, selectedThinking, onThinkingChange, offline, children,
+  onGenerate, running, models, selectedModel, onModelChange, providers = [], paidHidden = 0, includePaid = false,
+  onIncludePaidChange, onRefreshModels, refreshingModels = false, selectedThinking, onThinkingChange, offline, children,
 }: Props) {
   const [prompt, setPrompt] = useState('')
   const [freq, setFreq] = useState(100)
@@ -115,22 +125,31 @@ export default function PromptPanel({
 
       <div className="side-section settings-grid">
         <div>
-          <label className="field-label" htmlFor="model-select" id="model-select-label">Model</label>
           {offline ? (
-            <div className="model-offline" role="status" aria-live="polite">
-              Offline demo: scripted designs, no AI model. Configure a provider to generate live.
-            </div>
-          ) : models.length === 0 ? (
-            <div className="model-offline" role="status">No models available.</div>
-          ) : (
             <>
-              <select id="model-select" value={selectedModel} onChange={(e) => onModelChange(e.target.value)} disabled={running}>
-                {models.map((m) => (
-                  <option key={m.id} value={m.id}>{m.label}</option>
-                ))}
-              </select>
-              {activeModel?.note && <div className="model-note" aria-live="polite">{activeModel.note}</div>}
+              <div className="field-label">Model</div>
+              <div className="model-offline" role="status" aria-live="polite">
+                Offline demo: scripted designs, no AI model. Configure a provider to generate live.
+              </div>
             </>
+          ) : models.length === 0 ? (
+            <>
+              <div className="field-label">Model</div>
+              <div className="model-offline" role="status">No models available.</div>
+            </>
+          ) : (
+            <ModelPicker
+              models={models}
+              providers={providers}
+              selectedModel={selectedModel}
+              onModelChange={onModelChange}
+              includePaid={includePaid}
+              onIncludePaidChange={onIncludePaidChange ?? (() => {})}
+              paidHidden={paidHidden}
+              onRefresh={onRefreshModels ?? (() => {})}
+              refreshing={refreshingModels}
+              disabled={running}
+            />
           )}
         </div>
 
