@@ -5,15 +5,18 @@ import CodeEditor from './components/CodeEditor'
 import ResultsPanel, { type Tab } from './components/ResultsPanel'
 import AgentChat, { type ChatMessage } from './components/AgentChat'
 import { useTheme } from './theme'
-import { getModels, streamDesign, reSimulate, exportUVM, listProjects, deleteProject, getProject } from './api'
+import SpecReview from './components/SpecReview'
+import { getModels, parseSpec, streamDesign, reSimulate, exportUVM, listProjects, deleteProject, getProject } from './api'
 import type {
   IterationRecord,
   LintInfo,
   ModelInfo,
   ProjectSummary,
   ProviderInfo,
+  RTLDesignSpec,
   RunResponse,
   Schematic,
+  SecondOpinion,
   SimulationResult,
   StrengthReport,
   SynthesisInfo,
@@ -39,6 +42,13 @@ export default function App() {
   const [includePaid, setIncludePaid] = useState<boolean>(() => readStored('ss-include-paid') === 'true')
   const [refreshingModels, setRefreshingModels] = useState(false)
   const [usedModel, setUsedModel] = useState<string | null>(null)
+  const [testbenchModel, setTestbenchModel] = useState<string>(() => readStored('ss-tb-model') ?? '')
+  const [reviewSpec, setReviewSpec] = useState<boolean>(() => readStored('ss-review-spec') === 'true')
+  const [pendingSpec, setPendingSpec] = useState<{ prompt: string; freq: number; spec: RTLDesignSpec } | null>(null)
+  const [parsingSpec, setParsingSpec] = useState(false)
+  const [usedTbModel, setUsedTbModel] = useState<string | null>(null)
+  const [secondOpinion, setSecondOpinion] = useState<SecondOpinion | null>(null)
+  const [usedSpec, setUsedSpec] = useState<RTLDesignSpec | null>(null)
   const selectedModelRef = useRef('')
   const [running, setRunning] = useState(false)
 
@@ -83,6 +93,7 @@ export default function App() {
       .then((m) => {
         setModels(m.models)
         setProviders(m.providers ?? [])
+        setTestbenchModel((prev) => (prev && m.models.some((x) => x.id === prev) ? prev : ''))
         setPaidHidden(m.paid_hidden ?? 0)
         const offered = (id: string | null | undefined) => !!id && m.models.some((x) => x.id === id)
         const pick = [selectedModelRef.current, readStored('ss-model')].find(offered) ?? m.current ?? m.models[0]?.id ?? ''
@@ -147,7 +158,28 @@ export default function App() {
   const activeModelForThinking = models.find(m => m.id === selectedModel)
   const availableThinking = activeModelForThinking?.thinking_levels || []
 
+  /** Generate. With "review the specification" on, parse first and let the user read and edit it before anything is built. */
   async function handleGenerate(prompt: string, freq: number) {
+    if (running || parsingSpec) return
+    if (reviewSpec && !(provider?.offline ?? false)) {
+      setParsingSpec(true)
+      setMessages([])
+      pushMsg({ role: 'user', text: prompt })
+      try {
+        const thinking = availableThinking.includes(selectedThinking) ? selectedThinking : undefined
+        const spec = await parseSpec(prompt, selectedModel || undefined, thinking)
+        setPendingSpec({ prompt, freq, spec })
+      } catch (err) {
+        pushMsg({ role: 'ai', text: `Could not read the specification: ${(err as Error).message}`, stage: 'error' })
+      } finally {
+        setParsingSpec(false)
+      }
+      return
+    }
+    await startRun(prompt, freq)
+  }
+
+  async function startRun(prompt: string, freq: number, confirmedSpec?: RTLDesignSpec) {
     if (running) return
     setRunning(true)
     setResult(null)
@@ -159,6 +191,9 @@ export default function App() {
     setStrength(null)
     setTiming(null)
     setUsedModel(null)
+    setUsedTbModel(null)
+    setSecondOpinion(null)
+    setUsedSpec(null)
     setLintInfo(null)
     setFallbackNotice('')
     setVerificationWarning('')
@@ -182,10 +217,12 @@ export default function App() {
           max_iterations: 5,
           timeout_seconds: 30,
           model: selectedModel || undefined,
+          testbench_model: testbenchModel || undefined,
+          spec: confirmedSpec,
           reasoning_effort: thinkingToSend,
         },
         (e) => {
-          if (e.message && ['start', 'intent', 'rtl', 'testbench', 'explanation', 'simulate', 'fixing', 'fix', 'lint', 'synthesis', 'strength', 'timing', 'done', 'error'].includes(e.stage)) {
+          if (e.message && ['start', 'intent', 'rtl', 'testbench', 'explanation', 'simulate', 'fixing', 'fix', 'lint', 'synthesis', 'strength', 'timing', 'second_opinion', 'done', 'error'].includes(e.stage)) {
             pushMsg({ role: 'ai', text: e.message, stage: e.stage, status: e.status, diagnosis: e.diagnosis })
           }
           if (e.fallback_notice && e.fallback_notice !== lastNoticeRef.current) {
@@ -193,7 +230,8 @@ export default function App() {
             setFallbackNotice(e.fallback_notice)
             pushMsg({ role: 'ai', text: e.fallback_notice, stage: 'intent' })
           }
-          if (e.rtl_spec) setModuleName(e.rtl_spec.module_name)
+          if (e.rtl_spec) { setModuleName(e.rtl_spec.module_name); setUsedSpec(e.rtl_spec) }
+          if (e.second_opinion) setSecondOpinion(e.second_opinion)
           if (e.rtl_code) setRtl(e.rtl_code)
           if (e.testbench_code) setTb(e.testbench_code)
           if (e.explanation) setExplanation(e.explanation)
@@ -218,6 +256,9 @@ export default function App() {
             setStrength(r.strength ?? null)
             setTiming(r.timing ?? null)
             setUsedModel(r.model ?? null)
+            setUsedTbModel(r.independent_testbench ? (r.testbench_model ?? null) : null)
+            setSecondOpinion(r.second_opinion ?? null)
+            setUsedSpec(r.rtl_spec)
             if (r.fallback_notice) setFallbackNotice(r.fallback_notice)
             setVerificationWarning(r.verification_warning ?? '')
             refreshProjects()
@@ -262,6 +303,8 @@ export default function App() {
       setStrength(null) // scored the previous code, not what was just re-run
       setTiming(null) // timed the previous code
       setUsedModel(null) // the edited code is not what the model wrote
+      setUsedTbModel(null)
+      setSecondOpinion(null) // it judged the previous code
       setVerificationWarning('')
       // From the editor, show the new verdict; anywhere else (waveform, test cases) stay where the user is looking.
       if (currentTab.current === 'design') showTab('results')
@@ -326,6 +369,9 @@ export default function App() {
       setStrength(proj.strength ?? null)
       setTiming(proj.timing ?? null)
       setUsedModel(proj.model ?? null)
+      setUsedTbModel(proj.independent_testbench ? (proj.testbench_model ?? null) : null)
+      setSecondOpinion(proj.second_opinion ?? null)
+      setUsedSpec(proj.rtl_spec)
       setFallbackNotice(proj.fallback_notice ?? '')
       setVerificationWarning(proj.verification_warning ?? '')
       pushMsg({ role: 'ai', text: `Loaded project ${proj.rtl_spec.module_name}`, stage: 'done', status: proj.status })
@@ -436,7 +482,7 @@ export default function App() {
         <aside className="sidebar" aria-label="Design input and run">
           <PromptPanel
             onGenerate={handleGenerate}
-            running={running}
+            running={running || parsingSpec}
             models={models}
             selectedModel={selectedModel}
             onModelChange={chooseModel}
@@ -446,6 +492,10 @@ export default function App() {
             onIncludePaidChange={(v) => { setIncludePaid(v); writeStored('ss-include-paid', String(v)) }}
             onRefreshModels={() => { void loadModels(true) }}
             refreshingModels={refreshingModels}
+            testbenchModel={testbenchModel}
+            onTestbenchModelChange={(id) => { setTestbenchModel(id); writeStored('ss-tb-model', id) }}
+            reviewSpec={reviewSpec}
+            onReviewSpecChange={(v) => { setReviewSpec(v); writeStored('ss-review-spec', String(v)) }}
             selectedThinking={selectedThinking}
             onThinkingChange={setSelectedThinking}
             offline={provider?.offline ?? false}
@@ -454,23 +504,38 @@ export default function App() {
           </PromptPanel>
         </aside>
 
-        <ResultsPanel
-          design={design}
-          tabRequest={tabRequest}
-          onTabChange={(t) => { currentTab.current = t }}
-          result={result}
-          waveform={waveform}
-          schematic={schematic}
-          history={history}
-          iterations={iterations}
-          synthesis={synthesis}
-          strength={strength}
-          timing={timing}
-          model={usedModel}
-          lint={lintInfo}
-          degraded={!!fallbackNotice}
-          warning={verificationWarning}
-        />
+        {pendingSpec ? (
+          <main className="main-pane results-pane" aria-label="Workspace">
+          <SpecReview
+            key={`${pendingSpec.prompt}-${pendingSpec.spec.module_name}`}
+            spec={pendingSpec.spec}
+            busy={running}
+            onCancel={() => setPendingSpec(null)}
+            onConfirm={(confirmed) => { const p = pendingSpec; setPendingSpec(null); void startRun(p.prompt, p.freq, confirmed) }}
+          />
+          </main>
+        ) : (
+          <ResultsPanel
+            design={design}
+            tabRequest={tabRequest}
+            onTabChange={(t) => { currentTab.current = t }}
+            result={result}
+            waveform={waveform}
+            schematic={schematic}
+            history={history}
+            iterations={iterations}
+            synthesis={synthesis}
+            strength={strength}
+            timing={timing}
+            model={usedModel}
+            testbenchModel={usedTbModel}
+            secondOpinion={secondOpinion}
+            spec={usedSpec}
+            lint={lintInfo}
+            degraded={!!fallbackNotice}
+            warning={verificationWarning}
+          />
+        )}
       </div>
     </div>
   )

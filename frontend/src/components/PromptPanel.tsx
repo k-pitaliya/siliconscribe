@@ -1,6 +1,7 @@
 import { useState, type KeyboardEvent, type ReactNode } from 'react'
 import { LoaderCircle } from 'lucide-react'
 import ModelPicker from './ModelPicker'
+import TestbenchModelSelect from './TestbenchModelSelect'
 import type { ModelInfo, ProviderInfo } from '../types'
 
 // Short chip label, full prompt that it fills in.
@@ -27,6 +28,12 @@ interface Props {
   onIncludePaidChange?: (v: boolean) => void
   onRefreshModels?: () => void
   refreshingModels?: boolean
+  /** A different model to write the testbench ('' = the same model as the design). */
+  testbenchModel?: string
+  onTestbenchModelChange?: (id: string) => void
+  /** Show the parsed specification for review before anything is generated. */
+  reviewSpec?: boolean
+  onReviewSpecChange?: (v: boolean) => void
   selectedThinking?: string
   onThinkingChange?: (level: string) => void
   offline: boolean
@@ -36,7 +43,8 @@ interface Props {
 
 export default function PromptPanel({
   onGenerate, running, models, selectedModel, onModelChange, providers = [], paidHidden = 0, includePaid = false,
-  onIncludePaidChange, onRefreshModels, refreshingModels = false, selectedThinking, onThinkingChange, offline, children,
+  onIncludePaidChange, onRefreshModels, refreshingModels = false, testbenchModel = '', onTestbenchModelChange,
+  reviewSpec = false, onReviewSpecChange, selectedThinking, onThinkingChange, offline, children,
 }: Props) {
   const [prompt, setPrompt] = useState('')
   const [freq, setFreq] = useState(100)
@@ -152,6 +160,20 @@ export default function PromptPanel({
             />
           )}
         </div>
+
+        {!offline && models.length > 0 && (
+          <div>
+            {onTestbenchModelChange && (
+              <TestbenchModelSelect models={models} value={testbenchModel} onChange={onTestbenchModelChange} disabled={running} />
+            )}
+            {onReviewSpecChange && (
+              <label className="check" style={{ marginTop: 10 }}>
+                <input type="checkbox" checked={reviewSpec} onChange={(e) => onReviewSpecChange(e.target.checked)} disabled={running} />{' '}
+                Review the specification before generating
+              </label>
+            )}
+          </div>
+        )}
 
         {!offline && levels.length > 0 && onThinkingChange && (
           <div>

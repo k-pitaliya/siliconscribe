@@ -1,9 +1,10 @@
+import SpecSummary from './SpecSummary'
 import { useState, useCallback, useEffect, useMemo, type KeyboardEvent, type ReactNode } from 'react'
-import { Activity, ArrowUpDown, Timer, Bug, CircleCheck, CircleX, Cpu, FileCode, Info, ListChecks, Search, TriangleExclamationPoint, Workflow } from 'lucide-react'
+import { Activity, ArrowUpDown, Timer, Bug, CircleCheck, CircleX, Cpu, FileCode, Info, ListChecks, Search, TriangleExclamationPoint, Workflow , ShieldCheck } from 'lucide-react'
 import WaveformViewer, { type WaveformMarker } from './WaveformViewer'
 import TestCasesView from './TestCasesView'
 import SchematicView from './SchematicView'
-import type { IterationRecord, Schematic, SimulationResult, StrengthReport, TimingReport, UntoggledSignal, Waveform, SynthesisInfo, LintInfo } from '../types'
+import type { RTLDesignSpec, SecondOpinion, IterationRecord, Schematic, SimulationResult, StrengthReport, TimingReport, UntoggledSignal, Waveform, SynthesisInfo, LintInfo } from '../types'
 
 export type Tab = 'design' | 'results' | 'tests' | 'waveform' | 'schematic'
 
@@ -18,6 +19,12 @@ interface Props {
   timing?: TimingReport | null
   /** The model that wrote the design, so a result is never attributed to the wrong one after switching models. */
   model?: string | null
+  /** The separate model that wrote the testbench, when there was one. */
+  testbenchModel?: string | null
+  /** A fresh testbench's verdict after a repair rewrote the first one. */
+  secondOpinion?: SecondOpinion | null
+  /** The specification the design was built from. */
+  spec?: RTLDesignSpec | null
   lint?: LintInfo | null
   /** True when the shown result came from the built-in demo, not a live model. */
   degraded?: boolean
@@ -40,7 +47,7 @@ const TAB_META: Record<Tab, { label: string; Icon: typeof Activity }> = {
 }
 
 export default function ResultsPanel({
-  result, waveform, schematic, history, iterations, synthesis, strength, timing, model, lint, degraded, warning, design, tabRequest, onTabChange,
+  result, waveform, schematic, history, iterations, synthesis, strength, timing, model, testbenchModel, secondOpinion, spec, lint, degraded, warning, design, tabRequest, onTabChange,
 }: Props) {
   // Depend on whether there IS a design tab, not on the element itself: the element is new on every
   // render, and re-running the request effect each render would override the user's own tab clicks.
@@ -116,7 +123,7 @@ export default function ResultsPanel({
         {tab === 'results' && (
           <div className="tab-panel padded" role="tabpanel" id="panel-results" aria-labelledby="tab-results">
             <ResultsView result={result} history={history} iterations={iterations} synthesis={synthesis} strength={strength} timing={timing}
-              model={model} lint={lint} degraded={degraded} warning={warning} onOpenTests={() => setTab('tests')} />
+              model={model} testbenchModel={testbenchModel} secondOpinion={secondOpinion} spec={spec} lint={lint} degraded={degraded} warning={warning} onOpenTests={() => setTab('tests')} />
           </div>
         )}
         {tab === 'tests' && (
@@ -144,7 +151,7 @@ export default function ResultsPanel({
 }
 
 function ResultsView({
-  result, history, iterations, synthesis, strength, timing, model, lint, degraded, warning, onOpenTests,
+  result, history, iterations, synthesis, strength, timing, model, testbenchModel, secondOpinion, spec, lint, degraded, warning, onOpenTests,
 }: {
   result: SimulationResult | null
   history: IterationRecord[]
@@ -153,6 +160,9 @@ function ResultsView({
   strength?: StrengthReport | null
   timing?: TimingReport | null
   model?: string | null
+  testbenchModel?: string | null
+  secondOpinion?: SecondOpinion | null
+  spec?: RTLDesignSpec | null
   lint?: LintInfo | null
   degraded?: boolean
   warning?: string
@@ -188,7 +198,18 @@ function ResultsView({
         <Metric label="Pass rate" value={passRate != null ? `${passRate}%` : '—'} tone={passTone} />
       </div>
       {model && model !== 'offline demo' && (
-        <div className="model-used muted" data-testid="model-used">Written by <span className="mono">{model}</span></div>
+        <div className="model-used muted" data-testid="model-used">
+          Written by <span className="mono">{model}</span>
+          {testbenchModel && <>. Testbench written by <span className="mono">{testbenchModel}</span>, a separate model</>}
+        </div>
+      )}
+      {secondOpinion && (
+        <div className={`notice second-opinion ${secondOpinion.status === 'FAIL' ? 'weak-tag' : ''}`} role="note" data-testid="second-opinion">
+          <ShieldCheck size={16} aria-hidden="true" />{' '}
+          {secondOpinion.status === 'PASS' && <>Second opinion agrees: a fresh testbench, written from the same specification, passes all {secondOpinion.pass_count} of {secondOpinion.test_count} checks.</>}
+          {secondOpinion.status === 'FAIL' && <>Second opinion disagrees: a fresh testbench, written from the same specification, fails {secondOpinion.fail_count} of {secondOpinion.test_count} checks. The first testbench was rewritten during repair, so do not trust this PASS.</>}
+          {secondOpinion.status !== 'PASS' && secondOpinion.status !== 'FAIL' && <>Second opinion not obtained: {secondOpinion.note}</>}
+        </div>
       )}
 
       {degraded && (
@@ -351,6 +372,8 @@ function ResultsView({
           </div>
         </div>
       )}
+
+      {spec && <SpecSummary spec={spec} />}
 
       {lint && (lint.errors.length > 0 || lint.warnings.length > 0) && (
         <div className="section lint-section" data-testid="lint-section">

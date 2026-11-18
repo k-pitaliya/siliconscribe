@@ -562,3 +562,22 @@ textarea::placeholder, input::placeholder { color: var(--ink-3); }
 .wfv .waveform-controls { display: flex; gap: 6px; }
 .link-btn { background: none; border: none; padding: 0 2px; color: var(--accent-text); font-size: 12px; font-weight: 500; text-decoration: underline; text-underline-offset: 2px; }
 .link-btn:hover { color: var(--ink); }
+
+/* specification review: read and edit what the design will be built from before generating */
+.spec-review { max-width: 860px; margin: 0 auto; padding: 20px 24px; display: grid; gap: 10px; align-content: start; }
+.spec-review h2 { margin: 0; font-size: 18px; font-weight: 600; }
+.spec-review p { margin: 0; color: var(--ink-2); font-size: 14px; }
+.spec-review table, .spec-summary table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.spec-review caption { text-align: left; font-size: 13px; font-weight: 500; color: var(--ink-2); padding-bottom: 4px; }
+.spec-review th, .spec-review td, .spec-summary th, .spec-summary td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.spec-review th, .spec-summary th { font-weight: 500; color: var(--ink-2); }
+.spec-review textarea { min-height: 0; }
+.spec-review ul { margin: 0; padding-left: 18px; font-size: 13px; }
+.spec-review .btn { margin-right: 8px; }
+.spec-summary { margin: 12px 0 0; font-size: 13px; }
+.spec-summary summary { cursor: pointer; color: var(--ink-2); font-weight: 500; padding: 4px 0; }
+.spec-summary summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.spec-summary p { margin: 8px 0; }
+.spec-summary ul { margin: 0 0 8px; padding-left: 18px; }
+.testbench-model { display: grid; gap: 6px; }
+.second-opinion svg { vertical-align: -2px; }

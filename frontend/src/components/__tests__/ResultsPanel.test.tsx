@@ -455,3 +455,47 @@ describe('ResultsPanel: timing and mapped area', () => {
     expect(screen.queryByTestId('timing-section')).toBeNull()
   })
 })
+
+describe('ResultsPanel: who wrote what, and the second opinion', () => {
+  const base = { result: passResult, waveform: null, schematic: null, history: [] as IterationRecord[] }
+  it('names a separate testbench model next to the design model', () => {
+    render(<ResultsPanel {...base} model="opencode/hy4-flash-free" testbenchModel="nim/poolside/laguna-xs-2.1" />)
+    const line = screen.getByTestId('model-used').textContent ?? ''
+    expect(line).toContain('Written by opencode/hy4-flash-free')
+    expect(line).toContain('Testbench written by nim/poolside/laguna-xs-2.1, a separate model')
+  })
+
+  it('says nothing about a separate testbench when one model wrote both', () => {
+    render(<ResultsPanel {...base} model="opencode/hy4-flash-free" />)
+    expect(screen.getByTestId('model-used').textContent).not.toContain('Testbench written by')
+  })
+
+  it('shows an agreeing second opinion plainly', () => {
+    render(<ResultsPanel {...base} secondOpinion={{ status: 'PASS', pass_count: 120, fail_count: 0, test_count: 120, note: '' }} />)
+    const t = screen.getByTestId('second-opinion').textContent ?? ''
+    expect(t).toContain('Second opinion agrees')
+    expect(t).toContain('passes all 120 of 120 checks')
+  })
+
+  it('warns when a fresh testbench disagrees with a PASS that followed a rewrite', () => {
+    render(<ResultsPanel {...base} secondOpinion={{ status: 'FAIL', pass_count: 100, fail_count: 20, test_count: 120, note: '' }} />)
+    const el = screen.getByTestId('second-opinion')
+    expect(el.textContent).toContain('Second opinion disagrees')
+    expect(el.textContent).toContain('fails 20 of 120 checks')
+    expect(el.textContent).toContain('do not trust this PASS')
+    expect(el.className).toContain('weak-tag')
+  })
+
+  it('reports an unobtainable second opinion without alarm', () => {
+    render(<ResultsPanel {...base} secondOpinion={{ status: 'unavailable', pass_count: 0, fail_count: 0, test_count: 0, note: 'the model did not answer.' }} />)
+    const el = screen.getByTestId('second-opinion')
+    expect(el.textContent).toContain('Second opinion not obtained: the model did not answer.')
+    expect(el.className).not.toContain('weak-tag')
+  })
+
+  it('shows no second-opinion line when there was none', () => {
+    render(<ResultsPanel {...base} />)
+    expect(screen.queryByTestId('second-opinion')).toBeNull()
+  })
+})
+

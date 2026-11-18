@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
 import llm_service
-from orchestrator import pipeline_events, run_pipeline
+from orchestrator import pipeline_events, run_pipeline, _user_facing_error as orchestrator_user_error
 from simulator import IcarusSimulator
 from cov_metrics import compute_coverage
 from vcd_parser import parse_vcd, ports_from_rtl
@@ -21,7 +21,7 @@ from orchestrator import _tb_check_count
 from models import (
     SimError,
     SimulationRequest, SimulationRerunResponse,
-    RunRequest, RunResponse,
+    RunRequest, RunResponse, RTLDesignSpec, SpecParseRequest,
     SynthesisRequest, TimingRequest, TimingReport,
     UVMExportRequest, UVMExportResponse,
     DESIGN_ID_RE,
@@ -192,6 +192,19 @@ def get_models(req: Request, include_paid: bool = False, refresh: bool = False):
     return llm_service.list_models(include_paid=include_paid, refresh=refresh)
 
 
+@app.post("/api/spec/parse", response_model=RTLDesignSpec)
+def parse_spec(request: SpecParseRequest, req: Request):
+    """Turn a prompt into a specification and stop, so the user can read and edit it before anything is generated."""
+    _check_rate_limit(_get_client_ip(req))
+    try:
+        return llm_service.parse_intent(request.prompt, model=request.model, reasoning_effort=request.reasoning_effort)
+    except llm_service.ModelNotAvailable as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.exception("spec parse failed")
+        raise HTTPException(status_code=502, detail=orchestrator_user_error(e))
+
+
 @app.post("/api/design/run", response_model=RunResponse)
 def design_run(request: RunRequest, req: Request):
     """One-shot: generate -> simulate -> self-correct. Returns everything."""
@@ -208,6 +221,8 @@ def design_run(request: RunRequest, req: Request):
             max_iterations=request.max_iterations,
             timeout_seconds=request.timeout_seconds,
             model=request.model,
+            testbench_model=request.testbench_model,
+            spec_override=request.spec,
             reasoning_effort=request.reasoning_effort,
         )
         logger.info("design_run id=%s status=%s iterations=%s", design_id, result.status, result.iterations)
@@ -246,6 +261,8 @@ async def design_stream(request: RunRequest, req: Request):
                 max_iterations=request.max_iterations,
                 timeout_seconds=request.timeout_seconds,
                 model=request.model,
+                testbench_model=request.testbench_model,
+                spec_override=request.spec,
                 reasoning_effort=request.reasoning_effort,
             ):
                 if event.get("stage") == "done" and db is not None:

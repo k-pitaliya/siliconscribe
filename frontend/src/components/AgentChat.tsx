@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import {
-  Bug, Timer, CircleCheck, CircleX, Code, Cpu, Flag, FlaskConical, Lightbulb, LoaderCircle, Play, Search,
+  Bug, Timer, ShieldCheck, CircleCheck, CircleX, Code, Cpu, Flag, FlaskConical, Lightbulb, LoaderCircle, Play, Search,
   TriangleExclamationPoint, User, Wrench, Circle,
 } from 'lucide-react'
 import type { Diagnosis } from '../types'
@@ -27,6 +27,7 @@ function stageIcon(stage?: string, status?: string) {
   if (stage === 'synthesis') return Cpu
   if (stage === 'strength') return Bug
   if (stage === 'timing') return Timer
+  if (stage === 'second_opinion') return ShieldCheck
   if (stage === 'simulate') return status === 'PASS' ? CircleCheck : status === 'FAIL' || status === 'ERROR' ? CircleX : Play
   if (stage === 'done') return status === 'PASS' ? Flag : TriangleExclamationPoint
   if (stage === 'rtl') return Code

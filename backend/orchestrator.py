@@ -40,7 +40,7 @@ from schematic import build_schematic
 from simulator import IcarusSimulator
 from vcd_parser import parse_vcd
 from models import (
-    RunResponse, IterationRecord, RTLDesignSpec,
+    RunResponse, IterationRecord, RTLDesignSpec, SecondOpinion,
 )
 
 # Optional synthesis — must not break import when yosys not installed
@@ -320,9 +320,18 @@ def pipeline_events(
     timeout_seconds: int = 30,
     model: Optional[str] = None,
     reasoning_effort: Optional[str] = None,
+    testbench_model: Optional[str] = None,
+    spec_override: Optional[RTLDesignSpec] = None,
 ) -> Iterator[dict]:
-    """Yield {stage, ...} events as the pipeline runs."""
+    """Yield {stage, ...} events as the pipeline runs.
+
+    *testbench_model* names a DIFFERENT model to write the testbench. Then the oracle is independent of the design's
+    author: a failing check is reported, never rewritten away by the design model (only a testbench that does not
+    compile or hangs may be repaired).
+    """
     model_label = model or llm_service.current_model_id() or "default"
+    tb_model = testbench_model or model
+    independent_tb = bool(testbench_model) and testbench_model != (model or llm_service.current_model_id())
     try:
         # Only a Cloudflare / NIM id needs the routed lookup; everything else is the configured provider.
         provider_name = (llm_service.get_provider(model) if llm_service.model_catalog.is_routed_id(model)
@@ -330,7 +339,8 @@ def pipeline_events(
     except llm_service.ModelNotAvailable:       # Cloudflare / NIM chosen but not set up: the first call reports it
         provider_name = "nvidia-nim" if llm_service.model_catalog.is_nim_id(model) else "cloudflare"
     yield {"stage": "start",
-           "message": f"Parsing requirement (provider: {provider_name}, model: {model_label})..."}
+           "message": f"Parsing requirement (provider: {provider_name}, model: {model_label}"
+                      + (f"; testbench by {testbench_model}" if independent_tb else "") + ")..."}
     # A model the user deliberately picked is never silently replaced by the scripted offline demo.
     explicit_model = bool(model) and not llm_service.is_default_model(model)
 
@@ -404,6 +414,8 @@ def pipeline_events(
         except Exception as e:
             if not _is_upstream_error(e):
                 raise
+            if independent_tb and fn_name == "generate_testbench":
+                raise RuntimeError(_chosen_model_problem(testbench_model, e, "testbench model")) from e
             if live_ok:
                 # A live run has already produced user-specific artifacts (spec,
                 # RTL, testbench). Swapping to the curated offline provider here
@@ -430,12 +442,17 @@ def pipeline_events(
         return out
 
     try:
-        # 1. Intent
-        try:
-            spec: RTLDesignSpec = _call_llm("parse_intent", prompt, model=model, reasoning_effort=reasoning_effort)
-        except Exception:
-            # If _call_llm already handled fallback, it would have retried; this is non-upstream error
-            raise
+        # 1. Intent. A specification the user reviewed and confirmed replaces the model's reading of the prompt. It is
+        # user-specific work, so from here on an outage fails honestly instead of swapping in the scripted demo.
+        if spec_override is not None:
+            spec = spec_override
+            live_ok = True
+        else:
+            try:
+                spec: RTLDesignSpec = _call_llm("parse_intent", prompt, model=model, reasoning_effort=reasoning_effort)
+            except Exception:
+                # If _call_llm already handled fallback, it would have retried; this is non-upstream error
+                raise
 
         # Check for offline fallback disclosure (counter fallback)
         # If we are in offline mode, check _last_exact; if Zen live but prompt unmatched, also check
@@ -448,7 +465,9 @@ def pipeline_events(
                     "Showing a representative counter design as a demo."
                 )
 
-        yield {"stage": "intent", "message": f"Identified module '{spec.module_name}' with {len(spec.ports)} ports." + (" (offline fallback)" if use_offline else ""),
+        yield {"stage": "intent", "message": (f"Using the specification you confirmed: module '{spec.module_name}' with {len(spec.ports)} ports."
+                                              if spec_override is not None else
+                                              f"Identified module '{spec.module_name}' with {len(spec.ports)} ports.") + (" (offline fallback)" if use_offline else ""),
                "rtl_spec": spec.model_dump(), "fallback_notice": fallback_notice}
 
         # 2. RTL — validate before compiling. A truncated/fenced fragment used to
@@ -485,7 +504,7 @@ def pipeline_events(
         def _tb_ok(code: str) -> bool:
             return not _tb_problems(code, spec.module_name)
 
-        tb_code = _call_llm("generate_testbench", rtl_code, spec, model=model, reasoning_effort=reasoning_effort)
+        tb_code = _call_llm("generate_testbench", rtl_code, spec, model=tb_model, reasoning_effort=reasoning_effort)
         if not _tb_ok(tb_code):
             logger.warning(
                 "Generated testbench invalid (complete=%s, checks=%d, instantiates_dut=%s); retrying once",
@@ -493,7 +512,7 @@ def pipeline_events(
                 _tb_check_count(tb_code),
                 _instantiates_dut(tb_code, spec.module_name),
             )
-            tb_code = _call_llm("generate_testbench", rtl_code, spec, model=model, reasoning_effort=reasoning_effort)
+            tb_code = _call_llm("generate_testbench", rtl_code, spec, model=tb_model, reasoning_effort=reasoning_effort)
         if not _has_complete_module(tb_code, "testbench"):
             raise RuntimeError(
                 "Testbench generation did not return a complete module named "
@@ -637,6 +656,10 @@ def pipeline_events(
                     iteration, _tb_check_count(tb_code), _tb_check_count(new_tb))
                 new_tb = tb_code
                 guard_note += " Testbench change rejected: it removed self-checks."
+            if independent_tb and new_tb != tb_code and result.status not in ("ERROR", "TIMEOUT"):
+                new_tb = tb_code
+                guard_note += (" Testbench change not applied: a separate model wrote it, so a failing check is reported "
+                               "and not rewritten away.")
             fix_summary = fix["fix_summary"] + guard_note
             new_state = _state_hash(new_rtl, new_tb)
             cur_state = _state_hash(rtl_code, tb_code)
@@ -743,6 +766,33 @@ def pipeline_events(
                         f"({orig.fail_count} failed). Review the testbench change before trusting this PASS.")
             except Exception:  # a failed extra check must not break the run
                 logger.exception("original-testbench comparison failed")
+        def _second_opinion() -> SecondOpinion:
+            """A fresh testbench from the same spec, run against the final design. Never raises: a failed extra check
+            must not break a verified run."""
+            who = _model_used(tb_model)
+            try:
+                fresh = _call_llm("generate_testbench", rtl_code, spec, model=tb_model, reasoning_effort=reasoning_effort)
+                problems = _tb_problems(fresh, spec.module_name)
+                if problems:
+                    return SecondOpinion(status="unavailable", model=who, note="the fresh testbench was unusable (" + "; ".join(problems[:2]) + ").")
+                r = simulator.simulate(design_id[:30] + "_s", rtl_code, fresh, timeout=timeout_seconds)
+                if r.status in ("PASS", "FAIL"):
+                    return SecondOpinion(status=r.status, pass_count=r.pass_count, fail_count=r.fail_count, test_count=r.test_count, model=who)
+                return SecondOpinion(status="unavailable", model=who, note=f"the fresh testbench did not run cleanly ({r.status}).")
+            except Exception as e:  # noqa: BLE001
+                return SecondOpinion(status="unavailable", model=who, note=_short_reason(e) or "the model did not answer.")
+
+        # Second opinion: a PASS that only came after the testbench was rewritten is the weakest kind of PASS. Ask for a
+        # FRESH testbench from the same specification and run the final design against it. Disagreement is the signal.
+        second = None
+        if result.status == "PASS" and tb_code != original_tb and SECOND_OPINION_ENABLED and not use_offline:
+            yield {"stage": "second_opinion", "message": "The testbench changed during repair: asking for a fresh, independent testbench as a second opinion..."}
+            second = _second_opinion()
+            yield {"stage": "second_opinion", "second_opinion": second.model_dump(), "message": _second_opinion_message(second)}
+        second_note = None
+        if second is not None and second.status == "FAIL":
+            second_note = (f"A fresh testbench written from the same specification by {second.model or 'the model'} FAILS on the final design "
+                           f"({second.fail_count} of {second.test_count} checks). The first testbench was changed during repair: do not trust this PASS.")
         # Testbench strength: only meaningful for a design whose real run passed. Mutation testing
         # of the design (see mutation.py) asks whether this testbench could have caught a bug.
         strength = None
@@ -769,7 +819,7 @@ def pipeline_events(
                 logger.exception("timing check failed")
                 timing = None
         warning_text = " ".join(
-            n for n in (weak_verification_note(spec, result), weak_strength_note(strength), oracle_note) if n
+            n for n in (weak_verification_note(spec, result), weak_strength_note(strength), oracle_note, second_note) if n
         ) or None
 
         response = RunResponse(
@@ -790,6 +840,9 @@ def pipeline_events(
             strength=strength,
             timing=timing,
             model=("offline demo" if use_offline else _model_used(model)),
+            testbench_model=(_model_used(testbench_model) if independent_tb and not use_offline else None),
+            independent_testbench=bool(independent_tb and not use_offline),
+            second_opinion=second,
         )
         yield {"stage": "done", "status": result.status,
                "message": _final_message(result, iteration),
@@ -813,7 +866,18 @@ def _model_used(model: Optional[str]) -> Optional[str]:
     return llm_service.current_model_id()
 
 
-def _chosen_model_problem(model: Optional[str], e: Exception) -> str:
+SECOND_OPINION_ENABLED = os.getenv("SECOND_OPINION_ENABLED", "1").strip().lower() not in ("0", "false", "no", "off")
+
+
+def _second_opinion_message(s: SecondOpinion) -> str:
+    if s.status == "PASS":
+        return f"Second opinion: a fresh testbench agrees ({s.pass_count}/{s.test_count} checks pass)."
+    if s.status == "FAIL":
+        return f"Second opinion: a fresh testbench DISAGREES ({s.fail_count} of {s.test_count} checks fail)."
+    return f"Second opinion unavailable: {s.note}"
+
+
+def _chosen_model_problem(model: Optional[str], e: Exception, role: str = "model") -> str:
     """Why the model the user picked did not work, and what to do. Short, plain, no provider internals."""
     low = str(e).lower()
     if any(h in low for h in _QUOTA_HINTS):
@@ -826,7 +890,7 @@ def _chosen_model_problem(model: Optional[str], e: Exception) -> str:
         why = "the provider does not know this model"
     else:
         why = "the provider returned an error"
-    return f"The model you chose ({model}) could not be used: {why}. Pick another model from the Model menu."
+    return f"The {role} you chose ({model}) could not be used: {why}. Pick another model from the Model menu."
 
 
 def _user_facing_error(e: Exception) -> str:

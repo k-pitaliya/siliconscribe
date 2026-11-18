@@ -1,4 +1,4 @@
-import type { ModelsResponse, RunResponse, SimulationRerun, StreamEvent, ProjectSummary, UVMExportResponse } from './types'
+import type { ModelsResponse, RTLDesignSpec, RunResponse, SimulationRerun, StreamEvent, ProjectSummary, UVMExportResponse } from './types'
 export type { ProjectSummary, UVMExportResponse } from './types'
 
 // In dev, Vite proxies /api -> :8000. Override with VITE_API_BASE if needed.
@@ -11,6 +11,10 @@ export interface RunParams {
   max_iterations?: number
   timeout_seconds?: number
   model?: string
+  /** A different model to write the testbench (independent verification). */
+  testbench_model?: string
+  /** A specification the user reviewed and confirmed; skips the parsing step. */
+  spec?: RTLDesignSpec
   reasoning_effort?: string
 }
 
@@ -38,6 +42,21 @@ export async function getModels(opts: { includePaid?: boolean; refresh?: boolean
   if (opts.refresh) q.set('refresh', 'true')
   const r = await fetch(`${BASE}/api/models${q.size ? `?${q}` : ''}`)
   if (!r.ok) throw new Error(`models failed: ${r.status} ${await r.text().catch(() => '')}`.trim())
+  return r.json()
+}
+
+/** Parse a prompt into a specification only, so it can be reviewed before anything is generated. */
+export async function parseSpec(prompt: string, model?: string, reasoning_effort?: string): Promise<RTLDesignSpec> {
+  const r = await fetch(`${BASE}/api/spec/parse`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prompt, model, reasoning_effort }),
+  })
+  if (!r.ok) {
+    let detail = ''
+    try { detail = ((await r.json()) as { detail?: unknown }).detail as string } catch { /* not JSON */ }
+    throw new Error(typeof detail === 'string' && detail ? detail : `specification failed: ${r.status}`)
+  }
   return r.json()
 }
 

@@ -215,6 +215,16 @@ export interface TimingReport {
   error?: string | null
 }
 
+/** A fresh testbench, written from the same specification, run against the final design after a repair rewrote the first. */
+export interface SecondOpinion {
+  status: 'PASS' | 'FAIL' | 'unavailable' | string
+  pass_count: number
+  fail_count: number
+  test_count: number
+  model?: string | null
+  note: string
+}
+
 /** One injected bug the testbench did not notice. */
 export interface MutantInfo {
   description: string
@@ -258,6 +268,10 @@ export interface RunResponse {
   timing?: TimingReport | null
   /** The model that wrote the design (`provider/name`), or 'offline demo'. */
   model?: string | null
+  /** The separate model that wrote the testbench, when there was one. */
+  testbench_model?: string | null
+  independent_testbench?: boolean
+  second_opinion?: SecondOpinion | null
 }
 
 export interface ProjectSummary {
@@ -293,6 +307,7 @@ export interface StreamEvent {
     | 'synthesis'
     | 'strength'
     | 'timing'
+    | 'second_opinion'
     | 'done'
     | 'error'
   message?: string
@@ -300,6 +315,7 @@ export interface StreamEvent {
   status?: string
   target?: string
   rtl_spec?: RTLDesignSpec
+  second_opinion?: SecondOpinion
   rtl_code?: string
   testbench_code?: string
   explanation?: string

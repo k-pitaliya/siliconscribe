@@ -1,5 +1,6 @@
 import re
 
+import re
 from pydantic import BaseModel, Field, field_validator
 from typing import List, Optional, Literal, Dict
 
@@ -235,6 +236,44 @@ class Schematic(BaseModel):
     inouts: List[SchematicPort] = Field(default_factory=list)
 
 
+class SecondOpinion(BaseModel):
+    """A fresh testbench, written from the same specification, run against the final design after a repair rewrote the first."""
+    status: str = "unavailable"        # "PASS" agrees | "FAIL" disagrees | "unavailable" (could not be generated or run)
+    pass_count: int = 0
+    fail_count: int = 0
+    test_count: int = 0
+    model: Optional[str] = None
+    note: str = ""
+
+
+_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
+
+
+def check_user_spec(v: Optional["RTLDesignSpec"]) -> Optional["RTLDesignSpec"]:
+    """A specification the user confirmed or edited is untrusted input: its names end up in patterns, file names and
+    prompts, so they must be plain identifiers and the text must be bounded."""
+    if v is None:
+        return v
+    if not _IDENT_RE.match(v.module_name):
+        raise ValueError("the module name must be a plain identifier (letters, digits, underscore)")
+    if not 1 <= len(v.ports) <= 64:
+        raise ValueError("a specification needs between 1 and 64 ports")
+    if any(not _IDENT_RE.match(p.name) or len(p.description) > 300 for p in v.ports):
+        raise ValueError("port names must be plain identifiers and descriptions at most 300 characters")
+    if len(v.parameters) > 16 or any(not _IDENT_RE.match(p.name) for p in v.parameters):
+        raise ValueError("at most 16 parameters, named by plain identifiers")
+    if len(v.behavior) > 4000 or len(v.constraints) > 30 or any(len(c) > 500 for c in v.constraints):
+        raise ValueError("the behaviour text is limited to 4000 characters and 30 constraints of 500 characters")
+    return v
+
+
+class SpecParseRequest(BaseModel):
+    """Parse a prompt into a specification only, so the user can review it before anything is generated."""
+    prompt: str = Field(..., min_length=1, max_length=2000)
+    model: Optional[str] = Field(None, max_length=100, pattern=r"^[A-Za-z0-9@][A-Za-z0-9._:/@+-]{0,99}$")
+    reasoning_effort: Optional[Literal["low", "medium", "high", "xhigh", "max"]] = None
+
+
 class RunRequest(BaseModel):
     """One-shot: natural language -> generate -> simulate -> self-correct."""
     prompt: str = Field(..., max_length=2000, description="Natural language design prompt")
@@ -243,6 +282,14 @@ class RunRequest(BaseModel):
     max_iterations: int = Field(5, ge=0, le=10, description="Max self-correction iterations")
     timeout_seconds: int = Field(30, ge=1, le=120, description="Per-simulation timeout")
     model: Optional[str] = Field(None, max_length=100, pattern=r"^[A-Za-z0-9@][A-Za-z0-9._:/@+-]{0,99}$", description="Override LLM model for this run")
+    testbench_model: Optional[str] = Field(None, max_length=100, pattern=r"^[A-Za-z0-9@][A-Za-z0-9._:/@+-]{0,99}$",
+                                           description="A different model to write the testbench (independent verification)")
+    spec: Optional[RTLDesignSpec] = Field(None, description="A specification the user confirmed or edited; skips the parsing step")
+
+    @field_validator("spec")
+    @classmethod
+    def _user_spec_is_bounded(cls, v):
+        return check_user_spec(v)
     reasoning_effort: Optional[Literal["low", "medium", "high", "xhigh", "max"]] = Field(
         None, description="Thinking level / reasoning effort (actual, model-specific). Only for models with variants."
     )
@@ -313,6 +360,9 @@ class RunResponse(BaseModel):
     verification_warning: Optional[str] = None
     strength: Optional[StrengthReport] = None
     timing: Optional[TimingReport] = None
+    testbench_model: Optional[str] = None   # the model that wrote the testbench, when it was not the same one
+    independent_testbench: bool = False     # a separate model wrote the testbench and a failing check was never rewritten away
+    second_opinion: Optional[SecondOpinion] = None
     model: Optional[str] = None             # the model that wrote the design (`provider/name`), so a switched model is visible
 
 
