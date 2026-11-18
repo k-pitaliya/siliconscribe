@@ -99,6 +99,13 @@ def synthesize_with_yosys(rtl_code: str, module_name: str, work_dir: Path) -> di
     if len(rtl_code.encode("utf-8")) > 200 * 1024:
         return {"available": True, "error": "rtl_code exceeds 200 KB limit"}
 
+    # Same sandbox policy as simulation, lint and timing: Yosys itself evaluates `include and
+    # $readmemh while reading, so a design must not reach local files through synthesis either.
+    from simulator import sandbox_violations  # local import: simulator is the policy owner
+    blocked = sandbox_violations(rtl_code)
+    if blocked:
+        return {"available": True, "error": "Source not synthesized: " + "; ".join(blocked[:3])}
+
     work_dir = Path(work_dir)
     try:
         work_dir.mkdir(parents=True, exist_ok=True)

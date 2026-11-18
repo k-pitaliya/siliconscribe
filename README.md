@@ -142,7 +142,7 @@ Full table (checks, strength, toggle coverage, timing, area per design): [`backe
 
 ```bash
 cd backend
-PATH="$HOME/.local/bin:$PATH" OFFLINE_MODE=1 python3 -m pytest tests/ -q   # 435 passed (31 test files)
+PATH="$HOME/.local/bin:$PATH" OFFLINE_MODE=1 python3 -m pytest tests/ -q   # 436 passed (31 test files)
 PATH="$HOME/.local/bin:$PATH" python3 tools/mutation_sweep.py            # 27 of 27 injected bugs caught
 PATH="$HOME/.local/bin:$PATH" python3 tools/verify_mapping.py            # 19 of 19 designs equivalent at gate level (about 30 s)
 PATH="$HOME/.local/bin:$PATH" python3 tools/preflight.py                 # demo readiness, free checks only
@@ -205,7 +205,7 @@ backend/
   pdk/               sky130hd_tt.lib goes here (git-ignored, see pdk/README.md)
   tools/             mutation_sweep.py, verify_mapping.py, evaluate_live.py, preflight.py, build_opensta.sh
   evaluation/        live evaluation: summary.md, results.jsonl, artifacts/, independent/
-  tests/             pytest suite (435 tests, 31 files; offline, no key)
+  tests/             pytest suite (436 tests, 31 files; offline, no key)
 frontend/
   src/App.tsx        layout + streaming + Projects drawer + UVM export → zip download
   src/components/    PromptPanel, ModelPicker, TestbenchModelSelect, SpecReview, SpecSummary, CodeEditor, AgentChat,
