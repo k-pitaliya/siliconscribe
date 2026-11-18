@@ -2,13 +2,22 @@ import { useEffect, useState } from 'react'
 import { RefreshCw } from 'lucide-react'
 import type { ModelInfo, ProviderInfo } from '../types'
 
-type Family = 'opencode' | 'cloudflare'
+type Family = 'opencode' | 'cloudflare' | 'nim'
 
-const CLOUDFLARE_DEFAULT_HINT =
-  'Cloudflare is not set up. Start the backend with CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN set.'
+const SOURCES: [Family, string][] = [
+  ['opencode', 'OpenCode'],
+  ['cloudflare', 'Cloudflare'],
+  ['nim', 'NVIDIA NIM'],
+]
+
+const DEFAULT_HINT: Record<'cloudflare' | 'nim', string> = {
+  cloudflare: 'Cloudflare is not set up. Start the backend with CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN set.',
+  nim: 'NVIDIA NIM is not set up. Start the backend with NVIDIA_NIM_API_KEY set.',
+}
 
 function familyOf(m: ModelInfo): Family {
   if (m.provider === 'cloudflare' || m.id.startsWith('@cf/') || m.id.startsWith('@hf/')) return 'cloudflare'
+  if (m.provider === 'nim' || m.id.startsWith('nim/')) return 'nim'
   return 'opencode'
 }
 
@@ -50,8 +59,9 @@ export default function ModelPicker({
     onModelChange(pick.id)
   }
 
-  const cloudflareProvider = providers.find((p) => p.id === 'cloudflare')
-  const cloudflareOffline = view === 'cloudflare' && (!cloudflareProvider || !cloudflareProvider.available)
+  const viewProvider = providers.find((p) => p.id === view)
+  const nonOpenCodeOffline =
+    view !== 'opencode' && (!viewProvider || !viewProvider.available)
   const visible = models.filter((m) => familyOf(m) === view)
 
   // Distinct groups in order of first appearance.
@@ -64,33 +74,26 @@ export default function ModelPicker({
   return (
     <div className="model-picker">
       <div role="radiogroup" aria-label="Model source" className="seg">
-        <button
-          type="button"
-          role="radio"
-          aria-checked={view === 'opencode'}
-          className={view === 'opencode' ? 'seg-btn on' : 'seg-btn'}
-          disabled={disabled}
-          onClick={() => switchView('opencode')}
-        >
-          OpenCode
-        </button>
-        <button
-          type="button"
-          role="radio"
-          aria-checked={view === 'cloudflare'}
-          className={view === 'cloudflare' ? 'seg-btn on' : 'seg-btn'}
-          disabled={disabled}
-          onClick={() => switchView('cloudflare')}
-        >
-          Cloudflare
-        </button>
+        {SOURCES.map(([family, label]) => (
+          <button
+            key={family}
+            type="button"
+            role="radio"
+            aria-checked={view === family}
+            className={view === family ? 'seg-btn on' : 'seg-btn'}
+            disabled={disabled}
+            onClick={() => switchView(family)}
+          >
+            {label}
+          </button>
+        ))}
       </div>
 
       <label className="field-label" htmlFor="model-select" id="model-select-label">Model</label>
 
-      {cloudflareOffline ? (
+      {nonOpenCodeOffline ? (
         <div className="model-offline" role="status">
-          {cloudflareProvider?.hint || CLOUDFLARE_DEFAULT_HINT}
+          {viewProvider?.hint || DEFAULT_HINT[view as 'cloudflare' | 'nim']}
         </div>
       ) : visible.length === 0 ? (
         <div className="model-offline" role="status">No models available.</div>
@@ -115,7 +118,7 @@ export default function ModelPicker({
             ))}
           </select>
           {selected?.note && <div className="model-note" aria-live="polite">{selected.note}</div>}
-          {view === 'cloudflare' && cloudflareProvider?.hint && <div className="model-note" role="status">{cloudflareProvider.hint}</div>}
+          {view !== 'opencode' && viewProvider?.hint && <div className="model-note" role="status">{viewProvider.hint}</div>}
         </>
       )}
 

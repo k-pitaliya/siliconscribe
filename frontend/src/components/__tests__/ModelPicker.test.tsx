@@ -9,11 +9,14 @@ const models: ModelInfo[] = [
   { id: 'opencode/big-pickle', label: 'big-pickle', note: '', tag: 'balanced', provider: 'opencode', group: 'OpenCode', free: true },
   { id: 'opencode-go/kimi-k3', label: 'kimi-k3', note: '', tag: 'balanced', provider: 'opencode-go', group: 'OpenCode Go', free: false },
   { id: '@cf/openai/gpt-oss-120b', label: 'gpt-oss-120b', note: 'Cloudflare Workers AI', tag: 'balanced', provider: 'cloudflare', group: 'Cloudflare Workers AI', free: null },
+  { id: 'nim/poolside/laguna-xs-2.1', label: 'poolside/laguna-xs-2.1', note: 'NVIDIA NIM hosted API', tag: 'balanced', provider: 'nim', group: 'NVIDIA NIM', free: null },
+  { id: 'nim/nvidia/nemotron-3-ultra-550b-a55b', label: 'nvidia/nemotron-3-ultra-550b-a55b', note: '', tag: 'balanced', provider: 'nim', group: 'NVIDIA NIM', free: null },
 ]
 
 const providers: ProviderInfo[] = [
   { id: 'opencode', label: 'OpenCode', available: true, count: 3 },
   { id: 'cloudflare', label: 'Cloudflare', available: true, count: 1 },
+  { id: 'nim', label: 'NVIDIA NIM', available: true, count: 2 },
 ]
 
 function renderPicker(overrides: Partial<ComponentProps<typeof ModelPicker>> = {}) {
@@ -134,5 +137,82 @@ describe('ModelPicker', () => {
     expect(screen.getByRole('radio', { name: 'OpenCode' })).toBeDisabled()
     expect(screen.getByRole('radio', { name: 'Cloudflare' })).toBeDisabled()
     expect(screen.getByRole('checkbox', { name: /Show other models/ })).toBeDisabled()
+  })
+
+  it('renders three source radios named OpenCode, Cloudflare and NVIDIA NIM inside the Model source radiogroup', () => {
+    renderPicker()
+    const group = screen.getByRole('radiogroup', { name: 'Model source' })
+    expect(within(group).getAllByRole('radio')).toHaveLength(3)
+    expect(within(group).getByRole('radio', { name: 'OpenCode' })).toBeInTheDocument()
+    expect(within(group).getByRole('radio', { name: 'Cloudflare' })).toBeInTheDocument()
+    expect(within(group).getByRole('radio', { name: 'NVIDIA NIM' })).toBeInTheDocument()
+  })
+
+  it('clicking NVIDIA NIM while an OpenCode model is selected selects the first NIM model', () => {
+    const props = renderPicker()
+    fireEvent.click(screen.getByRole('radio', { name: 'NVIDIA NIM' }))
+    expect(props.onModelChange).toHaveBeenCalledWith('nim/poolside/laguna-xs-2.1')
+  })
+
+  it('with a nim model selected, the NIM view lists only the two NIM options in one NVIDIA NIM optgroup and no other-models checkbox', () => {
+    renderPicker({ selectedModel: 'nim/poolside/laguna-xs-2.1' })
+    expect(screen.getByRole('radio', { name: 'NVIDIA NIM' })).toHaveAttribute('aria-checked', 'true')
+    const select = screen.getByRole('combobox', { name: 'Model' })
+    const groups = Array.from(select.querySelectorAll('optgroup')).map((g) => g.getAttribute('label'))
+    expect(groups).toEqual(['NVIDIA NIM'])
+    const options = within(select).getAllByRole('option')
+    expect(options.map((o) => o.textContent)).toEqual([
+      'poolside/laguna-xs-2.1',
+      'nvidia/nemotron-3-ultra-550b-a55b',
+    ])
+    expect(screen.queryByRole('option', { name: /deepseek|big-pickle|kimi|gpt-oss/ })).toBeNull()
+    expect(screen.queryByRole('checkbox', { name: /Show other models/ })).toBeNull()
+  })
+
+  it('clicking OpenCode while a nim model is selected picks the first free OpenCode model', () => {
+    const props = renderPicker({ selectedModel: 'nim/poolside/laguna-xs-2.1' })
+    fireEvent.click(screen.getByRole('radio', { name: 'OpenCode' }))
+    expect(props.onModelChange).toHaveBeenCalledWith('opencode/deepseek-v4.1-flash-free')
+  })
+
+  it('shows the NIM provider hint with role status and no combobox when NVIDIA NIM is unavailable', () => {
+    renderPicker({
+      providers: [
+        { id: 'opencode', label: 'OpenCode', available: true, count: 3 },
+        { id: 'cloudflare', label: 'Cloudflare', available: true, count: 1 },
+        { id: 'nim', label: 'NVIDIA NIM', available: false, hint: 'Set the NIM variable.', count: 0 },
+      ],
+    })
+    fireEvent.click(screen.getByRole('radio', { name: 'NVIDIA NIM' }))
+    const status = screen.getByRole('status')
+    expect(status).toHaveTextContent('Set the NIM variable.')
+    expect(screen.queryByRole('combobox')).toBeNull()
+  })
+
+  it('shows the default NIM hint when the nim provider is missing from providers', () => {
+    renderPicker({
+      providers: [
+        { id: 'opencode', label: 'OpenCode', available: true, count: 3 },
+        { id: 'cloudflare', label: 'Cloudflare', available: true, count: 1 },
+      ],
+    })
+    fireEvent.click(screen.getByRole('radio', { name: 'NVIDIA NIM' }))
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'NVIDIA NIM is not set up. Start the backend with NVIDIA_NIM_API_KEY set.',
+    )
+    expect(screen.queryByRole('combobox')).toBeNull()
+  })
+
+  it('shows an available NIM provider hint as role status under the select', () => {
+    renderPicker({
+      providers: [
+        { id: 'opencode', label: 'OpenCode', available: true, count: 3 },
+        { id: 'cloudflare', label: 'Cloudflare', available: true, count: 1 },
+        { id: 'nim', label: 'NVIDIA NIM', available: true, hint: 'Showing suggested models.', count: 2 },
+      ],
+    })
+    fireEvent.click(screen.getByRole('radio', { name: 'NVIDIA NIM' }))
+    expect(screen.getByRole('combobox', { name: 'Model' })).toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent('Showing suggested models.')
   })
 })

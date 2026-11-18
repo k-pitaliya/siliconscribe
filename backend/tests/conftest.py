@@ -20,7 +20,8 @@ def _no_real_credentials_or_network_models(monkeypatch):
     result and call the network. Tests that need Cloudflare set fake values themselves, against a local stand-in.
     """
     import model_catalog
-    for name in ("CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_API_KEY", "CLOUDFLARE_API_BASE"):
+    for name in ("CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_API_KEY", "CLOUDFLARE_API_BASE",
+                 "NVIDIA_NIM_API_KEY", "NVIDIA_NIM_BASE_URL"):
         monkeypatch.delenv(name, raising=False)
     model_catalog.clear_cache()
     yield

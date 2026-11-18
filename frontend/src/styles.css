@@ -235,9 +235,9 @@ textarea::placeholder, input::placeholder { color: var(--ink-3); }
 .model-picker > .icon-btn { grid-column: 2; grid-row: 1; }
 .model-picker .field-label { margin-bottom: -2px; }
 .model-picker .model-note { margin-top: 0; }
-.seg { display: grid; grid-template-columns: 1fr 1fr; border: 1px solid var(--line-strong); border-radius: var(--r-control); overflow: hidden; background: var(--panel); }
+.seg { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; border: 1px solid var(--line-strong); border-radius: var(--r-control); overflow: hidden; background: var(--panel); }
 .seg-btn {
-  padding: 6px 8px; font-size: 13px; color: var(--ink-2); background: transparent; border: 0;
+  padding: 6px 4px; font-size: 12.5px; white-space: nowrap; color: var(--ink-2); background: transparent; border: 0;
   border-right: 1px solid var(--line-strong);
   transition: background var(--t-fast) var(--ease-out), color var(--t-fast) var(--ease-out);
 }

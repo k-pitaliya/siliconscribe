@@ -698,6 +698,29 @@ class CloudflareProvider(OpenAIProvider):
         return {"reasoning_effort": reasoning_effort} if reasoning_effort and "gpt-oss" in chosen else {}
 
 
+class NimProvider(OpenAIProvider):
+    """NVIDIA NIM hosted API (integrate.api.nvidia.com, OpenAI-compatible).
+
+    Menu ids carry a `nim/` prefix (`nim/poolside/laguna-xs-2.1`) so they cannot be confused with OpenCode's own
+    `nvidia/...` ids; the prefix is removed before the request. Like Cloudflare it gets no `reasoning` request
+    field and no per-stage routing (LLM_MODEL_<STAGE> names OpenCode models, which NIM does not know).
+    """
+
+    def __init__(self, api_key: str, base_url: str = model_catalog.DEFAULT_NIM_BASE, model: str = model_catalog.DEFAULT_NIM_MODEL):
+        super().__init__(api_key=api_key, base_url=base_url, model=model, name="nvidia-nim")
+        self.stage_models = {}
+
+    def _extra_body(self, reasoning_effort: Optional[str], chosen: str) -> dict:
+        return {}
+
+    def _chat(self, system: Optional[str], user: str, temperature: float,
+              mini: bool = False, model: Optional[str] = None, reasoning_effort: Optional[str] = None,
+              stage: Optional[str] = None) -> str:
+        if model and model_catalog.is_nim_id(model):
+            model = model[len(model_catalog.NIM_PREFIX):]
+        return super()._chat(system, user, temperature, mini=mini, model=model, reasoning_effort=reasoning_effort, stage=stage)
+
+
 class OfflineProvider:
     name = "offline"
 
@@ -861,6 +884,18 @@ _offline_provider = _provider if isinstance(_provider, OfflineProvider) else Off
 
 
 _cloudflare_cache: dict = {}
+_nim_cache: dict = {}
+
+
+def _nim_provider() -> "NimProvider":
+    cfg = model_catalog.nim_config()
+    if cfg is None:
+        raise ModelNotAvailable("NVIDIA NIM is not set up. Start the backend with NVIDIA_NIM_API_KEY set, "
+                                "or pick another model.")
+    if _nim_cache.get("key") != cfg:                              # rebuilt only if the key or address changes
+        _nim_cache["key"] = cfg
+        _nim_cache["provider"] = NimProvider(*cfg)
+    return _nim_cache["provider"]
 
 
 def _cloudflare_provider() -> "CloudflareProvider":
@@ -875,12 +910,14 @@ def _cloudflare_provider() -> "CloudflareProvider":
 
 
 def get_provider(model: Optional[str] = None):
-    """The provider that serves *model*: Cloudflare for `@cf/...` ids, otherwise the configured provider."""
+    """The provider that serves *model*: Cloudflare for `@cf/...` ids, NVIDIA NIM for `nim/...` ids, otherwise the configured one."""
     # Dynamic check: OFFLINE_MODE=1 must always force offline even if _provider was cached as zen
     if _is_offline_env():
         return _offline_provider
     if model and model_catalog.is_cloudflare_id(model):
         return _cloudflare_provider()
+    if model and model_catalog.is_nim_id(model):
+        return _nim_provider()
     return _provider
 
 
@@ -961,6 +998,7 @@ def list_models(include_paid: bool = False, refresh: bool = False) -> dict:
     * Any other configured provider: the curated list, or only the configured model (an unusable name sent
       by the UI used to trigger a silent degraded fallback).
     * Cloudflare Workers AI: its models when CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN are set.
+    * NVIDIA NIM: its chat models (ids prefixed `nim/`) when NVIDIA_NIM_API_KEY is set.
     The reply keeps the older keys (offline, current, models, stage_models) and adds `providers` and `paid_hidden`.
     """
     if is_offline():
@@ -997,7 +1035,9 @@ def list_models(include_paid: bool = False, refresh: bool = False) -> dict:
                   "hint": None if models else "No models were found. Is the OpenCode app installed and signed in?"}]
     cf = model_catalog.cloudflare_status(refresh)
     providers.append({"id": "cloudflare", "label": "Cloudflare", "available": cf["available"], "count": len(cf["models"]), "hint": cf["hint"]})
-    models = models + cf["models"]
+    nim = model_catalog.nim_status(refresh)
+    providers.append({"id": "nim", "label": "NVIDIA NIM", "available": nim["available"], "count": len(nim["models"]), "hint": nim["hint"]})
+    models = models + cf["models"] + nim["models"]
     # Per-stage overrides (LLM_MODEL_TESTBENCH etc.) that differ from the default model. A request that
     # explicitly picks another model in the UI overrides them, so say where they apply.
     stage = {s: m for s, m in (getattr(prov, "stage_models", None) or {}).items() if m and m != current}

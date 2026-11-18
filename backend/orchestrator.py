@@ -324,11 +324,11 @@ def pipeline_events(
     """Yield {stage, ...} events as the pipeline runs."""
     model_label = model or llm_service.current_model_id() or "default"
     try:
-        # Only a Cloudflare id needs the routed lookup; everything else is the configured provider.
-        provider_name = (llm_service.get_provider(model) if llm_service.model_catalog.is_cloudflare_id(model)
+        # Only a Cloudflare / NIM id needs the routed lookup; everything else is the configured provider.
+        provider_name = (llm_service.get_provider(model) if llm_service.model_catalog.is_routed_id(model)
                          else llm_service.get_provider()).name
-    except llm_service.ModelNotAvailable:       # Cloudflare chosen but not set up: the first call reports it
-        provider_name = "cloudflare"
+    except llm_service.ModelNotAvailable:       # Cloudflare / NIM chosen but not set up: the first call reports it
+        provider_name = "nvidia-nim" if llm_service.model_catalog.is_nim_id(model) else "cloudflare"
     yield {"stage": "start",
            "message": f"Parsing requirement (provider: {provider_name}, model: {model_label})..."}
     # A model the user deliberately picked is never silently replaced by the scripted offline demo.

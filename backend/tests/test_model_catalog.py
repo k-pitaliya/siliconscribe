@@ -5,6 +5,7 @@ import pytest
 
 import model_catalog as mc
 from cf_fake import ACCOUNT, TOKEN, FakeCloudflare, model_entry
+from nim_fake import KEY as NIM_KEY, OTHER_KEY, FakeNim
 
 OC = """opencode/deepseek-v4.1-flash-free
 opencode/big-pickle
@@ -177,4 +178,88 @@ def test_https_uses_the_certificate_bundle_the_app_ships_with_not_the_systems(mo
     with pytest.raises(OSError):
         mc._urlopen(mc.urllib.request.Request("http://127.0.0.1:1/x"), 5)
     assert seen["ctx"] is None                                                                    # the local test stand-in does not
+
+
+# ------------------------------------------------------------------------------------ NVIDIA NIM
+NIM_LIST = ["nvidia/nemotron-3.5-lightning-30b-a3b", "poolside/laguna-xs-2.1", "google/gemma-4-31b-it", "nvidia/nv-embedqa-e5-v5",
+            "meta/llama-guard-4-12b", "nvidia/nemotron-3-ultra-550b-a55b", "minimaxai/minimax-m3.1-flash", "nvidia/nemotron-voicechat",
+            "nvidia/ising-calibration-1.5-31b", "nobodyslash", "--bad/x", "google/gemma-4-31b-it", "bigcode/starcoder2-15b"]
+
+
+def test_nim_prefix_keeps_nvidias_ids_apart_from_opencodes_own_nvidia_ids():
+    assert mc.is_nim_id("nim/nvidia/nemotron-3-ultra-550b-a55b") and not mc.is_nim_id("nvidia/nvidia/nemotron-3-ultra-550b-a55b")
+    assert mc.is_routed_id("nim/x/y") and mc.is_routed_id("@cf/x/y") and not mc.is_routed_id("opencode/x") and not mc.is_routed_id(None)
+
+
+def test_nim_key_comes_from_one_deliberate_variable_and_never_from_the_unrelated_nvidia_api_key(monkeypatch):
+    monkeypatch.setenv("NVIDIA_API_KEY", OTHER_KEY)              # some other key that merely exists in the shell
+    assert mc.nim_config() is None                              # is NOT picked up
+    monkeypatch.setenv("NVIDIA_NIM_API_KEY", "your_nvidia_key_here")
+    assert mc.nim_config() is None                              # a placeholder is not a key
+    monkeypatch.setenv("NVIDIA_NIM_API_KEY", "not-an-nvapi-key")
+    assert mc.nim_config() is None
+    monkeypatch.setenv("NVIDIA_NIM_API_KEY", NIM_KEY)
+    assert mc.nim_config() == (NIM_KEY, mc.DEFAULT_NIM_BASE)
+    monkeypatch.setenv("NVIDIA_NIM_BASE_URL", "http://127.0.0.1:9/v1/")
+    assert mc.nim_config() == (NIM_KEY, "http://127.0.0.1:9/v1")
+
+
+def test_nim_not_configured_says_what_to_do_and_lists_nothing():
+    st = mc.nim_status()
+    assert st["available"] is False and st["models"] == [] and "NVIDIA_NIM_API_KEY" in st["hint"]
+
+
+def test_nim_catalogue_keeps_chat_models_prefixes_them_and_lists_the_fast_ones_first():
+    ms = mc.parse_nim_models({"data": [{"id": i} for i in NIM_LIST]})
+    ids = [m["id"] for m in ms]
+    assert ids[:4] == ["nim/poolside/laguna-xs-2.1", "nim/nvidia/nemotron-3-ultra-550b-a55b", "nim/nvidia/nemotron-3.5-lightning-30b-a3b",
+                       "nim/minimaxai/minimax-m3.1-flash"]
+    assert ids[4:] == ["nim/google/gemma-4-31b-it"]                                  # the rest alphabetical, no duplicates
+    assert not any(x in " ".join(ids) for x in ("embed", "guard", "voicechat", "calibration", "bad", "nobodyslash", "starcoder2"))   # starcoder2: listed but 404
+    assert ms[0]["label"] == "poolside/laguna-xs-2.1" and ms[0]["group"] == "NVIDIA NIM" and ms[0]["provider"] == "nim"
+    assert mc.parse_nim_models({}) == [] and mc.parse_nim_models(None) == []
+
+
+@pytest.fixture()
+def nim(monkeypatch):
+    def make(**kw):
+        server = FakeNim(**kw)
+        monkeypatch.setenv("NVIDIA_NIM_BASE_URL", server.base)
+        monkeypatch.setenv("NVIDIA_NIM_API_KEY", NIM_KEY)
+        return server
+    return make
+
+
+def test_nim_live_catalogue_is_read_with_the_bearer_key(nim):
+    with nim(models=NIM_LIST) as server:
+        st = mc.nim_status()
+    assert st["available"] and st["hint"] is None and len(st["models"]) == 5
+    (method, path, headers, _), = server.requests
+    assert (method, path) == ("GET", "/v1/models") and headers["authorization"] == f"Bearer {NIM_KEY}"
+
+
+def test_nim_failures_fall_back_to_the_tested_models_with_a_plain_hint_and_no_secret(nim, monkeypatch):
+    with nim(models_status=403):
+        st = mc.nim_status()
+    assert st["available"] and [m["id"] for m in st["models"]][0] == "nim/poolside/laguna-xs-2.1"
+    assert "HTTP 403" in st["hint"] and NIM_KEY not in st["hint"]
+    mc.clear_cache()
+    monkeypatch.setenv("NVIDIA_NIM_BASE_URL", "http://127.0.0.1:1/v1")
+    st = mc.nim_status()
+    assert st["available"] and st["models"] and "tested fast" in st["hint"] and NIM_KEY not in st["hint"]
+
+
+def test_nim_catalogue_is_cached_until_refreshed(nim):
+    with nim(models=NIM_LIST) as server:
+        mc.nim_status(); mc.nim_status()
+        assert len(server.requests) == 1
+        mc.nim_status(refresh=True)
+        assert len(server.requests) == 2
+
+
+def test_the_opencode_app_never_receives_the_nim_key_either(monkeypatch):
+    monkeypatch.setenv("NVIDIA_NIM_API_KEY", NIM_KEY)
+    monkeypatch.setenv("NVIDIA_API_KEY", OTHER_KEY)             # the older variable is left alone: OpenCode may use it itself
+    env = mc.child_env()
+    assert "NVIDIA_NIM_API_KEY" not in env and NIM_KEY not in env.values() and env["NVIDIA_API_KEY"] == OTHER_KEY
 

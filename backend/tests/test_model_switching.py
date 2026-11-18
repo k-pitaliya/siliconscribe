@@ -9,6 +9,7 @@ import llm_service
 import model_catalog as mc
 import orchestrator
 from cf_fake import ACCOUNT, TOKEN, FakeCloudflare, model_entry
+from nim_fake import KEY as NIM_KEY, FakeNim
 from models import PortSpec, RTLDesignSpec
 
 SPEC = RTLDesignSpec(module_name="m", ports=[PortSpec(name="a", direction="input", width=1)], behavior="x")
@@ -20,12 +21,14 @@ CATALOG = mc.parse_opencode_models("opencode/deepseek-v4.1-flash-free\nopencode/
 def clean(monkeypatch):
     mc.clear_cache()
     for k in ("CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_API_KEY", "CLOUDFLARE_API_BASE", "OFFLINE_MODE",
-              "LLM_MODEL_TESTBENCH", "LLM_MODEL_RTL"):
+              "LLM_MODEL_TESTBENCH", "LLM_MODEL_RTL", "NVIDIA_NIM_API_KEY", "NVIDIA_NIM_BASE_URL"):
         monkeypatch.delenv(k, raising=False)
     llm_service._cloudflare_cache.clear()
+    llm_service._nim_cache.clear()
     yield
     mc.clear_cache()
     llm_service._cloudflare_cache.clear()
+    llm_service._nim_cache.clear()
 
 
 def cloudflare(monkeypatch, **kw):
@@ -272,3 +275,78 @@ def test_models_endpoint_passes_the_options_and_requests_reject_malformed_ids(mo
     from models import RunRequest
     for good in ("opencode/big-pickle", "@cf/openai/gpt-oss-120b", "deepseek-v4.1-flash-free", "nvidia/deepseek-ai/deepseek-v4.1-flash"):
         assert RunRequest(prompt="a counter", model=good).model == good
+
+
+# ------------------------------------------------------------------------------------ NVIDIA NIM
+def nim(monkeypatch, **kw):
+    server = FakeNim(**kw)
+    monkeypatch.setenv("NVIDIA_NIM_BASE_URL", server.base)
+    monkeypatch.setenv("NVIDIA_NIM_API_KEY", NIM_KEY)
+    return server
+
+
+def test_nim_ids_go_to_nim_and_never_to_opencode_or_cloudflare(monkeypatch):
+    nim(monkeypatch)
+    assert llm_service.get_provider("nim/poolside/laguna-xs-2.1").name == "nvidia-nim"
+    assert llm_service.get_provider("nim/poolside/laguna-xs-2.1") is llm_service.get_provider("nim/nvidia/nemotron-3-ultra-550b-a55b")
+    assert llm_service.get_provider("nvidia/poolside/laguna-xs-2.1") is llm_service._provider      # OpenCode's own nvidia id stays with OpenCode
+
+
+def test_choosing_nim_without_a_key_says_how_to_set_it_up():
+    with pytest.raises(llm_service.ModelNotAvailable) as e:
+        llm_service.get_provider("nim/poolside/laguna-xs-2.1")
+    assert "NVIDIA_NIM_API_KEY" in str(e.value)
+
+
+def test_a_nim_chat_hits_chat_completions_with_the_key_and_the_prefix_removed_and_no_extra_fields(monkeypatch):
+    with nim(monkeypatch, chat_text="Counts up.") as server:
+        text = llm_service.explain_design("module m; endmodule", SPEC, model="nim/poolside/laguna-xs-2.1")
+        prov = llm_service.get_provider("nim/poolside/laguna-xs-2.1")
+        prov._chat(None, "hi", 0.0, model="nim/poolside/laguna-xs-2.1", reasoning_effort="high")      # the provider's own default model
+    assert text == "Counts up."
+    for method, path, headers, body in server.requests:
+        assert (method, path) == ("POST", "/v1/chat/completions") and headers["authorization"] == f"Bearer {NIM_KEY}"
+        assert body["model"] == "poolside/laguna-xs-2.1"                                              # no nim/ prefix on the wire
+        assert "reasoning" not in json.dumps(body) and "extra_body" not in body
+
+
+def test_nim_ignores_the_stage_model_variables_that_name_opencode_models(monkeypatch):
+    monkeypatch.setenv("LLM_MODEL_TESTBENCH", "opencode/some-other-model")
+    with nim(monkeypatch) as server:
+        prov = llm_service.get_provider("nim/poolside/laguna-xs-2.1")
+        prov._chat(None, "hi", 0.0, model="nim/poolside/laguna-xs-2.1", stage="testbench")
+    assert prov.stage_models == {} and server.requests[0][3]["model"] == "poolside/laguna-xs-2.1"
+
+
+def test_a_rejected_nim_key_is_a_typed_upstream_error_that_never_contains_the_key(monkeypatch):
+    with nim(monkeypatch, chat_status=403):
+        prov = llm_service.get_provider("nim/poolside/laguna-xs-2.1")
+        prov.client.max_retries = 0
+        with pytest.raises(llm_service.LLMUpstreamError) as e:
+            prov._chat(None, "hi", 0.0, model="nim/poolside/laguna-xs-2.1")
+    assert NIM_KEY not in str(e.value) and "poolside/laguna-xs-2.1" in str(e.value)
+
+
+def test_the_menu_lists_nim_as_a_third_provider(monkeypatch):
+    out = menu(monkeypatch)
+    nim_p = next(p for p in out["providers"] if p["id"] == "nim")
+    assert [p["id"] for p in out["providers"]] == ["opencode", "cloudflare", "nim"]
+    assert nim_p["available"] is False and "NVIDIA_NIM_API_KEY" in nim_p["hint"]
+    with nim(monkeypatch, models=["poolside/laguna-xs-2.1", "nvidia/nemotron-3-ultra-550b-a55b", "nvidia/nv-embedqa-e5-v5"]):
+        out = menu(monkeypatch)
+    nim_p = next(p for p in out["providers"] if p["id"] == "nim")
+    assert nim_p["available"] and nim_p["count"] == 2
+    assert [m["id"] for m in out["models"] if m["provider"] == "nim"] == ["nim/poolside/laguna-xs-2.1", "nim/nvidia/nemotron-3-ultra-550b-a55b"]
+
+
+def test_a_nim_run_names_its_provider_and_records_the_model(live_stand_in, tmp_path):
+    events = run(tmp_path, model="nim/poolside/laguna-xs-2.1")
+    assert "nim/poolside/laguna-xs-2.1" in events[0]["message"]
+    assert events[-1]["response"]["model"] == "nim/poolside/laguna-xs-2.1"
+
+
+def test_unavailable_nim_is_reported_in_plain_words(monkeypatch, tmp_path):
+    monkeypatch.setattr(llm_service, "_provider", SimpleNamespace(name="standin"))
+    events = run(tmp_path, model="nim/poolside/laguna-xs-2.1")
+    assert events[-1]["stage"] == "error" and "NVIDIA_NIM_API_KEY" in events[-1]["message"] and "nvidia-nim" in events[0]["message"]
+

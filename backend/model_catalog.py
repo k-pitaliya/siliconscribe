@@ -11,6 +11,10 @@ Two sources, both read live and cached so the model menu is never a stale hand-w
     The account id and token come ONLY from the environment (CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_API_TOKEN);
     the web interface never accepts or stores a secret. Model ids look like `@cf/openai/gpt-oss-120b`.
 
+  * NVIDIA NIM (the hosted API at integrate.api.nvidia.com, OpenAI-compatible): ids are `org/model`, shown here
+    with a `nim/` prefix so they can never be mistaken for OpenCode's own `nvidia/...` ids. The key comes ONLY from
+    NVIDIA_NIM_API_KEY, set on purpose; no other credential in the environment is ever picked up.
+
 A model id from the browser ends up as an argument to a subprocess or a URL, so every id is checked
 against MODEL_ID_RE (no leading dash, no spaces or shell characters) before it is used anywhere.
 """
@@ -43,6 +47,19 @@ CLOUDFLARE_TTL = 1800.0
 CLOUDFLARE_SEARCH_PAGES = 5   # at most 5 x 100 catalogue entries are read
 
 DEFAULT_CLOUDFLARE_MODEL = "@cf/openai/gpt-oss-120b"
+NIM_PREFIX = "nim/"
+DEFAULT_NIM_BASE = "https://integrate.api.nvidia.com/v1"
+DEFAULT_NIM_MODEL = "poolside/laguna-xs-2.1"
+_NIM_KEY_RE = re.compile(r"^nvapi-[A-Za-z0-9_\-]{20,}$")
+# Catalogue entries that are not chat models (embeddings, speech, safety classifiers, image models ...).
+_NIM_NOT_CHAT = re.compile(r"embed|rerank|guard|safety|reward|parakeet|riva|canary|clip|paligemma|vision|neva|fuyu|kosmos|"
+                           r"retriev|bge|diffusion|flux|whisper|tts|asr|audio|voicechat|detector|calibration|molmim|esm|"
+                           r"alphafold|genmol|diffdock|cosmos|nv-", re.I)
+# Listed by NVIDIA but not callable when tried (a catalogue entry that answers 404 is worse than no entry).
+NIM_KNOWN_BROKEN = {"bigcode/starcoder2-15b"}      # HTTP 404 on 2026-11-18
+# Answered a one-line request in seconds in a live test on 2026-11-18; listed first. Everything else follows alphabetically.
+NIM_PREFERRED = ("poolside/laguna-xs-2.1", "nvidia/nemotron-3-ultra-550b-a55b", "nvidia/nemotron-3.5-lightning-30b-a3b",
+                 "minimaxai/minimax-m3.1-flash")
 PROVIDER_LABELS = {"opencode": "OpenCode", "opencode-go": "OpenCode Go", "nvidia": "NVIDIA", "openrouter": "OpenRouter"}
 PROVIDER_ORDER = ("opencode", "opencode-go", "nvidia", "openrouter")
 
@@ -62,8 +79,8 @@ _cache: Dict[str, Tuple[float, object]] = {}
 
 
 def child_env() -> Dict[str, str]:
-    """The environment handed to the `opencode` app: everything except the Cloudflare credentials, which it has no use for."""
-    return {k: v for k, v in os.environ.items() if not k.upper().startswith("CLOUDFLARE_")}
+    """The environment handed to the `opencode` app: everything except the Cloudflare and NIM credentials, which it has no use for."""
+    return {k: v for k, v in os.environ.items() if not k.upper().startswith(("CLOUDFLARE_", "NVIDIA_NIM_"))}
 
 
 def is_valid_model_id(value: object) -> bool:
@@ -72,6 +89,15 @@ def is_valid_model_id(value: object) -> bool:
 
 def is_cloudflare_id(value: Optional[str]) -> bool:
     return bool(value) and value.startswith(CLOUDFLARE_PREFIXES)
+
+
+def is_nim_id(value: Optional[str]) -> bool:
+    return bool(value) and value.startswith(NIM_PREFIX)
+
+
+def is_routed_id(value: Optional[str]) -> bool:
+    """True for ids served by a provider of their own (Cloudflare, NVIDIA NIM) instead of the configured one."""
+    return is_cloudflare_id(value) or is_nim_id(value)
 
 
 def normalize_opencode_id(model: str) -> str:
@@ -236,3 +262,63 @@ def cloudflare_status(refresh: bool = False) -> dict:
     models.sort(key=lambda m: (m["id"] != DEFAULT_CLOUDFLARE_MODEL, m["id"]))
     _put_cache(key, {"models": models, "hint": hint}, CLOUDFLARE_TTL if not hint else FAILURE_TTL)
     return {"available": True, "models": [dict(m) for m in models], "hint": hint}
+
+
+# ------------------------------------------------------------------------------------ NVIDIA NIM
+def nim_config() -> Optional[Tuple[str, str]]:
+    """(api key, base url) from NVIDIA_NIM_API_KEY only, or None when it is missing or not a plausible `nvapi-` key."""
+    key = os.getenv("NVIDIA_NIM_API_KEY", "").strip()
+    if not _NIM_KEY_RE.match(key):
+        return None
+    return key, os.getenv("NVIDIA_NIM_BASE_URL", DEFAULT_NIM_BASE).strip().rstrip("/")
+
+
+def _nim_entry(raw_id: str, note: str = "NVIDIA NIM hosted API") -> dict:
+    return {"id": NIM_PREFIX + raw_id, "label": raw_id, "provider": "nim", "group": "NVIDIA NIM",
+            "free": None, "note": note, "tag": "balanced", "thinking_levels": [], "reasoning": False}
+
+
+def static_nim_models() -> List[dict]:
+    return [_nim_entry(m) for m in NIM_PREFERRED]
+
+
+def parse_nim_models(payload: dict) -> List[dict]:
+    """Chat-like models out of `GET {base}/models`, the ones verified fast first, the rest alphabetical."""
+    ids = []
+    for item in (payload or {}).get("data") or []:
+        mid = item.get("id") if isinstance(item, dict) else None
+        if is_valid_model_id(mid) and "/" in mid and not _NIM_NOT_CHAT.search(mid) and mid not in ids and mid not in NIM_KNOWN_BROKEN:
+            ids.append(mid)
+    ids.sort(key=lambda m: (NIM_PREFERRED.index(m) if m in NIM_PREFERRED else len(NIM_PREFERRED), m))
+    return [_nim_entry(m) for m in ids]
+
+
+def _search_nim(key: str, base: str, timeout: float = 20.0) -> List[dict]:
+    req = urllib.request.Request(f"{base}/models", headers={"Authorization": f"Bearer {key}", "Accept": "application/json"})
+    with _urlopen(req, timeout) as r:
+        return parse_nim_models(json.loads(r.read().decode("utf-8")))
+
+
+def nim_status(refresh: bool = False) -> dict:
+    """{'available': bool, 'hint': str|None, 'models': [...]}. Never raises, never returns the key."""
+    cfg = nim_config()
+    if cfg is None:
+        return {"available": False, "models": [],
+                "hint": "NVIDIA NIM is not set up. Start the backend with NVIDIA_NIM_API_KEY set (a key starting nvapi-), then reload."}
+    cache_key = f"nim:{cfg[1]}:{cfg[0][-6:]}"
+    hit = _get_cache(cache_key, refresh)
+    if hit is not None:
+        return {"available": True, "models": [dict(m) for m in hit["models"]], "hint": hit["hint"]}
+    models, hint = [], None
+    try:
+        models = _search_nim(*cfg)
+    except urllib.error.HTTPError as e:
+        hint = f"Could not read NVIDIA's model list (HTTP {e.code}); showing the models tested fast. Check the key."
+    except Exception as e:
+        hint = f"Could not read NVIDIA's model list ({type(e).__name__}); showing the models tested fast."
+    if not models:
+        models = static_nim_models()
+        hint = hint or "NVIDIA returned no chat models; showing the models tested fast."
+    _put_cache(cache_key, {"models": models, "hint": hint}, CLOUDFLARE_TTL if not hint else FAILURE_TTL)
+    return {"available": True, "models": [dict(m) for m in models], "hint": hint}
+
