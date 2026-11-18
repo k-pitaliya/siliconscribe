@@ -6,7 +6,7 @@ import pytest
 
 import offline_designs as od
 import timing
-from timing import find_clock, parse_mapped_stats, parse_sta, run_timing, timing_message
+from timing import analyze_netlist, parameter_overrides, parse_mapped_stats, parse_sta, run_timing, sta_errors, timing_message
 
 needs_tools = pytest.mark.skipif(bool(timing.missing_requirements()) or shutil.which("iverilog") is None,
                                  reason="yosys, OpenSTA or the sky130 library is not installed")
@@ -52,7 +52,6 @@ def test_sta_report_gives_worst_slack_fmax_and_the_critical_path():
     assert t["slack_ns"] == 9.27 and t["met"] is True
     assert t["fmax_mhz"] == pytest.approx(1000 / 0.73, abs=0.1)
     assert (t["critical_start"], t["critical_end"], t["critical_delay_ns"]) == ("_14_", "_17_", 0.6)   # smallest slack, not the first block
-    assert t["power_mw"] == pytest.approx(0.0269)
 
 
 def test_negative_slack_means_the_target_is_missed_and_fmax_is_below_it():
@@ -61,9 +60,6 @@ def test_negative_slack_means_the_target_is_missed_and_fmax_is_below_it():
     assert parse_sta("no slack line here", 10.0) == {}
 
 
-def test_clock_detection():
-    assert find_clock("module m(input wire clk, input wire d, output reg q); endmodule") == "clk"
-    assert find_clock("module m(input wire [3:0] a, output wire y); endmodule") is None
 
 
 def test_missing_tools_are_reported_never_estimated(monkeypatch, tmp_path):
@@ -130,3 +126,197 @@ def test_pipeline_emits_timing_after_a_pass_and_none_for_a_fail_or_when_disabled
     monkeypatch.setattr(orchestrator, "TIMING_ENABLED", False)
     _, off = run("Design a 4-bit synchronous up-counter with async reset and enable")
     assert off["timing"] is None
+
+
+# ---------------------------------------------------------------------------------------------
+# Audit round: every case below was found by deliberately breaking the first version.
+# ---------------------------------------------------------------------------------------------
+
+NETLIST = """module cnt(clk, rst_n, en, q);
+  input clk;
+  input rst_n;
+  input [1:0] bus;
+  output [3:0] q;
+  sky130_fd_sc_hd__dfrtp_1 _07_ (
+    .CLK(clk),
+    .D(_01_),
+    .Q(q[0]),
+    .RESET_B(rst_n)
+  );
+  sky130_fd_sc_hd__nand2_1 _08_ (
+    .A(en),
+    .B(q[0]),
+    .Y(_01_)
+  );
+endmodule
+"""
+
+
+def _tools_netlist_totals(netlist: Path) -> tuple[float, int]:
+    """Area and cell count recomputed from the written netlist and the liberty file (not from Yosys' own stat)."""
+    import re
+    lib = timing.LIBERTY.read_text()
+    heads = list(re.finditer(r'cell\s*\(\s*"?(sky130_fd_sc_hd__\w+)"?\s*\)\s*\{', lib))
+    area = {}
+    for i, m in enumerate(heads):
+        end = heads[i + 1].start() if i + 1 < len(heads) else len(lib)
+        a = re.search(r"\barea\s*:\s*([0-9.]+)", lib[m.end():end])
+        if a:
+            area[m.group(1)] = float(a.group(1))
+    text = netlist.read_text()
+    assert text.count("\nmodule ") == 1, "the design must be flattened to one module"
+    cells = re.findall(r"^\s*(sky130_fd_sc_hd__\w+)\s+\S+\s*\($", text, re.M)
+    return round(sum(area[c] for c in cells), 3), len(cells)
+
+
+COUNTER_RTL = """module cnt(input {clk}, input rst_n, input en, output reg [7:0] q);
+  always @(posedge {clk} or negedge rst_n) if (!rst_n) q <= 0; else if (en) q <= q + 1;
+endmodule"""
+
+
+def test_netlist_analysis_reads_clock_flops_and_ports():
+    n = analyze_netlist(NETLIST)
+    assert n["clock_nets"] == {"clk"} and n["flip_flops"] == 1 and n["latches"] == 0
+    assert n["scalar_inputs"] == {"clk", "rst_n"}            # a bus is not a clock port
+    assert n["unmapped"] == []
+    bad = analyze_netlist(NETLIST.replace("sky130_fd_sc_hd__nand2_1 _08_", "\\$_TBUF_  _08_"))
+    assert bad["unmapped"] == ["$_TBUF_"]
+    latch = analyze_netlist(NETLIST.replace("sky130_fd_sc_hd__dfrtp_1", "sky130_fd_sc_hd__dlxtp_1"))
+    assert latch["latches"] == 1 and latch["flip_flops"] == 0
+
+
+def test_testbench_parameter_overrides_are_read_conservatively():
+    tb = "mux4to1 #(.WIDTH(16), .DEPTH( 4 )) dut (.a(a));"
+    assert parameter_overrides(tb, "mux4to1") == ({"WIDTH": 16, "DEPTH": 4}, False)
+    assert parameter_overrides("m #(.W(2*8), .D(3)) u (.a(a));", "m") == ({"D": 3}, True)   # expressions are not guessed
+    assert parameter_overrides("m #(.W(f(1,2))) u (.a(a));", "m") == ({}, True)               # nested parentheses
+    assert parameter_overrides("other #(.W(8)) u ();", "m") == ({}, False)
+    assert parameter_overrides("", "m") == ({}, False) and parameter_overrides(None, "m") == ({}, False)
+
+
+def test_only_error_lines_are_quoted_not_warnings():
+    out = "Warning 2402: power activity did not converge\nError: cell not found\nWarning: other"
+    assert sta_errors(out) == ["Error: cell not found"]
+
+
+def test_slack_keeps_four_decimals():
+    assert parse_sta("worst slack max 8.8123\n", 10.0)["slack_ns"] == 8.8123
+
+
+def test_power_is_not_reported():
+    assert "power_mw" not in timing.TimingReport.model_fields      # never displayed, never claimed
+
+
+@pytest.mark.parametrize("bad", [0, -5, float("nan"), float("inf"), 1e12, 20000])
+def test_out_of_range_targets_fall_back_to_the_default(bad):
+    assert run_timing("x", "bad name", Path("/nonexistent"), bad).period_ns == 10.0
+
+
+@needs_tools
+def test_hierarchical_design_reports_the_whole_design_not_one_module(tmp_path):
+    rtl = """module add4(input [3:0] a, input [3:0] b, output [4:0] s); assign s = a + b; endmodule
+module top(input clk, input rst_n, input [3:0] a, b, c, output reg [5:0] q);
+  wire [4:0] s1, s2;
+  add4 u1(.a(a), .b(b), .s(s1));
+  add4 u2(.a(s1[3:0]), .b(c), .s(s2));
+  always @(posedge clk or negedge rst_n) if (!rst_n) q <= 0; else q <= s1 + s2;
+endmodule"""
+    r = run_timing(rtl, "top", tmp_path, 100)
+    assert r.error is None and r.slack_ns is not None and r.clock == "clk"      # the clock is the TOP module's port
+    area, cells = _tools_netlist_totals(tmp_path / "netlist.v")
+    assert r.area_um2 == pytest.approx(area, abs=0.01) and r.cell_count == cells
+    assert r.flip_flops == 6
+
+
+@needs_tools
+@pytest.mark.parametrize("clk", ["clk", "sys_clk", "i_clk", "ck", "tick", "CK_50M"])
+def test_clock_is_found_from_the_netlist_whatever_it_is_called(tmp_path, clk):
+    r = run_timing(COUNTER_RTL.format(clk=clk), "cnt", tmp_path / clk, 100)
+    assert r.error is None and r.clock == clk and r.flip_flops == 8
+    ref = run_timing(COUNTER_RTL.format(clk="clk"), "cnt", tmp_path / "ref", 100)
+    assert r.slack_ns == pytest.approx(ref.slack_ns, abs=1e-6)         # same circuit, same answer
+
+
+@needs_tools
+def test_two_clock_design_times_both_clocks_and_says_crossings_are_not_timed(tmp_path):
+    rtl = """module two(input clk_a, input clk_b, input rst_n, input d, output reg qa, output reg qb);
+  always @(posedge clk_a or negedge rst_n) if(!rst_n) qa<=0; else qa<=d;
+  always @(posedge clk_b or negedge rst_n) if(!rst_n) qb<=0; else qb<=qa;
+endmodule"""
+    r = run_timing(rtl, "two", tmp_path, 100)
+    assert r.error is None and r.clock == "clk_a, clk_b" and r.slack_ns is not None
+    assert "between clocks" in r.note
+
+
+@needs_tools
+def test_derived_clock_is_refused_not_half_timed(tmp_path):
+    rtl = """module dv(input clk, input rst_n, output reg a, output reg b);
+  always @(posedge clk or negedge rst_n) if(!rst_n) a<=0; else a<=~a;
+  always @(posedge a or negedge rst_n) if(!rst_n) b<=0; else b<=~b;
+endmodule"""
+    r = run_timing(rtl, "dv", tmp_path, 100)
+    assert r.slack_ns is None and r.met is None and "derived or gated" in r.error
+    assert r.area_um2 is not None                                       # the mapped area is still real
+
+
+@needs_tools
+def test_latch_is_refused(tmp_path):
+    r = run_timing("module lt(input en, input d, output reg q); always @* if (en) q = d; endmodule", "lt", tmp_path)
+    assert r.slack_ns is None and "latch" in r.error.lower()
+
+
+@needs_tools
+def test_tristate_is_refused_instead_of_being_silently_turned_into_a_wire(tmp_path):
+    r = run_timing("module ts(input en, input a, output y); assign y = en ? a : 1'bz; endmodule", "ts", tmp_path)
+    assert r.slack_ns is None and r.met is None and "not mapped" in r.error
+
+
+@needs_tools
+def test_combinational_loop_is_refused(tmp_path):
+    r = run_timing("module lp(input a, output y); wire w; assign w = ~(a & y); assign y = ~w; endmodule", "lp", tmp_path)
+    assert r.slack_ns is None and "loop" in r.error.lower()
+
+
+@needs_tools
+@pytest.mark.parametrize("rtl", ["module k(output [3:0] y); assign y = 4'b1010; endmodule",
+                                 "module w(input a, output y); assign y = a; endmodule"])
+def test_design_with_no_logic_cells_has_nothing_to_time(tmp_path, rtl):
+    r = run_timing(rtl, "k" if "module k" in rtl else "w", tmp_path)
+    assert r.slack_ns is None and "no logic cells" in r.error
+
+
+@needs_tools
+def test_fmax_does_not_depend_on_the_target_asked_for(tmp_path):
+    rtl = COUNTER_RTL.format(clk="clk")
+    slow = run_timing(rtl, "cnt", tmp_path / "s", 100)
+    fast = run_timing(rtl, "cnt", tmp_path / "f", 800)                 # close to the limit: 2-decimal rounding used to show here
+    assert fast.fmax_mhz == pytest.approx(slow.fmax_mhz, rel=0.005)
+    assert (slow.period_ns - slow.slack_ns) == pytest.approx(fast.period_ns - fast.slack_ns, abs=2e-4)
+
+
+@needs_tools
+def test_testbench_parameters_decide_which_circuit_is_timed(tmp_path):
+    d = od.get_design("mux")
+    default = run_timing(d["rtl"], "mux4to1", tmp_path / "d", 100)
+    wide = run_timing(d["rtl"], "mux4to1", tmp_path / "w", 100, testbench_code="mux4to1 #(.WIDTH(16)) dut (.sel(s));")
+    assert (default.cell_count, wide.cell_count) == (8, 16)             # the width follows the testbench
+    assert "WIDTH=16" in wide.note and "WIDTH" not in default.note.replace("Not sign-off", "")
+    odd = run_timing(d["rtl"], "mux4to1", tmp_path / "o", 100, testbench_code="mux4to1 #(.NOPE(3)) dut (.sel(s));")
+    assert odd.error is None and odd.cell_count == 8                    # unknown name: falls back to the defaults
+    expr = run_timing(d["rtl"], "mux4to1", tmp_path / "e", 100, testbench_code="mux4to1 #(.WIDTH(2*8)) dut (.sel(s));")
+    assert expr.cell_count == 8 and "not plain numbers" in expr.note    # expressions are not guessed, and it says so
+
+
+@needs_tools
+def test_pipeline_gives_the_testbench_to_timing(tmp_path, monkeypatch):
+    import orchestrator
+    from simulator import IcarusSimulator
+    seen = {}
+    real = orchestrator.run_timing
+    def spy(*a, **kw):
+        seen.update(kw)
+        return real(*a, **kw)
+    monkeypatch.setattr(orchestrator, "run_timing", spy)
+    list(orchestrator.pipeline_events("Design a 4-bit synchronous up-counter with async reset and enable", "tbpass",
+                                      IcarusSimulator(workspace=str(tmp_path))))
+    assert "module testbench" in (seen.get("testbench_code") or "")

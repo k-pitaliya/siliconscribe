@@ -401,7 +401,8 @@ def run_timing_route(request: TimingRequest, req: Request):
     _check_rate_limit(_get_client_ip(req))
     from timing import run_timing
     return run_timing(request.rtl_code, request.module_name,
-                      Path(WORKSPACE) / ("ti_" + _new_design_id()[:24]), request.target_frequency_mhz)
+                      Path(WORKSPACE) / ("ti_" + _new_design_id()[:24]), request.target_frequency_mhz,
+                      testbench_code=request.testbench_code)
 
 
 @app.post("/api/uvm/export", response_model=UVMExportResponse)

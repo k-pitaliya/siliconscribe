@@ -752,7 +752,8 @@ def pipeline_events(
         if result.status == "PASS" and TIMING_ENABLED and not timing_missing():
             try:
                 timing = run_timing(rtl_code, spec.module_name,
-                                    simulator.workspace / (design_id[:26] + "_ti"), target_frequency_mhz)
+                                    simulator.workspace / (design_id[:26] + "_ti"), target_frequency_mhz,
+                                    testbench_code=tb_code)
                 yield {"stage": "timing", "timing": timing.model_dump(), "message": timing_message(timing)}
             except Exception:  # a failed extra check must not break the run
                 logger.exception("timing check failed")

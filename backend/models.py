@@ -283,7 +283,6 @@ class TimingReport(BaseModel):
     cell_count: Optional[int] = None
     flip_flops: Optional[int] = None
     cells: List[list] = Field(default_factory=list)      # [[cell name, count], ...] most common first
-    power_mw: Optional[float] = None
     note: str = ""
     error: Optional[str] = None
     seconds: float = 0.0
@@ -294,6 +293,7 @@ class TimingRequest(BaseModel):
     rtl_code: str = Field(..., max_length=100000)
     module_name: str = Field(..., max_length=64, pattern=r"^[A-Za-z_][A-Za-z0-9_]*$")
     target_frequency_mhz: Optional[int] = Field(None, ge=1, le=10000)
+    testbench_code: Optional[str] = Field(None, max_length=100000)   # only read for #(.PARAM(n)) overrides
 
 
 class RunResponse(BaseModel):

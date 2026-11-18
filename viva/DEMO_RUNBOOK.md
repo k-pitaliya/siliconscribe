@@ -14,6 +14,7 @@ Everything here was checked against the real app. Where a number depends on the 
 3. Do **not** run other long model jobs the same day (they share the free quota).
 4. Pre-generate one good live result in the app (a counter or FIFO) so it is in the **Projects** drawer.
 5. Laptop: charger in, notifications off, browser zoom 100%, window at least 1500 px wide, one browser tab.
+6. Optional, free and offline (about 30 s): `PATH="$HOME/.local/bin:$PATH" python3 tools/verify_mapping.py`. Every design should say OK or REFUSED (with a reason); this is the evidence behind the timing numbers if you are asked.
 
 ## Start the app (two terminals)
 ```
@@ -33,7 +34,7 @@ Open http://127.0.0.1:5173. The top-right badge must say **Live · deepseek-v4.1
 3. **Start a live run** (type the prompt, Generate). A live run takes about 2-11 minutes. Talk over the run timeline in the sidebar: specification, RTL, testbench, simulation, synthesis, testbench strength, timing. The clock under "Working…" proves it is not stuck.
    Good moment for the Target clock slider: set 500 MHz before generating and show whether timing is met.
 4. **While it runs, tour the loaded result:**
-   - *Results tab*: the verdict band, then four sections: **Testbench strength** ("caught N of M injected bugs"), **Timing and area** ("meets 100 MHz with +X ns slack", real area in µm² on sky130), **Synthesis**, and **Toggle coverage (measured)**.
+   - *Results tab*: the verdict band, then four sections: **Testbench strength** ("caught N of M injected bugs"), **Timing and area** ("meets 100 MHz with +X ns slack", real area in µm² on sky130; a design with no clock, like the ALU, shows its longest input-to-output path instead), **Synthesis**, and **Toggle coverage (measured)**.
    - *Test cases tab*: every executed check with its type; filter to a type; click a row.
    - *Waveform tab*: grouped signals, value at the cursor, radix. Every tab is full height.
    - The theme switch (top right) follows the system; pick whichever reads best on the projector.

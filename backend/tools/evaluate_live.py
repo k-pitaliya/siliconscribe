@@ -122,11 +122,36 @@ def backfill() -> int:
             continue
         rec["toggle_percent"] = res.measured_toggle.percent if res.measured_toggle else None
         if rec["status"] == "PASS":
-            tm = run_timing(design.read_text(), rec["module"], Path(tempfile.mkdtemp(prefix="evalti_")), 100)
+            tm = run_timing(design.read_text(), rec["module"], Path(tempfile.mkdtemp(prefix="evalti_")), 100,
+                            testbench_code=tb.read_text())
             rec.update(timing_met=tm.met, timing_fmax_mhz=tm.fmax_mhz, area_um2=tm.area_um2)
         rec["backfilled"] = True
         changed += 1
         print(f"  {pid}: toggle {rec['toggle_percent']}%, max {rec.get('timing_fmax_mhz')} MHz, {rec.get('area_um2')} um2")
+    if changed:
+        RESULTS.write_text("".join(json.dumps(r) + "\n" for r in done.values()))
+    return changed
+
+
+def retime() -> int:
+    """Recompute timing and area for every saved PASS design with the CURRENT timing code (no model call).
+
+    Needed when the timing estimate itself changes: the saved numbers must come from the code that ships.
+    Returns how many records changed; running it again changes none."""
+    from timing import run_timing
+    done, changed = load_done(), 0
+    for pid, rec in done.items():
+        design, tb = ARTIFACTS / f"{pid}_design.sv", ARTIFACTS / f"{pid}_testbench.sv"
+        if rec.get("status") != "PASS" or not (design.exists() and tb.exists()):
+            continue
+        tm = run_timing(design.read_text(), rec["module"], Path(tempfile.mkdtemp(prefix="evalrt_")), 100,
+                        testbench_code=tb.read_text())
+        new = {"timing_met": tm.met, "timing_fmax_mhz": tm.fmax_mhz, "area_um2": tm.area_um2,
+               "timing_error": tm.error if tm.slack_ns is None else None}
+        if any(rec.get(k) != v for k, v in new.items()):
+            rec.update(new)
+            changed += 1
+            print(f"  {pid}: max {tm.fmax_mhz} MHz, {tm.area_um2} um2" + (f" (not timed: {tm.error})" if tm.slack_ns is None else ""))
     if changed:
         RESULTS.write_text("".join(json.dumps(r) + "\n" for r in done.values()))
     return changed
@@ -190,10 +215,13 @@ def main() -> int:
     ap.add_argument("--redo", action="store_true", help="run again even if a record exists")
     ap.add_argument("--summary", action="store_true", help="only rebuild summary.md")
     ap.add_argument("--backfill", action="store_true", help="add toggle/timing to older records from saved artifacts (no model call)")
+    ap.add_argument("--retime", action="store_true", help="recompute timing/area of saved PASS designs with the current timing code (no model call)")
     args = ap.parse_args()
     OUT_DIR.mkdir(exist_ok=True)
 
-    if args.backfill:
+    if args.retime:
+        print(f"retimed {retime()} record(s)")
+    elif args.backfill:
         print(f"backfilled {backfill()} record(s)")
     elif not args.summary:
         import llm_service

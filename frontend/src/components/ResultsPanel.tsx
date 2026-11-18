@@ -264,11 +264,22 @@ function ResultsView({
               <h3><Timer size={16} aria-hidden="true" /> Timing and area (pre-layout)</h3>
               <div className="section-body">
                 {timing.slack_ns != null ? (
-                  <div data-testid="timing-summary" style={timing.met ? undefined : { color: 'var(--fail)' }}>
-                    <strong>{timing.met ? 'Meets' : 'Misses'} {timing.target_mhz} MHz</strong>
-                    {' '}with {timing.slack_ns >= 0 ? '+' : ''}{timing.slack_ns.toFixed(2)} ns slack
-                    {timing.fmax_mhz != null && <span className="muted"> (maximum about {Math.round(timing.fmax_mhz)} MHz)</span>}
-                  </div>
+                  timing.clock?.startsWith('virtual') ? (
+                    // No clock in the design: the honest question is "how long is the slowest input-to-output path?"
+                    <div data-testid="timing-summary" style={timing.met ? undefined : { color: 'var(--fail)' }}>
+                      <strong>Longest input-to-output path: {(timing.period_ns - timing.slack_ns).toFixed(2)} ns</strong>
+                      {' '}({timing.met
+                        ? `fits a ${timing.period_ns} ns budget (${timing.target_mhz} MHz) with ${timing.slack_ns.toFixed(2)} ns to spare`
+                        : `${(-timing.slack_ns).toFixed(2)} ns over a ${timing.period_ns} ns budget (${timing.target_mhz} MHz)`})
+                      <span className="muted"> This design has no clock.</span>
+                    </div>
+                  ) : (
+                    <div data-testid="timing-summary" style={timing.met ? undefined : { color: 'var(--fail)' }}>
+                      <strong>{timing.met ? 'Meets' : 'Misses'} {timing.target_mhz} MHz</strong>
+                      {' '}with {timing.slack_ns >= 0 ? '+' : ''}{timing.slack_ns.toFixed(2)} ns slack
+                      {timing.fmax_mhz != null && <span className="muted"> (maximum about {Math.round(timing.fmax_mhz)} MHz)</span>}
+                    </div>
+                  )
                 ) : (
                   <div data-testid="timing-summary" className="muted">{timing.error ?? 'No timing result.'}</div>
                 )}

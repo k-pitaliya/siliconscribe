@@ -130,3 +130,30 @@ def test_backfill_only_updates_records_whose_saved_verdict_reproduces(out, monke
     assert saved["c1"]["toggle_percent"] == 80.0 and saved["c1"]["backfilled"] is True
     assert "toggle_percent" not in saved["c2"]
     assert ev.backfill() == 0                                                # idempotent
+
+
+def test_retime_refreshes_saved_numbers_with_the_current_timing_code_and_hands_over_the_testbench(out, monkeypatch):
+    import timing
+    from models import TimingReport
+    (out / "artifacts").mkdir()
+    for pid in ("c1", "c2", "c3"):
+        (out / "artifacts" / f"{pid}_design.sv").write_text(f"// design {pid}")
+        (out / "artifacts" / f"{pid}_testbench.sv").write_text(f"// tb {pid}")
+    seen = []
+    def fake(rtl, module, work_dir, target_mhz=None, testbench_code=None):
+        seen.append((rtl, testbench_code))
+        if "c2" in rtl:      # a design the estimate now refuses
+            return TimingReport(available=True, error="The design contains latches; timing of latch-based logic is not estimated.")
+        return TimingReport(available=True, slack_ns=9.0, met=True, fmax_mhz=1000.0, area_um2=50.0)
+    monkeypatch.setattr(timing, "run_timing", fake)
+    old = rec("c1")
+    old.update(timing_met=True, timing_fmax_mhz=990.0, area_um2=49.0)     # numbers from the older timing code
+    _write(out, old, rec("c2"), rec("c3", status="FAIL"))
+    assert ev.retime() == 2
+    saved = ev.load_done()
+    assert (saved["c1"]["timing_fmax_mhz"], saved["c1"]["area_um2"], saved["c1"]["timing_error"]) == (1000.0, 50.0, None)
+    assert saved["c2"]["timing_error"].startswith("The design contains latches") and saved["c2"]["area_um2"] is None
+    assert "timing_met" not in saved["c3"]                                  # a design that did not pass is never timed
+    assert ("// design c1", "// tb c1") in seen                             # the testbench goes along (parameter overrides)
+    assert ev.retime() == 0                                                  # idempotent
+
