@@ -497,5 +497,18 @@ describe('ResultsPanel: who wrote what, and the second opinion', () => {
     render(<ResultsPanel {...base} />)
     expect(screen.queryByTestId('second-opinion')).toBeNull()
   })
+
+  it('never credits a model for the scripted offline demo', () => {
+    render(<ResultsPanel {...base} model="offline demo" />)
+    expect(screen.queryByTestId('model-used')).toBeNull()
+  })
+
+  it('colours a clockless result red when it does not fit, and leaves a fitting one plain', () => {
+    const clockless = { available: true, library: 'sky130', clock: 'virtual (combinational design)', target_mhz: 2000, period_ns: 0.5, fmax_mhz: 371, area_um2: 1, cell_count: 1, cells: [], note: 'n' }
+    const { rerender } = render(<ResultsPanel {...base} timing={{ ...clockless, slack_ns: -2.19, met: false } as never} />)
+    expect(screen.getByTestId('timing-summary')).toHaveStyle({ color: 'var(--fail)' })
+    rerender(<ResultsPanel {...base} timing={{ ...clockless, target_mhz: 100, period_ns: 10, slack_ns: 7.31, met: true } as never} />)
+    expect(screen.getByTestId('timing-summary').getAttribute('style') ?? '').not.toContain('--fail')
+  })
 })
 

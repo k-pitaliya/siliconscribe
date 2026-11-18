@@ -80,4 +80,13 @@ describe('TestbenchModelSelect', () => {
     renderSelect({ disabled: true })
     expect(screen.getByRole('combobox', { name: 'Testbench written by' })).toBeDisabled()
   })
+
+  it('is controlled: it shows the value it is given and follows it when it changes', () => {
+    const { rerender } = render(<TestbenchModelSelect models={models} value="opencode-go/kimi-k3" onChange={vi.fn()} />)
+    expect(screen.getByRole('combobox', { name: 'Testbench written by' })).toHaveValue('opencode-go/kimi-k3')
+    rerender(<TestbenchModelSelect models={models} value="@cf/openai/gpt-oss-120b" onChange={vi.fn()} />)
+    expect(screen.getByRole('combobox', { name: 'Testbench written by' })).toHaveValue('@cf/openai/gpt-oss-120b')
+    rerender(<TestbenchModelSelect models={models} value="" onChange={vi.fn()} />)
+    expect(screen.getByRole('combobox', { name: 'Testbench written by' })).toHaveValue('')
+  })
 })

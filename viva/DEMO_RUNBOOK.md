@@ -14,7 +14,8 @@ Everything here was checked against the real app. Where a number depends on the 
 3. Do **not** run other long model jobs the same day (they share the free quota).
 4. Pre-generate one good live result in the app (a counter or FIFO) so it is in the **Projects** drawer.
 5. Laptop: charger in, notifications off, browser zoom 100%, window at least 1500 px wide, one browser tab.
-6. Optional, free and offline (about 30 s): `PATH="$HOME/.local/bin:$PATH" python3 tools/verify_mapping.py`. Every design should say OK or REFUSED (with a reason); this is the evidence behind the timing numbers if you are asked.
+6. Optional: tick **Review the specification before generating** to show the audience the specification the model wrote before it builds anything, and pick a second model under **Testbench written by** to show independent verification (it costs one extra model call and can make the run end FAIL if the two disagree: that is the feature working, say so).
+7. Optional, free and offline (about 30 s): `PATH="$HOME/.local/bin:$PATH" python3 tools/verify_mapping.py`. Every design should say OK or REFUSED (with a reason); this is the evidence behind the timing numbers if you are asked.
 
 ## Start the app (two terminals)
 ```

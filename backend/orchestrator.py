@@ -789,6 +789,13 @@ def pipeline_events(
             yield {"stage": "second_opinion", "message": "The testbench changed during repair: asking for a fresh, independent testbench as a second opinion..."}
             second = _second_opinion()
             yield {"stage": "second_opinion", "second_opinion": second.model_dump(), "message": _second_opinion_message(second)}
+        # Two separate models disagree: the failure is information about the SPECIFICATION and both readings of it, not
+        # necessarily a design bug. Say so, because a bare FAIL does not tell the user which side to doubt.
+        disagree_note = None
+        if independent_tb and result.status == "FAIL":
+            disagree_note = (f"The design (by {_model_used(model)}) and the testbench (by {_model_used(testbench_model)}) were written by different "
+                             "models and they disagree. Either the design or the testbench misreads the specification: compare the first failing "
+                             "check with the specification before changing either.")
         second_note = None
         if second is not None and second.status == "FAIL":
             second_note = (f"A fresh testbench written from the same specification by {second.model or 'the model'} FAILS on the final design "
@@ -819,7 +826,7 @@ def pipeline_events(
                 logger.exception("timing check failed")
                 timing = None
         warning_text = " ".join(
-            n for n in (weak_verification_note(spec, result), weak_strength_note(strength), oracle_note, second_note) if n
+            n for n in (weak_verification_note(spec, result), weak_strength_note(strength), oracle_note, second_note, disagree_note) if n
         ) or None
 
         response = RunResponse(

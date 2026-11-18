@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { RTLDesignSpec } from '../types'
 
 const MAX_BEHAVIOR = 4000 // the server's limit: a longer text would be refused after the user pressed the button
@@ -25,6 +25,9 @@ export default function SpecReview({ spec, onConfirm, onCancel, busy = false }: 
   const [behavior, setBehavior] = useState(spec.behavior ?? '')
   const [constraints, setConstraints] = useState((spec.constraints ?? []).join('\n'))
   const ports = spec.ports ?? []
+  // The panel replaces the results: move focus to it so keyboard and screen-reader users know something changed.
+  const heading = useRef<HTMLHeadingElement>(null)
+  useEffect(() => { heading.current?.focus() }, [])
   const parameters = spec.parameters ?? []
 
   function confirm() {
@@ -37,7 +40,7 @@ export default function SpecReview({ spec, onConfirm, onCancel, busy = false }: 
 
   return (
     <section className="spec-review" aria-label="Review the specification">
-      <h2>Review the specification</h2>
+      <h2 ref={heading} tabIndex={-1}>Review the specification</h2>
       <p>The design and its testbench are both written from this. Fix anything that does not match what you meant.</p>
 
       <div>Module <span className="mono">{spec.module_name}</span></div>
@@ -53,8 +56,8 @@ export default function SpecReview({ spec, onConfirm, onCancel, busy = false }: 
           </tr>
         </thead>
         <tbody>
-          {ports.map((p) => (
-            <tr key={p.name}>
+          {ports.map((p, i) => (
+            <tr key={`${i}-${p.name}`}>
               <td className="mono">{p.name}</td>
               <td>{p.direction}</td>
               <td>{p.width}</td>
@@ -68,8 +71,8 @@ export default function SpecReview({ spec, onConfirm, onCancel, busy = false }: 
         <div>
           <div className="field-label">Parameters</div>
           <ul>
-            {parameters.map((p) => (
-              <li key={p.name} className="mono">{`${p.name} = ${p.default}`}</li>
+            {parameters.map((p, i) => (
+              <li key={`${i}-${p.name}`} className="mono">{`${p.name} = ${p.default}`}</li>
             ))}
           </ul>
         </div>

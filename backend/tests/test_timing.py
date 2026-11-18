@@ -300,7 +300,7 @@ def test_testbench_parameters_decide_which_circuit_is_timed(tmp_path):
     default = run_timing(d["rtl"], "mux4to1", tmp_path / "d", 100)
     wide = run_timing(d["rtl"], "mux4to1", tmp_path / "w", 100, testbench_code="mux4to1 #(.WIDTH(16)) dut (.sel(s));")
     assert (default.cell_count, wide.cell_count) == (8, 16)             # the width follows the testbench
-    assert "WIDTH=16" in wide.note and "WIDTH" not in default.note.replace("Not sign-off", "")
+    assert "Parameters taken from the testbench: WIDTH=16." in wide.note and "WIDTH" not in default.note.replace("Not sign-off", "")
     odd = run_timing(d["rtl"], "mux4to1", tmp_path / "o", 100, testbench_code="mux4to1 #(.NOPE(3)) dut (.sel(s));")
     assert odd.error is None and odd.cell_count == 8                    # unknown name: falls back to the defaults
     expr = run_timing(d["rtl"], "mux4to1", tmp_path / "e", 100, testbench_code="mux4to1 #(.WIDTH(2*8)) dut (.sel(s));")
@@ -337,3 +337,45 @@ def test_positional_testbench_parameters_reach_the_timed_circuit(tmp_path):
     d = od.get_design("alu8")
     r = run_timing(d["rtl"], "alu_8bit", tmp_path, 100, testbench_code=d["tb"])
     assert r.error is None and "WIDTH=8" in r.note and "were not applied" not in r.note
+
+
+def test_parameter_values_over_the_cap_are_ignored_named_or_positional():
+    rtl = "module m #(parameter A = 1, parameter B = 2)(input x); endmodule"
+    cap = timing.MAX_PARAMETER_VALUE
+    assert parameter_overrides(f"m #(.A({cap})) u ();", "m", rtl) == ({"A": cap}, False)            # the limit itself is allowed
+    assert parameter_overrides(f"m #(.A({cap + 1})) u ();", "m", rtl) == ({}, True)                  # one more is not (named)
+    assert parameter_overrides(f"m #({cap + 1}) u ();", "m", rtl) == ({}, True)                      # nor positional
+    assert parameter_overrides("m #(99999999999999999999) u ();", "m", rtl) == ({}, True)
+
+
+def test_commas_inside_nested_parentheses_do_not_shift_positional_parameters():
+    rtl = "module m #(parameter A = 1, parameter B = 2, parameter C = 3)(input x); endmodule"
+    # f(a,4) is one expression, so the plain 5 is the SECOND parameter. Splitting inside the parentheses would call it the third.
+    assert parameter_overrides("m #(f(a,4), 5) u ();", "m", rtl) == ({"B": 5}, True)
+
+
+def test_a_header_piece_without_a_name_cannot_receive_a_value():
+    rtl = "module m #(parameter A = 1, , parameter B = 2)(input x); endmodule"                      # malformed: an empty second piece
+    got, skipped = parameter_overrides("m #(1, 2, 3) u ();", "m", rtl)
+    assert got == {"A": 1, "B": 3} and skipped is True                                                # the value for the nameless slot is skipped, not stored under None
+    assert None not in got
+
+
+def test_an_unterminated_module_header_never_maps_positional_values():
+    assert parameter_overrides("m #(5) u ();", "m", "module m #(parameter A = 1, parameter B = 2") == ({}, True)
+
+
+def test_positional_values_follow_the_header_of_the_module_that_is_instantiated():
+    rtl = ("module leaf #(parameter X = 1)(input a, output y); assign y = a; endmodule\n"
+           "module top #(parameter W = 4, parameter D = 2)(input a, output y); leaf u(.a(a), .y(y)); endmodule")
+    assert parameter_overrides("top #(8, 3) dut (.a(a));", "top", rtl) == ({"W": 8, "D": 3}, False)   # not leaf's X
+
+
+@needs_tools
+def test_an_override_that_names_a_localparam_is_dropped_by_the_retry_not_an_error(tmp_path):
+    rtl = ("module inv #(parameter WIDTH = 4)(input [WIDTH-1:0] a, output [WIDTH-1:0] y);\n"
+           "  localparam INV = 1;\n  assign y = INV ? ~a : a;\nendmodule")
+    plain = run_timing(rtl, "inv", tmp_path / "p", 100)
+    r = run_timing(rtl, "inv", tmp_path / "r", 100, testbench_code="inv #(.INV(0)) dut (.a(a));")     # INV exists in the source, but cannot be overridden
+    assert r.error is None and r.cell_count == plain.cell_count and r.area_um2 == plain.area_um2
+    assert "were not applied" in r.note and "Parameters taken from the testbench" not in r.note

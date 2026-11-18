@@ -49,4 +49,15 @@ describe('SpecSummary', () => {
     expect(screen.getByText('counter')).toBeInTheDocument()
     expect(screen.queryByRole('list')).toBeNull()
   })
+
+  it('names the ports table for assistive technology', () => {
+    render(<SpecSummary spec={spec} />)
+    expect(screen.getByRole('table', { name: 'Ports', hidden: true })).toBeInTheDocument()
+  })
+
+  it('shows each port with its direction and width', () => {
+    render(<SpecSummary spec={spec} />)
+    const rows = screen.getAllByRole('row', { hidden: true }).slice(1).map((r) => r.textContent)
+    expect(rows).toEqual(['clkinput1', 'countoutput4'])
+  })
 })

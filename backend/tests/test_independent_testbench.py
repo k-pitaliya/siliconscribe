@@ -138,3 +138,40 @@ def test_the_request_accepts_a_testbench_model_and_refuses_a_malformed_one():
     assert RunRequest(prompt="x", testbench_model="nim/poolside/laguna-xs-2.1").testbench_model == "nim/poolside/laguna-xs-2.1"
     with pytest.raises(Exception):
         RunRequest(prompt="x", testbench_model="--help")
+
+
+def test_when_two_separate_models_disagree_the_failure_says_so(script, tmp_path, monkeypatch):
+    # the repair cannot fix the design (it returns the same buggy RTL), so the run ends FAIL against the independent testbench
+    monkeypatch.setattr(llm_service, "fix_design", lambda rtl, tb, log, model=None, **k: {
+        "rtl_code": rtl, "testbench_code": tb, "fix_summary": "no change", "fix_type": "rtl_logic", "diagnosis": None})
+    r = done(run(tmp_path, model="m-design", testbench_model="m-tb"))
+    assert r["status"] == "FAIL" and r["independent_testbench"] is True
+    assert "written by different models and they disagree" in r["verification_warning"]
+    assert "m-design" in r["verification_warning"] and "m-tb" in r["verification_warning"]
+
+
+def test_a_failure_with_one_model_for_both_gets_no_disagreement_note(script, tmp_path, monkeypatch):
+    monkeypatch.setattr(llm_service, "fix_design", lambda rtl, tb, log, model=None, **k: {
+        "rtl_code": rtl, "testbench_code": tb, "fix_summary": "no change", "fix_type": "rtl_logic", "diagnosis": None})
+    r = done(run(tmp_path))
+    assert r["status"] == "FAIL" and "disagree" not in (r["verification_warning"] or "")
+
+
+def test_an_independent_pass_carries_no_disagreement_note(script, tmp_path):
+    r = done(run(tmp_path, model="m-design", testbench_model="m-tb"))
+    assert r["status"] == "PASS" and "disagree" not in (r["verification_warning"] or "")
+
+
+def test_a_separate_testbench_that_does_not_even_compile_may_still_be_repaired(script, tmp_path, monkeypatch):
+    broken = GOOD_TB.replace(ONE_VALUE, 'chk("reset", "released_count_still_zero", 0, no_such_signal)')
+    assert broken != GOOD_TB
+    script.tbs = [broken, GOOD_TB]                    # the separate model's first testbench cannot compile
+    monkeypatch.setattr(llm_service, "fix_design", lambda rtl, tb, log, model=None, **k: {   # the repair really fixes the testbench
+        "rtl_code": GOOD_RTL, "testbench_code": GOOD_TB, "fix_summary": "fixed the testbench", "fix_type": "testbench_logic", "diagnosis": None})
+    events = run(tmp_path, model="m-design", testbench_model="m-tb")
+    r = done(events)
+    fix = next(e for e in events if e["stage"] == "fix")
+    assert "Testbench change not applied" not in fix["message"]                          # a broken oracle is not a disagreement
+    assert r["status"] == "PASS" and r["testbench_code"] != broken
+    assert r["independent_testbench"] is True and r["second_opinion"] is not None         # it WAS rewritten, so a fresh one is asked for
+

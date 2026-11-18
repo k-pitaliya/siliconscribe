@@ -216,3 +216,105 @@ describe('ModelPicker', () => {
     expect(screen.getByRole('status')).toHaveTextContent('Showing suggested models.')
   })
 })
+
+describe('ModelPicker: keyboard, focus order and honest states', () => {
+  it('has one tab stop in the source switch: the checked source', () => {
+    renderPicker()
+    const radios = screen.getAllByRole('radio')
+    expect(radios.map((r) => r.getAttribute('tabindex'))).toEqual(['0', '-1', '-1'])
+  })
+
+  it('arrow keys move between sources, wrap around, and move focus with them', () => {
+    const props = renderPicker()
+    const opencode = screen.getByRole('radio', { name: 'OpenCode' })
+    fireEvent.keyDown(opencode, { key: 'ArrowRight' })
+    expect(props.onModelChange).toHaveBeenLastCalledWith('@cf/openai/gpt-oss-120b')
+    expect(screen.getByRole('radio', { name: 'Cloudflare' })).toHaveFocus()
+    fireEvent.keyDown(opencode, { key: 'ArrowLeft' })                    // wraps from the first to the last
+    expect(props.onModelChange).toHaveBeenLastCalledWith('nim/poolside/laguna-xs-2.1')
+    expect(screen.getByRole('radio', { name: 'NVIDIA NIM' })).toHaveFocus()
+  })
+
+  it('Home and End jump to the first and last source', () => {
+    const props = renderPicker({ selectedModel: '@cf/openai/gpt-oss-120b' })
+    fireEvent.keyDown(screen.getByRole('radio', { name: 'Cloudflare' }), { key: 'End' })
+    expect(props.onModelChange).toHaveBeenLastCalledWith('nim/poolside/laguna-xs-2.1')
+    fireEvent.keyDown(screen.getByRole('radio', { name: 'Cloudflare' }), { key: 'Home' })
+    expect(props.onModelChange).toHaveBeenLastCalledWith('opencode/deepseek-v4.1-flash-free')
+  })
+
+  it('other keys and a disabled picker do nothing', () => {
+    const props = renderPicker({ disabled: true })
+    fireEvent.keyDown(screen.getByRole('radio', { name: 'OpenCode' }), { key: 'ArrowRight' })
+    expect(props.onModelChange).not.toHaveBeenCalled()
+    const enabled = renderPicker()
+    fireEvent.keyDown(screen.getAllByRole('radio', { name: 'OpenCode' })[1], { key: 'a' })
+    expect(enabled.onModelChange).not.toHaveBeenCalled()
+  })
+
+  it('the refresh button follows the source switch in the DOM, matching where it appears', () => {
+    renderPicker()
+    const group = screen.getByRole('radiogroup', { name: 'Model source' })
+    expect(group.nextElementSibling).toBe(screen.getByRole('button', { name: 'Refresh model list' }))
+  })
+
+  it('does not pretend a model is selected when the selection is not in the list', () => {
+    const props = renderPicker({ selectedModel: 'opencode/not-offered-any-more' })
+    const select = screen.getByRole('combobox', { name: 'Model' })
+    expect(select).toHaveValue('')
+    const placeholder = select.querySelector('option[value=""]') as HTMLOptionElement
+    expect(placeholder.textContent).toBe('Choose a model')
+    expect(placeholder.disabled).toBe(true)
+    fireEvent.change(select, { target: { value: 'opencode/big-pickle' } })
+    expect(props.onModelChange).toHaveBeenCalledWith('opencode/big-pickle')
+  })
+
+  it('has no placeholder when the selection is valid', () => {
+    renderPicker()
+    expect(screen.getByRole('combobox', { name: 'Model' }).querySelector('option[value=""]')).toBeNull()
+  })
+
+  it('shows the server\'s own explanation when the OpenCode list is empty', () => {
+    renderPicker({ models: [], selectedModel: '', providers: [{ id: 'opencode', label: 'OpenCode', available: true, count: 0, hint: 'No models were found. Is the OpenCode app installed and signed in?' }] })
+    expect(screen.getByRole('status')).toHaveTextContent('No models were found. Is the OpenCode app installed and signed in?')
+  })
+
+  it('does not leave a label pointing at a control that is not there', () => {
+    const { container } = render(<ModelPicker models={models} providers={[{ id: 'opencode', label: 'OpenCode', available: true, count: 3 }]} selectedModel="opencode/big-pickle"
+      onModelChange={vi.fn()} includePaid={false} onIncludePaidChange={vi.fn()} paidHidden={0} onRefresh={vi.fn()} />)
+    fireEvent.click(screen.getByRole('radio', { name: 'NVIDIA NIM' }))            // provider missing: only a hint is shown
+    expect(container.querySelector('label[for="model-select"]')).toBeNull()
+    expect(screen.getByText('Model')).toBeInTheDocument()
+  })
+})
+
+describe('ModelPicker: behaviours the first tests did not pin down', () => {
+  it('recognises a Cloudflare model by its id alone when the server sent no provider', () => {
+    const bare: ModelInfo[] = [{ id: '@cf/qwen/qwen2.5-coder-32b-instruct', label: 'qwen2.5-coder-32b-instruct', note: '', tag: 'balanced' }, models[0]]
+    renderPicker({ models: bare, selectedModel: '@cf/qwen/qwen2.5-coder-32b-instruct' })
+    expect(screen.getByRole('radio', { name: 'Cloudflare' })).toHaveAttribute('aria-checked', 'true')
+  })
+
+  it('switching to OpenCode picks a FREE model even when a non-free one is listed first', () => {
+    const reordered: ModelInfo[] = [
+      { id: 'opencode/gpt-5.5', label: 'gpt-5.5', note: '', tag: 'balanced', provider: 'opencode', group: 'OpenCode', free: null },
+      { id: 'opencode/big-pickle-free', label: 'big-pickle-free', note: '', tag: 'balanced', provider: 'opencode', group: 'OpenCode', free: true },
+      models[3],
+    ]
+    const props = renderPicker({ models: reordered, selectedModel: '@cf/openai/gpt-oss-120b' })
+    fireEvent.click(screen.getByRole('radio', { name: 'OpenCode' }))
+    expect(props.onModelChange).toHaveBeenCalledWith('opencode/big-pickle-free')
+  })
+
+  it('clicking the source that is already selected does not change the model', () => {
+    const props = renderPicker()
+    fireEvent.click(screen.getByRole('radio', { name: 'OpenCode' }))
+    expect(props.onModelChange).not.toHaveBeenCalled()
+  })
+
+  it('shows the selected model\'s note under the menu', () => {
+    renderPicker()
+    expect(screen.getByText('Free', { selector: '.model-note' })).toBeInTheDocument()
+  })
+})
+

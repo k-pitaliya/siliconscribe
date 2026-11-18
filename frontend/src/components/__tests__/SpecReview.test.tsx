@@ -125,4 +125,24 @@ describe('SpecReview', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Generate with this specification' }))
     expect(onConfirm.mock.calls[0][0]).toMatchObject({ module_name: 'counter', behavior: '', constraints: [] })
   })
+
+  it('moves keyboard focus to the panel when it appears', () => {
+    renderReview()
+    expect(screen.getByRole('heading', { name: 'Review the specification' })).toHaveFocus()
+  })
+
+  it('copes with two ports that share a name without a duplicate-key warning', () => {
+    const warn = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const dup = { ...spec, ports: [spec.ports[0], { ...spec.ports[0] }] }
+    render(<SpecReview spec={dup} onConfirm={vi.fn()} onCancel={vi.fn()} />)
+    expect(screen.getAllByText('clk')).toHaveLength(2)
+    expect(warn.mock.calls.flat().join(' ')).not.toMatch(/same key/)
+    warn.mockRestore()
+  })
+
+  it('locks both text boxes while a run is starting, not only the buttons', () => {
+    renderReview({ busy: true })
+    expect(screen.getByLabelText('Behaviour')).toBeDisabled()
+    expect(screen.getByLabelText('Constraints (one per line)')).toBeDisabled()
+  })
 })

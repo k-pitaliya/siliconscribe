@@ -12,7 +12,7 @@ export default function SpecSummary({ spec }: Props) {
     <details className="spec-summary" data-testid="spec-summary">
       <summary>Specification the design was built from</summary>
       <div>Module <span className="mono">{spec.module_name}</span></div>
-      <table>
+      <table aria-label="Ports">
         <thead>
           <tr>
             <th scope="col">Name</th>
@@ -21,8 +21,8 @@ export default function SpecSummary({ spec }: Props) {
           </tr>
         </thead>
         <tbody>
-          {ports.map((p) => (
-            <tr key={p.name}>
+          {ports.map((p, i) => (
+            <tr key={`${i}-${p.name}`}>
               <td className="mono">{p.name}</td>
               <td>{p.direction}</td>
               <td>{p.width}</td>
