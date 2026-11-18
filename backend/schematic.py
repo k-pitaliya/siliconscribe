@@ -66,7 +66,8 @@ def _yosys_warnings(output: str, limit: int = 5) -> list[str]:
     seen: list[str] = []
     for line in output.splitlines():
         if line.startswith("Warning:"):
-            msg = line[len("Warning:"):].strip()[:200]
+            # Keep only file names: the server's temporary directories are noise to the user and should not be shown.
+            msg = re.sub(r"(?:/[^\s/:]+)+/([^\s/:]+)", r"\1", line[len("Warning:"):].strip())[:200]
             if msg and msg not in seen:
                 seen.append(msg)
     return seen[:limit]

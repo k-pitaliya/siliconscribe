@@ -141,3 +141,14 @@ describe('App: which model wrote the result', () => {
     expect(screen.queryByTestId('model-used')).toBeNull()
   })
 })
+
+describe('App: the header says which model the next run will use', () => {
+  it('follows the model chosen in the menu, not only the server default', async () => {
+    render(<App />)
+    await picker()
+    expect(screen.getByTestId('provider-badge')).toHaveTextContent('Live · opencode/deepseek-v4.1-flash-free')
+    fireEvent.change(screen.getByRole('combobox', { name: 'Model' }), { target: { value: 'opencode/hy4-flash-free' } })
+    expect(screen.getByTestId('provider-badge')).toHaveTextContent('Live · opencode/hy4-flash-free')
+  })
+})
+

@@ -416,7 +416,8 @@ export default function App() {
         {provider && (
           <span className={`status ${statusKind}`} data-testid="provider-badge" role="status">
             <span className="dot" aria-hidden="true" />
-            {provider.offline ? 'Offline demo' : fallbackNotice ? 'Demo fallback · not AI-generated' : `Live · ${provider.provider}`}
+            {/* The model the NEXT run will use (the user's choice), not just the server's default. */}
+            {provider.offline ? 'Offline demo' : fallbackNotice ? 'Demo fallback · not AI-generated' : `Live · ${selectedModel || provider.provider}`}
           </span>
         )}
         <span className="spacer" />
