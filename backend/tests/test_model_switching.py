@@ -92,7 +92,7 @@ def test_the_stage_model_variables_that_name_opencode_models_never_reach_cloudfl
 
 
 def test_a_rejected_token_is_a_typed_upstream_error_that_never_contains_the_token(monkeypatch):
-    with cloudflare(monkeypatch, chat_status=403) as server:
+    with cloudflare(monkeypatch, chat_status=403):
         prov = llm_service.get_provider("@cf/openai/gpt-oss-120b")
         prov.max_retries = 0
         prov.client.max_retries = 0

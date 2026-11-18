@@ -1,6 +1,5 @@
 """Reviewing the specification before generating: the parse-only endpoint, a confirmed spec replacing the model's reading,
 and the limits on a user-edited spec."""
-from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient

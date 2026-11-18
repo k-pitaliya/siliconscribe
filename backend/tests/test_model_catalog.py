@@ -159,7 +159,8 @@ def test_an_unreachable_cloudflare_also_falls_back(monkeypatch):
 
 def test_cloudflare_catalogue_is_cached_until_refreshed(cf):
     with cf(search_pages=[[model_entry("@cf/openai/gpt-oss-120b")]]) as server:
-        mc.cloudflare_status(); mc.cloudflare_status()
+        mc.cloudflare_status()
+        mc.cloudflare_status()
         assert len(server.requests) == 1
         mc.cloudflare_status(refresh=True)
         assert len(server.requests) == 2
@@ -251,7 +252,8 @@ def test_nim_failures_fall_back_to_the_tested_models_with_a_plain_hint_and_no_se
 
 def test_nim_catalogue_is_cached_until_refreshed(nim):
     with nim(models=NIM_LIST) as server:
-        mc.nim_status(); mc.nim_status()
+        mc.nim_status()
+        mc.nim_status()
         assert len(server.requests) == 1
         mc.nim_status(refresh=True)
         assert len(server.requests) == 2
