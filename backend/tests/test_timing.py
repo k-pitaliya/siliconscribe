@@ -320,3 +320,20 @@ def test_pipeline_gives_the_testbench_to_timing(tmp_path, monkeypatch):
     list(orchestrator.pipeline_events("Design a 4-bit synchronous up-counter with async reset and enable", "tbpass",
                                       IcarusSimulator(workspace=str(tmp_path))))
     assert "module testbench" in (seen.get("testbench_code") or "")
+
+
+def test_positional_parameter_overrides_follow_the_declaration_order():
+    rtl = "module m #(parameter integer W = 4, parameter [3:0] D = 2, E = 1)(input a, output y); endmodule"
+    assert parameter_overrides("m #(8) u (.a(a));", "m", rtl) == ({"W": 8}, False)
+    assert parameter_overrides("m #(8, 3, 5) u ();", "m", rtl) == ({"W": 8, "D": 3, "E": 5}, False)
+    assert parameter_overrides("m #(2*8) u ();", "m", rtl) == ({}, True)
+    assert parameter_overrides("m #(8, 3, 5, 7) u ();", "m", rtl) == ({"W": 8, "D": 3, "E": 5}, True)   # 4th has no name
+    assert parameter_overrides("m #(8) u ();", "m") == ({}, True)                                       # no RTL given
+    assert parameter_overrides("m #(.D(9)) u ();", "m", rtl) == ({"D": 9}, False)
+
+
+@needs_tools
+def test_positional_testbench_parameters_reach_the_timed_circuit(tmp_path):
+    d = od.get_design("alu8")
+    r = run_timing(d["rtl"], "alu_8bit", tmp_path, 100, testbench_code=d["tb"])
+    assert r.error is None and "WIDTH=8" in r.note and "were not applied" not in r.note

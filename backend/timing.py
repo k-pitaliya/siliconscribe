@@ -141,8 +141,36 @@ def analyze_netlist(text: str) -> dict:
             "gates": gates, "scalar_inputs": scalar_inputs}
 
 
-def parameter_overrides(testbench_code: Optional[str], module_name: str) -> Tuple[Dict[str, int], bool]:
-    """Integer parameter overrides the testbench gives the design under test, e.g. `mux #(.WIDTH(16)) dut`.
+def _declared_parameter_names(rtl_code: Optional[str], module_name: str) -> Optional[List[Optional[str]]]:
+    """Names of the design's own `module <name> #( ... )` parameter list, in declaration order.
+    None where a piece has no name; None overall when the header has no `#(` parameter list."""
+    src = rtl_code or ""
+    m = re.search(rf"\bmodule\s+{re.escape(module_name)}\s*#\s*\(", src)
+    if not m:
+        return None
+    depth, i = 1, m.end()
+    while i < len(src) and depth:
+        depth += (src[i] == "(") - (src[i] == ")")
+        i += 1
+    if depth:                                   # unbalanced: give up
+        return None
+    names: List[Optional[str]] = []
+    cur, depth = "", 0
+    for ch in src[m.end():i - 1] + ",":
+        depth += (ch == "(") - (ch == ")")
+        if ch == "," and depth == 0:
+            nm = re.search(r"([A-Za-z_]\w*)\s*$", cur.split("=", 1)[0])
+            names.append(nm.group(1) if nm else None)
+            cur = ""
+        else:
+            cur += ch
+    return names
+
+
+def parameter_overrides(testbench_code: Optional[str], module_name: str,
+                        rtl_code: Optional[str] = None) -> Tuple[Dict[str, int], bool]:
+    """Integer parameter overrides the testbench gives the design under test, e.g. `mux #(.WIDTH(16)) dut`
+    or positional `alu #(8) dut` (mapped in order to the parameters declared in *rtl_code*).
 
     Returns ({name: value}, some_were_skipped). Only plain decimal numbers are used; an expression is
     never guessed at (it is reported as skipped instead)."""
@@ -165,14 +193,18 @@ def parameter_overrides(testbench_code: Optional[str], module_name: str) -> Tupl
         else:
             cur += ch
     parts.append(cur)
+    declared = _declared_parameter_names(rtl_code, module_name)
     found: Dict[str, int] = {}
     skipped = False
-    for part in (p.strip() for p in parts):
+    for index, part in enumerate(p.strip() for p in parts):
         if not part:
             continue
         mm = re.fullmatch(r"\.(\w+)\s*\(\s*(\d+)\s*\)", part)
         if mm and int(mm.group(2)) <= MAX_PARAMETER_VALUE:
             found[mm.group(1)] = int(mm.group(2))
+        elif (not part.startswith(".") and declared and index < len(declared) and declared[index]
+              and re.fullmatch(r"[0-9]+", part) and int(part) <= MAX_PARAMETER_VALUE):
+            found[declared[index]] = int(part)
         else:
             skipped = True
     return found, skipped
@@ -243,7 +275,8 @@ def run_timing(rtl_code: str, module_name: str, work_dir: Path, target_mhz: Opti
                testbench_code: Optional[str] = None) -> TimingReport:
     """Map *rtl_code* to sky130 cells and time it at *target_mhz* (default 100). Never raises.
 
-    *testbench_code* is only read for `#(.PARAM(number))` overrides of the design under test."""
+    *testbench_code* is only read for numeric parameter overrides of the design under test, named
+    (`#(.WIDTH(16))`) or positional (`#(16)`, matched in order to the parameters the design declares)."""
     started = time.time()
     target = _target(target_mhz)
     period = round(1000.0 / target, 4)
@@ -270,7 +303,7 @@ def run_timing(rtl_code: str, module_name: str, work_dir: Path, target_mhz: Opti
         (work_dir / "design.sv").write_text(rtl_code)
 
         # The circuit we time must be the circuit that was simulated: apply the testbench's numeric overrides.
-        wanted, skipped = parameter_overrides(testbench_code, module_name)
+        wanted, skipped = parameter_overrides(testbench_code, module_name, rtl_code)
         params = {k: v for k, v in wanted.items() if re.search(rf"\b{k}\b", rtl_code)}
         skipped = skipped or len(params) != len(wanted)
         y = _map_with_yosys(work_dir, module_name, params)
