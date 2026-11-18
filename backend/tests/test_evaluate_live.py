@@ -157,3 +157,13 @@ def test_retime_refreshes_saved_numbers_with_the_current_timing_code_and_hands_o
     assert ("// design c1", "// tb c1") in seen                             # the testbench goes along (parameter overrides)
     assert ev.retime() == 0                                                  # idempotent
 
+
+def test_summary_says_which_prompts_have_no_result_instead_of_hiding_them(out):
+    _write(out, rec("c1"), rec("c2"))
+    text = ev.summarise()
+    assert "No result yet for: **c3, c4" in text and "s1" in text.split("No result yet for:")[1].split("(")[0]
+    assert "never counted as a pass or as a design failure" in text
+    every = [p[0] for p in ev.PROMPTS]
+    _write(out, *[rec(pid) for pid in every])
+    assert "No result yet" not in ev.summarise()                         # nothing to say once every prompt has a result
+

@@ -4,6 +4,7 @@ Provider/model: opencode-app / deepseek-v4.1-flash-free
 Testbench model: same as design
 
 - Prompts run: **14** (0 fell back to the offline demo and are not counted)
+- No result yet for: **s1** (not run, or the model did not answer in time on every attempt; never counted as a pass or as a design failure)
 - PASS on the first attempt: **8** of 14
 - PASS after self-repair: **6** of 14
 - Not PASS: **0** of 14

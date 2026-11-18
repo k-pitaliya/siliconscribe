@@ -167,6 +167,7 @@ def summarise() -> str:
     recs = sorted(load_done().values(), key=lambda r: order.get(r["id"], 99))
     if not recs:
         return "No results yet.\n"
+    missing = [p[0] for p in PROMPTS if p[0] not in {r["id"] for r in recs}]
     evidence = [r for r in recs if not r["fallback"]]
     first = [r for r in evidence if r["status"] == "PASS" and r["repairs"] == 0]
     repaired = [r for r in evidence if r["status"] == "PASS" and r["repairs"] > 0]
@@ -179,6 +180,8 @@ def summarise() -> str:
         "Provider/model: " + ", ".join(models),
         "Testbench model: " + ", ".join(tb_models), "",
         f"- Prompts run: **{len(recs)}** ({len(recs) - len(evidence)} fell back to the offline demo and are not counted)",
+        *([f"- No result yet for: **{', '.join(missing)}** (not run, or the model did not answer in time on every attempt; "
+           "never counted as a pass or as a design failure)"] if missing else []),
         f"- PASS on the first attempt: **{len(first)}** of {len(evidence)}",
         f"- PASS after self-repair: **{len(repaired)}** of {len(evidence)}",
         f"- Not PASS: **{len(failed)}** of {len(evidence)}",
