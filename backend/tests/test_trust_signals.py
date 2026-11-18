@@ -139,6 +139,20 @@ def test_forwarded_headers_are_ignored_unless_a_trusted_proxy_is_configured(monk
     assert main._get_client_ip(req) == "6.6.6.6"           # behind a trusted proxy it is honoured
 
 
+def test_only_this_machine_may_call_the_api_from_a_browser_unless_an_origin_is_added_on_purpose(monkeypatch):
+    from fastapi.testclient import TestClient
+    import main
+    c = TestClient(main.app)
+    def allowed(origin):
+        r = c.options("/api/models", headers={"Origin": origin, "Access-Control-Request-Method": "GET"})
+        return r.headers.get("access-control-allow-origin") == origin
+    assert allowed("http://localhost:5173") and allowed("http://127.0.0.1:5173")
+    for hostile in ("https://evil.vercel.app", "https://siliconscribe.vercel.app", "https://attacker.example", "http://localhost.evil.com"):
+        assert not allowed(hostile), hostile                      # no wildcard for hosting platforms any more
+    monkeypatch.setenv("CORS_ALLOW_ORIGINS", "https://demo.example.org/, https://*.bad.app, ftp://x, ")
+    assert main._cors_origins()[-1] == "https://demo.example.org" and not any("*" in o or o.startswith("ftp") for o in main._cors_origins())
+
+
 def test_rerun_refuses_a_pass_from_a_testbench_with_no_checks(monkeypatch):
     from fastapi.testclient import TestClient
     import main

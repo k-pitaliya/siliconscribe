@@ -89,9 +89,7 @@ def run_one(pid: str, category: str, prompt: str) -> dict:
         "strength_killed": strength.get("killed"), "strength_total": strength.get("total"),
         "strength_survivors": [s["description"] for s in strength.get("survivors", [])],
         "toggle_percent": (res.get("measured_toggle") or {}).get("percent"),
-        "timing_met": (d.get("timing") or {}).get("met"),
-        "timing_fmax_mhz": (d.get("timing") or {}).get("fmax_mhz"),
-        "area_um2": (d.get("timing") or {}).get("area_um2"),
+        **_timing_fields(d.get("timing") or {}),
         "warning": d.get("verification_warning"),
         "fallback": bool(d.get("fallback_notice")),
         "provider": getattr(llm_service.get_provider(), "name", "?"),
@@ -99,6 +97,15 @@ def run_one(pid: str, category: str, prompt: str) -> dict:
         "testbench_model": (getattr(llm_service.get_provider(), "stage_models", {}) or {}).get("testbench") or None,
         "finished_at": time.strftime("%Y-%m-%d %H:%M:%S"),
     }
+
+
+def _timing_fields(t: dict) -> dict:
+    """What the record keeps of a timing report. A design with a clock has a minimum clock period; a design
+    without one only has a longest input-to-output path. The two are not the same quantity, so they are kept apart."""
+    slack, period = t.get("slack_ns"), t.get("period_ns")
+    return {"timing_met": t.get("met"), "timing_fmax_mhz": t.get("fmax_mhz"), "area_um2": t.get("area_um2"),
+            "timing_min_ns": round(period - slack, 3) if slack is not None and period is not None else None,
+            "timing_clocked": (not str(t.get("clock") or "").startswith("virtual")) if t.get("clock") else None}
 
 
 def backfill() -> int:
@@ -124,7 +131,7 @@ def backfill() -> int:
         if rec["status"] == "PASS":
             tm = run_timing(design.read_text(), rec["module"], Path(tempfile.mkdtemp(prefix="evalti_")), 100,
                             testbench_code=tb.read_text())
-            rec.update(timing_met=tm.met, timing_fmax_mhz=tm.fmax_mhz, area_um2=tm.area_um2)
+            rec.update(_timing_fields(tm.model_dump()))
         rec["backfilled"] = True
         changed += 1
         print(f"  {pid}: toggle {rec['toggle_percent']}%, max {rec.get('timing_fmax_mhz')} MHz, {rec.get('area_um2')} um2")
@@ -146,8 +153,7 @@ def retime() -> int:
             continue
         tm = run_timing(design.read_text(), rec["module"], Path(tempfile.mkdtemp(prefix="evalrt_")), 100,
                         testbench_code=tb.read_text())
-        new = {"timing_met": tm.met, "timing_fmax_mhz": tm.fmax_mhz, "area_um2": tm.area_um2,
-               "timing_error": tm.error if tm.slack_ns is None else None}
+        new = {**_timing_fields(tm.model_dump()), "timing_error": tm.error if tm.slack_ns is None else None}
         if any(rec.get(k) != v for k, v in new.items()):
             rec.update(new)
             changed += 1
@@ -155,6 +161,14 @@ def retime() -> int:
     if changed:
         RESULTS.write_text("".join(json.dumps(r) + "\n" for r in done.values()))
     return changed
+
+
+def _timing_cell(r: dict) -> str:
+    """'min period 0.73 ns' for a clocked design, 'path 0.12 ns' for a combinational one."""
+    ns = r.get("timing_min_ns")
+    if ns is None:
+        return "-"
+    return f"{'min period' if r.get('timing_clocked') else 'path'} {ns:.2f} ns"
 
 
 def _cell(value, suffix: str = "") -> str:
@@ -186,7 +200,7 @@ def summarise() -> str:
         f"- PASS after self-repair: **{len(repaired)}** of {len(evidence)}",
         f"- Not PASS: **{len(failed)}** of {len(evidence)}",
         f"- Median time per run: **{statistics.median(times):.0f} s**" if times else "- Median time: n/a", "",
-        "| id | type | verdict | repairs | checks | strength | toggle | max MHz | area um2 | time | notes |", "|---|---|---|---|---|---|---|---|---|---|---|",
+        "| id | type | verdict | repairs | checks | strength | toggle | timing | area um2 | time | notes |", "|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for r in recs:
         strength = f"{r['strength_killed']}/{r['strength_total']}" if r.get("strength_total") else "-"
@@ -204,10 +218,10 @@ def summarise() -> str:
             notes.append(f"{len(r['strength_survivors'])} bug(s) missed")
         lines.append(f"| {r['id']} | {r['category']} | {r['status']} | {r['repairs']} | "
                      f"{r['checks_passed']}/{r['checks_total']} | {strength} | {_cell(r.get('toggle_percent'), '%')} | "
-                     f"{_cell(r.get('timing_fmax_mhz'))} | {_cell(r.get('area_um2'))} | {r['seconds']:.0f} s | {'; '.join(notes)} |")
+                     f"{_timing_cell(r)} | {_cell(r.get('area_um2'))} | {r['seconds']:.0f} s | {'; '.join(notes)} |")
     lines += ["", "Strength = injected bugs caught / injected bugs run (mutation testing of the design's own testbench; "
               "survivors may be equivalent mutants). Toggle = measured toggle coverage of design signals. "
-              "Max MHz and area = pre-layout estimate on sky130 (typical corner, no wire delay, not sign-off). Raw records: `evaluation/results.jsonl`; designs and testbenches: "
+              "Timing = shortest clock period for a design with a clock, longest input-to-output path for one without (a combinational block has no clock rate), and area = pre-layout estimate on sky130 (typical corner, no wire delay, not sign-off). Raw records: `evaluation/results.jsonl`; designs and testbenches: "
               "`evaluation/artifacts/`.", ""]
     return "\n".join(lines)
 

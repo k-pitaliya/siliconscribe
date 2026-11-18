@@ -115,17 +115,22 @@ def _check_rate_limit_locked(ip: str):
     if not _rate_log[ip]:
         _rate_log[ip] = [now]
 
+def _cors_origins() -> list:
+    """Browser origins allowed to call this API: this machine only, unless CORS_ALLOW_ORIGINS adds exact origins.
+
+    There is deliberately no wildcard such as *.vercel.app: anyone can host a page there, and that page could make
+    the visitor's browser call a backend that holds paid-capable model keys and runs any model it is asked to.
+    """
+    local = ["http://localhost:3000", "http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:4173", "http://127.0.0.1:4173"]
+    extra = [o.strip().rstrip("/") for o in os.getenv("CORS_ALLOW_ORIGINS", "").split(",") if o.strip().startswith(("http://", "https://"))]
+    return local + [o for o in extra if "*" not in o]
+
+
 app = FastAPI(title="SiliconScribe API", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000", "http://localhost:5173",
-        "http://127.0.0.1:5173", "http://localhost:4173",
-        "https://siliconscribe.vercel.app",
-        "https://siliconscribe.onrender.com",
-    ],
-    allow_origin_regex=r"https://.*\.vercel\.app",
+    allow_origins=_cors_origins(),
     allow_credentials=False,  # no cookie auth exists; credentials plus a wildcard origin regex was a standing foot-gun
     allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
     allow_headers=["Content-Type", "Authorization"],

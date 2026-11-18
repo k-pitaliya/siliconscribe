@@ -167,3 +167,11 @@ def test_summary_says_which_prompts_have_no_result_instead_of_hiding_them(out):
     _write(out, *[rec(pid) for pid in every])
     assert "No result yet" not in ev.summarise()                         # nothing to say once every prompt has a result
 
+
+
+def test_a_design_without_a_clock_reports_a_path_delay_never_a_clock_rate():
+    comb = ev._timing_fields({"clock": "virtual (combinational design)", "period_ns": 10.0, "slack_ns": 9.88, "fmax_mhz": 8333.3, "met": True})
+    seq = ev._timing_fields({"clock": "clk", "period_ns": 10.0, "slack_ns": 9.2725, "fmax_mhz": 1374.6, "met": True})
+    assert (comb["timing_min_ns"], comb["timing_clocked"]) == (0.12, False) and (seq["timing_min_ns"], seq["timing_clocked"]) == (0.727, True)
+    assert ev._timing_cell({**comb}) == "path 0.12 ns" and ev._timing_cell({**seq}) == "min period 0.73 ns"
+    assert ev._timing_cell({}) == "-" and ev._timing_fields({}) ["timing_min_ns"] is None          # no timing, nothing invented
