@@ -1,0 +1,85 @@
+\chapter{Conclusion and Future Work}
+\label{sec:conclusion}
+
+\section{Conclusion}
+SiliconScribe works as an execution-grounded RTL assistant rather than a scripted
+demonstration. A plain-English prompt is parsed into a specification, which the user
+can review and edit; RTL and an independent, specification-derived testbench are
+generated; Icarus Verilog executes them; and failures produce a structured,
+line-level diagnosis that is patched and re-simulated. The simulator decides PASS or
+FAIL, never the model. Around that loop the system measures how much a PASS is worth:
+testbench strength by mutation testing, measured toggle coverage, a second-opinion
+testbench after a testbench-changing repair, an optional separate model for the
+testbench, and a pre-layout timing and area estimate on the SkyWater 130\,nm library.
+
+In a live evaluation with one free model, 14 of 15 prompts completed: 8 passed on the
+first attempt and 6 after one self-repair, and hand-written reference testbenches
+confirmed that all 14 final designs are correct. The fifteenth prompt timed out three
+times and is reported as no result. The tool itself is checked by 436 backend and 211
+frontend tests, a 27-of-27 mutation sweep, a gate-level equivalence check of the
+timing stage on 19 designs, and an accessibility audit with no violations.
+
+Because the pipeline is model-agnostic, its quality is expected to rise with better models (a larger model already turned an incorrect priority encoder into a first-attempt PASS), and the remaining work is mostly infrastructure and stronger verification rather than redesign (Section~\ref{sec:scale}).
+
+The most important engineering lesson is that \emph{honesty is a feature}. The
+system labels compiler repairs, refuses to delete checks, refuses to swap designs
+mid-run, refuses to time circuits it cannot time honestly, reports a stalled model as
+``no result'', reports when two models disagree, and distinguishes a scripted offline
+fix from a live diagnosis. Those choices make the PASS meaningful. A PASS is still
+evidence, not proof.
+
+\section{Limitations}
+\label{sec:limits}
+
+\begin{enumerate}[label=\textbf{L\arabic*.},ref=L\arabic*]
+\item \textbf{Residual common-mode model risk.} The testbench never sees the RTL,
+but unless a separate testbench model is chosen, the same model interprets the
+specification for both. If it misreads the specification identically in both, the
+pair can still agree while being wrong. The specification is also written by a model
+unless the user reviews it. The separate testbench model, the specification review
+and the second opinion reduce this risk; they do not remove it, and the application
+does not decide automatically which side of a disagreement is wrong.
+\item \textbf{Strength is a sample.} The strength score uses up to 12 syntactic
+one-token mutants. A survivor may be an equivalent mutant, and a high score does not
+prove the testbench complete.
+\item \textbf{Only toggle coverage is measured.} Line and branch coverage are not
+measured; Verilator could not build most of the generated testbenches. Any other
+coverage figure is what the testbench reports about itself and is labelled as such.
+\item \textbf{No assertions or formal checks.} There are no SVA properties and no
+formal equivalence check; the only oracle is the simulated testbench.
+\item \textbf{Timing is a pre-layout estimate.} One typical corner, no placement or
+routing (no wire delay), an ideal clock, zero I/O delays and setup analysis only.
+Power is not reported. Designs with tri-states, latches, loops or derived clocks are
+refused rather than timed. It is not sign-off.
+\item \textbf{Small evaluation.} The evaluation used small blocks (under about 100
+lines), one run per prompt and mainly one model, so it does not support pass-rate
+comparisons with published benchmarks.
+\item \textbf{Free models are slow and quota-limited.} A live run took a median of
+360~s, some free-queue models took minutes per reply, Cloudflare's free allowance is
+10,000 neurons a day, and models are retired without notice. GitHub Copilot through
+OpenCode is available only as \code{github-copilot/auto}, which cannot name the model
+it used.
+\item \textbf{UVM export is not compiled.} The 16-file UVM 1.2 bundle targets a
+commercial simulator; Icarus cannot compile UVM and no commercial licence was
+available. It is a structural export, not a verified UVM testbench.
+\item \textbf{Not a hardened sandbox.} Generated Verilog runs as a local \code{vvp} subprocess with the server's privileges. The sandbox policy (Section~\ref{sec:sandbox}), the scrubbed environment, the resource limits and the output cap reduce the attack surface (the memory limit is enforced on Linux only), but a static scan of Verilog cannot be airtight; multi-user deployment requires a container or microVM per simulation.
+\item \textbf{Single-node runtime.} The rate limiter is in-process, persistence is a local SQLite file and simulations share one host; concurrency is bounded by the thread pool rather than by a queue (Section~\ref{sec:scale}).
+\end{enumerate}
+
+\section{Future Work}
+\begin{enumerate}[label=\textbf{\arabic*.}]
+\item \textbf{Multi-model comparison} on the fifteen evaluation prompts, with the
+reference check and the strength score reported per model.
+\item \textbf{Assertions and formal checks:} SVA properties as a second oracle
+alongside the self-checking testbench, and formal equivalence where a reference
+exists.
+\item \textbf{Line and branch coverage} with a simulator that supports the generated
+testbenches.
+\item \textbf{Place and route with OpenROAD} for post-layout timing with real wire
+delay.
+\item \textbf{Gate-level visualisation} of the mapped netlist in the schematic tab.
+\item \textbf{Production runtime:} container isolation per simulation and a job queue
+for multi-user use, with PostgreSQL and authentication (Section~\ref{sec:scale}).
+\item \textbf{Code structure:} split the pipeline function (about 500 lines) into
+smaller stages that can be tested on their own.
+\end{enumerate}

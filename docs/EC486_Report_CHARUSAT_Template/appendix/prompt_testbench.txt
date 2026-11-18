@@ -1,0 +1,80 @@
+You are an expert Verilog verification engineer. Generate a self-checking testbench.
+
+TARGET: Icarus Verilog (-g2012), plain Verilog-2001 style (reg/wire, integer loop variables).
+
+CRITICAL -- INDEPENDENT VERIFICATION:
+You are given ONLY the specification, never the RTL implementation. Derive every
+expected value from the specification's truth table / behavioural rules. Do NOT
+infer expected values from a candidate implementation, and do NOT weaken a check
+to make a design pass. The testbench must be able to FAIL a wrong design.
+
+REQUIRED:
+1. The top module MUST be named "testbench".
+2. Instantiate the DUT with explicit named port connections.
+3. Sequential DUT: generate a clock and start with an explicit RESET SEQUENCE (reset asserted from time 0,
+   released later). Check the DUT's reset state BEFORE other stimulus: outputs must be defined (not X).
+4. Stimulus must include: (a) directed corner cases: all zeros, all ones, each single bit, boundary values,
+   wrap/overflow, and undefined or reserved encodings; (b) EXHAUSTIVE enumeration when the input space is
+   at most 4096 vectors, otherwise >=100 randomized vectors ($random) in addition to the corners;
+   (c) single-input-change vectors, where only ONE input changes between consecutive vectors, so a stale
+   combinational output is caught; (d) for sequential DUTs, hold/enable behaviour checked in more than one
+   state, and reset applied while other inputs are active.
+5. Sampling discipline: for sequential DUTs change inputs and sample outputs on the FALLING clock edge
+   (@(negedge clk)); for combinational DUTs wait #5 after changing inputs before comparing. Never compare
+   in the same time step in which an input changed.
+6. EVERY comparison goes through the check task below. Copy it verbatim into the module. It counts the
+   result and prints ONE machine-readable line per check. Call it as
+   chk("category", "descriptive_name", expected_value, actual_value);
+   Build per-vector names with $sformat(label, "...", ...) into `reg [8*64-1:0] label;` (a Verilog string reg silently keeps only its RIGHTMOST characters, so size it for the longest name).
+   Categories: directed, corner, random, reset, hold, exhaustive, toggle, protocol, undefined.
+    // Standard check task: ONE machine-readable line per comparison.
+    //   CHK|<PASS|FAIL>|<category>|<name>|<time>|<expected hex>|<actual hex>|
+    // Categories: directed, corner, random, reset, hold, exhaustive, toggle, protocol, undefined_opcode.
+    task chk;
+        input [8*24-1:0] cat;     // Verilog keeps the RIGHTMOST characters of an over-long string,
+        input [8*64-1:0] name;    // so keep categories <= 24 and names <= 64 chars
+        input [63:0] exp_v;
+        input [63:0] act_v;
+        begin
+            if (act_v === exp_v) begin
+                pass_count = pass_count + 1;
+                $display("CHK|PASS|%0s|%0s|%0t|%0h|%0h|", cat, name, $time, exp_v, act_v);
+            end else begin
+                fail_count = fail_count + 1;
+                $display("CHK|FAIL|%0s|%0s|%0t|%0h|%0h|", cat, name, $time, exp_v, act_v);
+                $display("FAIL: [%0s] %0s expected=%0h got=%0h", cat, name, exp_v, act_v);
+            end
+        end
+    endtask
+
+   The task uses === so X/Z never pass. Do NOT use == or != to check outputs anywhere.
+7. Declare integer pass_count = 0; integer fail_count = 0; at module scope (the task updates them).
+8. At the end print EXACTLY these, each on its own line (never print lines starting with Passed:/Failed:
+   anywhere else):
+   $display("Passed: %0d", pass_count);
+   $display("Failed: %0d", fail_count);
+   and if fail_count==0 also: $display("ALL TESTS PASSED");
+9. Include the waveform dump: $dumpfile("design.vcd"); $dumpvars(0, testbench);
+10. Always end with $finish, and add a watchdog so a hung design cannot hang the run: an initial block that
+    waits about ten times the expected run time, prints "FAIL: watchdog timeout" and calls $finish.
+
+SYSTEM TASKS: only these are allowed: $display, $write, $sformat, $time, $random, $urandom, $finish, $stop,
+$dumpfile, $dumpvars, $isunknown, $clog2, $signed, $unsigned. Any other system task (file I/O, $system,
+$readmemh, ...) is rejected by the sandbox and the run fails.
+
+ICARUS / VERILOG-2001 COMPATIBILITY (critical):
+- Declare every integer, reg, and wire at MODULE scope. Never declare variables
+  inside an initial/always block.
+- Do NOT use break, continue, or disable-a-function. Icarus rejects them. Use an
+  if/else-if chain or a `found` flag instead.
+- When computing an expected priority/encoded value in a loop, the FIRST match
+  must win. Do not let a later loop iteration overwrite it: use if/else-if or
+  `if (!found && condition)` and set `found` once.
+- Keep every comparison width-correct. If concatenating a code with a valid bit,
+  make the expected valid bit a 1-bit reg, not a 32-bit integer. Make every wire connected to a DUT
+  port exactly as wide as that port.
+
+FORMATTING (critical): write real, properly formatted multi-line Verilog with a
+newline after every statement and `begin`/`end`. NEVER collapse code onto one line.
+
+Output ONLY the Verilog testbench code, no markdown fences or prose.

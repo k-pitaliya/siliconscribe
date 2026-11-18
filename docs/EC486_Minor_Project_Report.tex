@@ -1,0 +1,575 @@
+% ============================================================================
+%  EC486 Minor Project — Progress Report
+%  SiliconScribe: An AI-Assisted EDA Playground with Autonomous RTL
+%  Verification and Self-Correction
+%
+%  Student : Kushal Pitaliya (23EC105)
+%  Institute: CHARUSAT — CSPIT, V.T. Patel Dept. of ECE
+%
+%  Build   : pdflatex (run twice for page cross-references)
+%            pdflatex EC486_Minor_Project_Report.tex
+%            pdflatex EC486_Minor_Project_Report.tex
+%
+%  Style   : Monochrome, minimalist academic (IEEE-Transactions / formal
+%            university technical report). Pure grayscale, no colour.
+% ============================================================================
+
+\documentclass[11pt,a4paper]{article}
+
+% ---------------------------------------------------------------- layout ----
+\usepackage[a4paper,margin=2.2cm,top=2.2cm,bottom=2.2cm,headheight=14pt,headsep=14pt,footskip=18pt]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{courier}          % monospace for algorithm / code blocks
+\renewcommand{\ttdefault}{cmtt}
+
+% --------------------------------------------------------------- graphics ----
+\usepackage{amsmath}          % \text{}, math spacing — required for \(\mu\text{m}^2\)
+\usepackage{graphicx}
+\usepackage{xcolor}           % used ONLY with grayscale values
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,shapes.geometric,calc}
+
+% ----------------------------------------------------------------- tables ----
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{tabularx}
+
+% ------------------------------------------------------------- typography ----
+\usepackage{microtype}
+\usepackage{enumitem}
+\setlist{nosep,leftmargin=*}
+\usepackage{titlesec}
+\usepackage{caption}
+\captionsetup{font=small,labelfont={bf},justification=justified}
+\usepackage{fancyhdr}
+\usepackage{lastpage}
+\usepackage{hyperref}
+\hypersetup{hidelinks,pdftitle={SiliconScribe - EC486 Progress Report},
+            pdfauthor={Kushal Pitaliya (23EC105)}}
+\usepackage{xurl}
+
+% Paragraph breaking: give TeX a little extra stretch to find a legal line break
+% ONLY when a paragraph would otherwise stick out past the margin. This clears
+% the small overfull \hbox warnings caused by unbreakable \texttt/\textbf tokens
+% without loosening normally-set paragraphs (\sloppy would loosen everything).
+\setlength{\emergencystretch}{1.5em}
+
+% ----------------------------------------------------------- colour setup ---
+% Monochrome palette only (no saturated hues).
+\definecolor{ink}{RGB}{0,0,0}          % pure black
+\definecolor{inkdark}{RGB}{31,41,55}   % near-black for body text
+\definecolor{rulegrey}{RGB}{107,114,128}
+\definecolor{hdrfill}{RGB}{229,231,235}% light grey (headers)
+\definecolor{softgrey}{RGB}{243,244,246}
+\definecolor{midgrey}{RGB}{156,163,175}
+
+% ------------------------------------------------------------- headings -----
+\titleformat{\section}{\normalfont\large\bfseries\color{ink}}
+  {\thesection.}{0.6em}{}
+\titleformat{\subsection}{\normalfont\normalsize\bfseries\color{ink}}
+  {\thesubsection}{0.6em}{}
+\titlespacing*{\section}{0pt}{9pt}{4pt}
+\titlespacing*{\subsection}{0pt}{6pt}{2pt}
+
+% --------------------------------------------------------- header / footer ---
+\pagestyle{fancy}
+\fancyhf{}
+\renewcommand{\headrulewidth}{0.4pt}
+\renewcommand{\footrulewidth}{0.4pt}
+\fancyhead[L]{\footnotesize\color{rulegrey}SiliconScribe\ \textbullet\ CHARUSAT \textbullet\ CSPIT ECE}
+\fancyhead[R]{\footnotesize\color{rulegrey}EC486: Minor Project}
+\fancyfoot[L]{\footnotesize\color{rulegrey}Kushal Pitaliya (23EC105) \textemdash\ Progress Report}
+\fancyfoot[R]{\footnotesize\color{rulegrey}Page \thepage\ of \pageref{LastPage}}
+
+% First page style: no running header, keep footer
+\fancypagestyle{firstpage}{%
+  \fancyhf{}%
+  \renewcommand{\headrulewidth}{0pt}%
+  \renewcommand{\footrulewidth}{0.4pt}%
+  \fancyfoot[L]{\footnotesize\color{rulegrey}Kushal Pitaliya (23EC105) \textemdash\ Progress Report}%
+  \fancyfoot[R]{\footnotesize\color{rulegrey}Page \thepage\ of \pageref{LastPage}}%
+}
+
+% ----------------------------------------------------------- custom envs ----
+\newsavebox{\algoboxsave}
+\newsavebox{\codeboxsave}
+
+% LaTeX-style algorithm box (clean top/bottom rules).
+\newenvironment{algobox}
+  {\par\smallskip\noindent\rule{\linewidth}{0.8pt}\par\vspace{2pt}\small}
+  {\par\vspace{2pt}\noindent\rule{\linewidth}{0.8pt}\par\smallskip}
+
+% Code block (for Verilog snippets)
+\newenvironment{codebox}
+  {\par\medskip\noindent\begin{lrbox}{\codeboxsave}%
+   \begin{minipage}{\dimexpr\textwidth-2\fboxsep-2\fboxrule\relax}
+   \footnotesize\ttfamily\raggedright}
+  {\end{minipage}\end{lrbox}%
+   \noindent\fbox{\usebox{\codeboxsave}}\par\medskip}
+
+% Callout: bordered top+bottom with inline lead-in (for the Abstract)
+\newcommand{\abstractrule}{\noindent\rule{\textwidth}{0.8pt}\par\vspace{3pt}}
+
+\begin{document}
+\thispagestyle{firstpage}
+
+% ============================================================== TITLE =======
+\begin{center}
+{\color{ink}\rule{\textwidth}{1.0pt}}\\[6pt]
+{\large\bfseries CHAROTAR UNIVERSITY OF SCIENCE AND TECHNOLOGY (CHARUSAT)}\\[3pt]
+{\normalsize Chandubhai S. Patel Institute of Technology (CSPIT)}\\[2pt]
+{\small V.\ T.\ Patel Department of Electronics \& Communication Engineering}\\[4pt]
+{\color{ink}\rule{\textwidth}{0.4pt}}\\[10pt]
+
+{\LARGE\bfseries SiliconScribe: An AI-Assisted EDA Playground}\\[4pt]
+{\LARGE\bfseries with Autonomous RTL Verification and Self-Correction}\\[12pt]
+
+{\color{ink}\rule{0.55\textwidth}{0.4pt}}\\[10pt]
+
+\noindent\begin{tabular}{@{}>{\bfseries}l@{\hspace{1.5em}}l@{}}
+Student Name & Kushal Pitaliya \\
+Roll No. & 23EC105 \\
+Batch & 2023, B.Tech.\ Electronics \& Communication Engineering \\
+Course Code & EC486: Minor Project \\
+Academic Year & 2026--2027 (Odd Semester) \\
+Submission Type & Progress Report \\
+Date of Submission & 15 October 2026 \\
+Category & Software-based EDA Tool (Individual Project) \\
+\end{tabular}\\[10pt]
+{\color{ink}\rule{\textwidth}{1.0pt}}
+\end{center}
+
+\vspace{10pt}
+
+% ============================================================== ABSTRACT =====
+\abstractrule
+\noindent{\textbf{Abstract\ \textemdash}}
+In digital VLSI design, writing Register-Transfer Level (RTL) code and developing
+self-checking testbenches dominate the front-end of the ASIC development flow, and
+verification is widely reported as the single largest share of overall project
+effort. While Large Language Models (LLMs) can generate Verilog snippets, they
+routinely produce syntax errors, unsupported SystemVerilog constructs, and
+functional bugs. More importantly, existing AI code generators operate in an
+\emph{open loop}: they cannot execute, simulate, or debug their own code.
+
+To address this, I developed \textbf{SiliconScribe}, a browser-based Electronic
+Design Automation (EDA) playground. The system accepts a natural-language
+specification, generates synthesizable Verilog-2001 RTL together with a
+self-checking testbench, simulates both using Icarus Verilog, and runs an
+\textbf{autonomous closed-loop self-correction engine}. When compilation errors or
+test failures occur, the simulator log is fed back to the debugger, which emits a
+patch and re-simulates until the design passes. To bound the loop, the engine uses
+comment- and whitespace-normalised SHA-256 code hashing together with
+no-op and oscillation guards. The platform also provides an in-browser SVG digital
+waveform viewer, multi-tier linting (Verilator $\rightarrow$ Icarus $\rightarrow$
+regex heuristics), Yosys logic-synthesis cell counts, and a 16-file UVM~1.2 bundle
+export for QuestaSim. The project is covered by \textbf{42 backend pytest cases and
+36 frontend vitest unit tests}. On the development machine 23 backend tests execute
+and 19 are skipped because Icarus Verilog is absent from \texttt{PATH}; continuous
+integration installs \texttt{iverilog} and \texttt{yosys}, so the full suite runs
+there. Known limitations --- notably circular verification, the absence of static
+timing analysis, and unmapped synthesis --- are stated explicitly in
+Section~\ref{sec:limits}.
+
+\abstractrule
+\clearpage
+
+% ========================================================== 1. INTRO ========
+\section{Introduction}
+\label{sec:intro}
+
+\subsection{Motivation and Problem Statement}
+Digital integrated-circuit design demands high precision. Translating a design
+requirement into synthesizable RTL, and then proving that RTL correct through a
+testbench, is time-consuming and error-prone. Applying general-purpose AI coding
+tools directly to hardware design presents three concrete obstacles:
+
+\begin{enumerate}[label=\textbf{\arabic*.}]
+\item \textbf{Toolchain incompatibility.} Generic models frequently emit
+SystemVerilog constructs (\texttt{logic}, \texttt{always\_ff}, classes,
+interfaces) that open-source simulators such as Icarus Verilog cannot compile.
+\item \textbf{No execution awareness.} Language models cannot execute code; they
+cannot evaluate simulation cycles, clock edges, race conditions, or assertion
+matches.
+\item \textbf{No closed-loop feedback.} If generated code fails to simulate, an
+engineer must manually read the compiler output, locate the bug, and re-prompt the
+model --- a slow, manual cycle.
+\end{enumerate}
+
+\subsection{Project Scope and Objectives}
+This is an individual, software-based minor project for course \textbf{EC486}. The
+goal is an autonomous, execution-grounded EDA assistant that bridges natural-language
+specification and functional hardware verification. The key objectives are:
+
+\begin{itemize}
+\item \textbf{Specification parsing} \textemdash\ convert a prompt into a structured design
+schema (\texttt{RTLDesignSpec}).
+\item \textbf{Target-constrained generation} \textemdash\ emit Verilog-2001 synthesizable RTL
+and a self-checking testbench combining directed corner cases with random stimulus.
+\item \textbf{Autonomous debugging loop} \textemdash\ capture diagnostics and assertion
+failures, patch the RTL, and re-simulate, with oscillation guards.
+\item \textbf{In-browser visualisation} \textemdash\ a native SVG waveform viewer (hex bus
+display, zoom, time ruler) plus port-level block diagrams.
+\item \textbf{EDA toolchain integration} \textemdash\ multi-tier linting, Yosys synthesis
+cell counts, and UVM~1.2 export.
+\item \textbf{Zero-budget resilience} \textemdash\ full offline functionality via curated
+fallback designs so the system never hard-fails in a demonstration.
+\end{itemize}
+
+% ========================================================== 2. WORKING ======
+\section{Working: Design, Algorithm, and Methodology}
+\label{sec:working}
+
+\subsection{System Architecture}
+SiliconScribe uses a modular three-tier architecture (Figure~\ref{fig:arch}).
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+    font=\footnotesize,
+    box/.style={draw=ink,line width=0.6pt,rounded corners=1.5pt,
+                fill=softgrey,text width=7.4cm,align=left,
+                inner sep=5pt,minimum height=1.0cm},
+    arr/.style={-{Latex[length=2.6mm]},line width=0.7pt,color=ink},
+    lbl/.style={font=\scriptsize\itshape,color=rulegrey,align=center}
+  ]
+  \node[box] (fe) {\textbf{FRONTEND}\ \ (React 18 + Vite)\\
+    \scriptsize Prompt panel \textbullet\ CodeMirror editor (RTL + TB tabs)
+    \textbullet\ Results panel\\
+    \scriptsize SVG waveform viewer \textbullet\ Agent chat timeline (SSE)};
+  \node[box,below=8mm of fe] (be) {\textbf{BACKEND API}\ \ (FastAPI + Python)\\
+    \scriptsize Intent parser $\rightarrow$ RTL generator $\rightarrow$ TB generator\\
+    \scriptsize Multi-tier linter \textbullet\ Self-correction loop \textbullet\
+    VCD parser\\
+    \scriptsize Yosys wrapper \textbullet\ SQLite \textbullet\ UVM generator};
+  \node[box,below=8mm of be] (ed) {\textbf{LOCAL EDA TOOLCHAIN}\\
+    \scriptsize Icarus Verilog (\texttt{iverilog -g2012 -Wall}, \texttt{vvp})\\
+    \scriptsize Yosys (\texttt{synth -top}, \texttt{stat}, \texttt{write\_json})};
+  \draw[arr] (fe) -- node[lbl,right=2mm]{HTTP POST / SSE} (be);
+  \draw[arr] (be) -- node[lbl,right=2mm]{subprocess} (ed);
+\end{tikzpicture}
+\caption{Three-tier system architecture of SiliconScribe.}
+\label{fig:arch}
+\end{figure}
+
+\subsection{End-to-End Pipeline Workflow}
+Given a prompt such as \emph{``Design a 4-bit synchronous counter with enable and
+async reset''}, the pipeline executes:
+
+\begin{enumerate}[label=\textbf{Step \arabic*:}]
+\item \textbf{Intent parsing} \textemdash\ extract module name, parameters, port list
+(name/direction/width), behaviour, and constraints into \texttt{RTLDesignSpec}.
+\item \textbf{Synthesizable RTL generation} \textemdash\ emit Verilog-2001, enforcing
+\texttt{reg}/\texttt{wire} over \texttt{logic} and standard
+\texttt{always @(posedge clk)} blocks for Icarus compatibility.
+\item \textbf{Pre-simulation linting} \textemdash\ a non-blocking check for syntax errors,
+missing semicolons, duplicate modules, and width mismatches.
+\item \textbf{Self-checking testbench generation} \textemdash\ instantiate the DUT with named
+ports, drive clock/reset, inject \texttt{\$dumpfile}/\texttt{\$dumpvars}, and
+compare with \texttt{===} while maintaining pass/fail counters.
+\item \textbf{Simulation} \textemdash\ compile with \texttt{iverilog -o testbench.vvp
+-g2012 -Wall} and run via \texttt{vvp} in an isolated workspace under a timeout.
+\item \textbf{Autonomous debugging} \textemdash\ if the result is FAIL or ERROR, invoke the
+self-correction loop (Section~\ref{sec:loop}).
+\item \textbf{Post-processing} \textemdash\ evaluate pass rate, parse \texttt{design.vcd}
+into waveform data, run Yosys for cell counts, persist to SQLite, and stream results
+to the frontend.
+\end{enumerate}
+
+\subsection{The Autonomous Closed-Loop Debugger}
+\label{sec:loop}
+The core contribution is the self-correction loop (Algorithm 1).
+Hash normalisation strips single-line comments (\texttt{//}), block comments
+(\texttt{/* */}), and all whitespace before SHA-256 is computed. A candidate patch
+whose hash is already in \texttt{SeenHashes} terminates the loop immediately,
+which both prevents oscillation (the model flipping between two buggy variants) and
+conserves tokens. A \emph{no-op} guard separately catches the case where the model
+returns the input unchanged.
+
+\begin{algobox}
+{\normalsize\bfseries\rmfamily Algorithm 1\ \ \ Autonomous Hardware Self-Correction}\\[2pt]
+{\rmfamily\rule{\linewidth}{0.4pt}}\\[2pt]
+{\rmfamily\textbf{Input:} RTL$_0$, TB$_0$, MaxIterations\\
+\textbf{Output:} RTL, TB, Status}\\[3pt]
+{\rmfamily
+\begin{tabularx}{\linewidth}{@{}r@{\hspace{0.75em}}>{\raggedright\arraybackslash}X@{}}
+1.  & RTL $\gets$ RTL$_0$;\quad TB $\gets$ TB$_0$ \\
+2.  & SeenHashes $\gets$ \{ NormHash(RTL$_0$) \} \\
+3.  & Status, Log, Pass, Fail $\gets$ Simulate(RTL, TB) \\
+4.  & Iter $\gets$ 0 \\
+5.  & \textbf{while} Status $\in$ \{FAIL, ERROR\} \textbf{and} Iter $<$ MaxIterations \textbf{do} \\
+6.  & \hspace*{1.2em} Iter $\gets$ Iter $+$ 1 \\
+7.  & \hspace*{1.2em} Patch $\gets$ LLM\_FixDesign(RTL, TB, Log) \\
+8.  & \hspace*{1.2em} NewRTL $\gets$ Patch.rtl\_code \\
+9.  & \hspace*{1.2em} NewHash $\gets$ NormHash(NewRTL) \\
+10. & \hspace*{1.2em} \textbf{if} NewHash $=$ NormHash(RTL) \textbf{then} \ \textbf{return} ``no-op'' \\
+11. & \hspace*{1.2em} \textbf{if} NewHash $\in$ SeenHashes \textbf{then} \ \textbf{return} ``oscillation'' \\
+12. & \hspace*{1.2em} SeenHashes $\gets$ SeenHashes $\cup$ \{NewHash\} \\
+13. & \hspace*{1.2em} RTL $\gets$ NewRTL \\
+14. & \hspace*{1.2em} Status, Log, Pass, Fail $\gets$ Simulate(RTL, TB) \\
+15. & \textbf{end while} \\
+16. & \textbf{return} RTL, TB, Status \\
+\end{tabularx}}
+\end{algobox}
+
+\subsection{Digital Waveform Parsing and SVG Rendering}
+Rather than requiring an external viewer such as GTKWave, SiliconScribe embeds a
+VCD parser (\texttt{backend/vcd\_parser.py}). It reads time steps
+(\texttt{\#0}, \texttt{\#10}, \ldots) and value transitions, converts multi-bit
+vectors into hexadecimal (\texttt{0x0}, \texttt{0xA}) while preserving unknown
+(\texttt{x}) and high-impedance (\texttt{z}) states, and enforces safety limits
+($\le 40$ signals, $\le 2000$ changes per signal) to prevent browser memory
+exhaustion. The frontend (\texttt{WaveformViewer.tsx}) renders responsive SVG with
+zoom, pan, and a dynamic time ruler.
+
+\subsection{UVM~1.2 Export Engine}
+SiliconScribe generates a 16-file UVM testbench suite
+(\texttt{backend/uvm\_templates.py}): a DUT interface with clocking blocks, sequence
+items, sequences, sequencers, drivers, monitors, a scoreboard with an analysis
+imp, a functional-coverage subscriber, a testbench top, a package file, and a
+QuestaSim \texttt{Makefile} and \texttt{filelist.f}. The bundle is packaged
+in-memory and delivered as a downloadable \texttt{.zip}. It is an
+\textbf{export-only} artefact --- see Limitation~\ref{lim:uvm}.
+
+% ========================================================== 3. RESULTS ======
+\section{Results and Discussion}
+\label{sec:results}
+
+\subsection{Work Completed (Milestone: 15/10/2026)}
+\begin{itemize}
+\item Full end-to-end pipeline from natural-language prompt to simulation output.
+\item Autonomous self-correction engine with verified hash-based cycle prevention.
+\item Multi-tier linter and Yosys logic-synthesis wrapper.
+\item Interactive web frontend: CodeMirror editor, SVG waveform viewer, project
+history drawer.
+\item SQLite persistence and the 16-file UVM bundle generator.
+\item 100\% offline fallback mode with 5 pre-validated hardware design modules.
+\end{itemize}
+
+\subsection{Case Study: Self-Correcting 4-Bit Up-Counter}
+A deliberately buggy prompt was submitted:
+\begin{quote}
+\itshape ``Design a 4-bit synchronous up-counter with async reset and enable, but
+make it buggy.''
+\end{quote}
+
+\noindent\textbf{Mode disclosure (important).} SiliconScribe runs in two provider
+modes, and the loop behaves differently in each. This case study ran in
+\textbf{offline demo mode} (\texttt{OFFLINE\_MODE=1}) --- the mode used by all
+automated regression tests and by the deployed Docker image when no API key is
+present. In offline mode the system serves \emph{curated} designs: the buggy RTL
+(\texttt{count <= count + 2'd2}) is a known defect seeded deliberately, and the
+``fix'' is a \textbf{scripted swap to a stored known-correct implementation},
+reported honestly in the UI timeline and in \texttt{iteration\_history} as
+\texttt{fix\_type = "offline\_scripted"}. Its purpose is to validate the
+\textbf{loop machinery} --- defect detection, log parsing, re-simulation, normalised
+hash cycle prevention, and the PASS/FAIL decision path --- deterministically and at
+zero API cost. In \textbf{live LLM mode} (a provider key configured), the same loop
+instead sends RTL, testbench, and log to the model, which performs genuine
+log-driven diagnosis. The study below is therefore a \emph{fault-injection
+regression test of the loop}, not a claim that a language model diagnosed the bug.
+
+\begin{itemize}
+\item \textbf{Iteration 0 (initial attempt):} the served RTL carried the seeded
+defect \texttt{count <= count + 2'd2;}. The testbench ran 20 directed vectors:
+\textbf{0 Passed, 20 Failed} (status FAIL). Transcript:
+\texttt{FAIL: expected=1 got=2}, \texttt{FAIL: expected=2 got=4}, \ldots
+\item \textbf{Iteration 1 (automated patch):} the loop captured the failure log and
+invoked the debugger; the known-correct implementation was substituted
+(\texttt{count <= count + 1'b1;}), tagged \texttt{offline\_scripted}. Re-simulation
+returned \textbf{20 Passed, 0 Failed} (status PASS). The UI displayed the full
+resolution timeline including the scripted-fix disclosure.
+\end{itemize}
+
+\subsection{Offline Benchmark Designs}
+Five designs were implemented and benchmarked to guarantee reliability without
+internet access (Table~\ref{tab:bench}).
+
+\begin{table}[htbp]
+\centering
+\caption{Offline benchmark designs and simulation results.}
+\label{tab:bench}
+\footnotesize
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{@{}l l c r r c@{}}
+\toprule
+\textbf{Module} & \textbf{Functionality} & \textbf{Width} & \textbf{Time}
+  & \textbf{Vectors} & \textbf{Result} \\
+\midrule
+\texttt{counter}   & Up-counter, enable, async reset & 4b & 100 ns
+  & 20 (dir.) & 100\% PASS \\
+\texttt{alu\_4bit} & ALU: ADD SUB AND OR XOR          & 4b & Comb
+  & 200 (dir+rand) & 100\% PASS \\
+\texttt{alu\_8bit} & 8-bit ALU, carry/overflow        & 8b & Comb
+  & 200 (dir+rand) & 100\% PASS \\
+\texttt{full\_adder} & Gate-level full adder          & 1b & Comb
+  & 8 (exhaust.) & 100\% PASS \\
+\texttt{mux4to1}   & 4-to-1 mux, parameterised        & 8b & Comb
+  & 100 (dir+rand) & 100\% PASS \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Vector counts are taken from the testbench loop bounds in
+\texttt{backend/\allowbreak offline\_designs.py}: \texttt{repeat (20)} for the counter;
+\texttt{for i = 0..199} for both ALUs; \texttt{for i = 0..7} (exhaustive) for the
+full adder; and \texttt{for i = 0..99} for the mux. The counter testbench is fully
+directed (no \texttt{\$random}); the ALU and mux testbenches mix directed coverage
+with randomized stimulus.
+
+\subsection{Logic Synthesis Metrics (Yosys)}
+Yosys produced genuine standard-cell counts. \textbf{An important caveat applies:}
+Yosys is invoked \emph{without} a liberty file, so RTL is mapped onto Yosys's
+generic gate library (\texttt{\$\_AND\_}, \texttt{\$\_NOT\_}, \texttt{\$\_DFF\_},
+\ldots). The flow therefore performs \textbf{no technology mapping} and yields
+\textbf{no physical area figure}. The \texttt{area\_estimate} field returned by the
+API is a \textbf{dimensionless relative proxy} (\texttt{cell\_count}~$\times$~5)
+used only to rank designs against one another --- it is explicitly \emph{not} an
+area in \(\mu\mathrm{m}^2\). The API flags this via
+\texttt{liberty\_mapped: false}, \texttt{area\_units: "relative\_proxy"}, and
+\texttt{tech\_node: null}.
+
+\begin{table}[htbp]
+\centering
+\caption{Yosys synthesis metrics (unmapped, generic gate library).}
+\label{tab:synth}
+\small
+\begin{tabular}{@{}lrrl@{}}
+\toprule
+\textbf{Design} & \textbf{Generic cells} & \textbf{Relative area proxy}
+  & \textbf{Physical area} \\
+\midrule
+\texttt{full\_adder} & 2  & 10  & \textemdash\ (no liberty) \\
+\texttt{counter}     & 12 & 60  & \textemdash\ (no liberty) \\
+\texttt{alu\_4bit}   & 22 & 110 & \textemdash\ (no liberty) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Obtaining genuine PPA figures requires a PDK liberty file (e.g.\ SkyWater 130\,nm
+or Nangate 45\,nm) plus technology mapping and static timing analysis; this is
+planned for the final submission.
+
+\subsection{Automated Test Suites}
+\begin{itemize}
+\item \textbf{Backend (pytest):} \textbf{42 test cases} covering Pydantic models,
+linter heuristics, VCD parsing, rate limiting, and the orchestrator loop. On the
+development machine \textbf{23 pass and 19 skip} because Icarus Verilog is not on
+\texttt{PATH} (\texttt{skipif(shutil.which("iverilog") is None)}). CI installs
+\texttt{iverilog} and \texttt{yosys}, so all 42 execute there.
+\item \textbf{Frontend (vitest):} \textbf{36 unit tests} covering
+\texttt{PromptPanel}, \texttt{ResultsPanel}, and \texttt{WaveformViewer}.
+\item \textbf{TypeScript build:} zero errors (\texttt{tsc -b \&\& vite build}).
+\item \textbf{Continuous integration:} \texttt{ruff} lint, the full pytest suite
+with tools installed, an end-to-end \texttt{POST /api/\allowbreak design/run} assertion
+requiring \texttt{status == "PASS"}, a 16-file UVM generation check, frontend
+type-check/test/build, and a Docker image build.
+\end{itemize}
+
+\noindent\textit{Honest note on test strength.} 19 of the 23 locally executed
+backend tests exercise pure-Python paths (models, linter fallbacks, VCD parsing,
+rate limiting, sanitisation). The tests that prove the self-correction loop reaches
+a passing state require a real simulator, which is why they skip locally and run in
+CI.
+
+% ====================================================== 4. LIMITATIONS ======
+\section{Limitations}
+\label{sec:limits}
+
+\begin{enumerate}[label=\textbf{L\arabic*.},ref=L\arabic*]
+\item \textbf{Circular verification (most important limitation).\ }
+\label{lim:circular}The same language model generates both the RTL \emph{and} the
+self-checking testbench, and the debugger prompt instructs it to ``treat the
+testbench's intent as the specification.'' The loop therefore demonstrates
+\textbf{self-consistency, not ground-truth correctness}: if the model misreads the
+specification (e.g.\ swapping active-high and active-low reset), it can emit a DUT
+and a testbench that are \emph{consistently wrong together} and still report 100\%
+PASS. Closing this requires an \textbf{independent golden reference model} (e.g.\
+a Python behavioural model the testbench compares against), planned for the final
+submission.
+\item \textbf{No static timing analysis or PPA sign-off.}
+\label{lim:sta}The \texttt{target\_frequency\_mhz} field is appended to the
+RTL-generation prompt as a textual hint only. There is no SDC, no
+\texttt{create\_clock}, no \texttt{abc -D}, and no setup/hold analysis in the flow.
+The platform reports no timing slack and no real power/area/performance figures.
+\item \textbf{Synthesis is unmapped (no technology library).}
+\label{lim:mapping}Yosys runs without a liberty file, so RTL maps to the generic
+gate library. Cell counts are genuine, but \texttt{area\_estimate} is a
+dimensionless relative proxy, not physical area (Section~\ref{sec:results}).
+\item \textbf{Testbench-reported, not instrumented, coverage.}
+\label{lim:cov}The coverage figure is a regex parse of \texttt{\$display} output
+emitted by the testbench itself. It is not instrumented toggle/line/branch
+coverage, which would require simulator instrumentation such as
+\texttt{verilator {-}{-}coverage}.
+\pagebreak
+\item \textbf{UVM bundle is export-only and never compiled.}
+\label{lim:uvm}The 16-file UVM~1.2 bundle is generated as SystemVerilog
+(\texttt{logic}, \texttt{always\_ff}, classes) for a commercial simulator. Icarus
+Verilog cannot compile UVM, and no commercial licence was available, so the bundle
+has \textbf{not been compiled or simulated}. It is a structured template export,
+not a verified working testbench; CI checks structural integrity (file count,
+generation success), not compilation.
+\item \textbf{Schematic display depth.} The browser shows a port-level block
+diagram. Gate-level logic diagrams require the planned \texttt{netlistsvg}
+integration over Yosys JSON.
+\item \textbf{Design hierarchy scope.} The implementation targets single-module or
+small blocks ($\le 1000$ RTL lines). Multi-clock SoC architectures exceed
+single-prompt LLM context windows.
+\end{enumerate}
+
+% ======================================================= 5. CONCLUSION ======
+\section{Conclusion and Next Steps}
+
+\subsection{Conclusion}
+For this progress milestone, \textbf{SiliconScribe} has been designed,
+implemented, and partially verified. Combining natural-language processing,
+synthesizable Verilog-2001 generation, Icarus Verilog simulation, and an autonomous
+self-correction loop with oscillation guards, the project demonstrates that an LLM
+can act as an execution-grounded assistant for digital design and verification ---
+while its current boundaries (circular verification, absent STA, unmapped
+synthesis) are documented rather than hidden.
+
+\subsection{Plan for Final Submission (Deadline: 06/11/2026)}
+In priority order:
+\begin{enumerate}[label=\textbf{\arabic*.}]
+\item \textbf{Independent golden reference model (highest priority).} Add a
+language-independent behavioural model (Python) for each benchmark so the testbench
+compares the DUT against the model rather than against an expectation derived from
+the same RTL, breaking circular verification.
+\item \textbf{Real PPA via liberty-based technology mapping.} Run Yosys with an
+open PDK liberty file (\texttt{read\_liberty}, \texttt{abc}, \texttt{stat -tech}),
+replacing the area proxy with genuine cell area and estimated delay.
+\item \textbf{Gate-level netlist visualisation} via \texttt{netlistsvg} over Yosys
+JSON.
+\item \textbf{Instrumented coverage} via \texttt{verilator {-}{-}coverage}.
+\item \textbf{Poster and presentation} for the final EC486 evaluation.
+\end{enumerate}
+
+% ======================================================== 6. REFERENCES =====
+\section*{References}
+\begin{enumerate}[label={[\arabic*]},leftmargin=2.2em,itemsep=0pt,parsep=0pt]
+\item IEEE Standard for SystemVerilog --- Unified Hardware Design, Specification,
+and Verification Language, \textbf{IEEE Std 1800-2017}, 2017.
+\item Accellera Systems Initiative, \textit{Universal Verification Methodology
+(UVM) 1.2 User's Guide}, Accellera, 2015.
+\item S.~Thakur et al., ``VeriGen: A Large Language Model for Verilog Code
+Generation,'' \textit{ACM TODAES}, vol.~29, no.~3, 2024.
+\item M.~Liu et al., ``ChipNeMo: Domain-Adapted LLMs for Chip Design,'' in
+\textit{Proc.~61st ACM/IEEE Design Automation Conference (DAC)}, 2024.
+\item S.~Williams, ``Icarus Verilog: An Open-Source Verilog Compiler and
+Simulator,'' \url{http://iverilog.icarus.com/}.
+\item C.~Wolf, ``Yosys Open Synthesis Suite,'' in \textit{Proc.~21st Int.\ Workshop
+on Logic \& Synthesis (IWLS)}, 2012.
+\item W.~Snyder, ``Verilator: Fast Open-Source Verilog Simulator,''
+Veripool.org, 2024.
+\end{enumerate}
+
+\vspace{4pt}
+\noindent{\color{ink}\rule{\textwidth}{0.8pt}}
+\begin{center}
+\small\itshape End of Progress Report
+\end{center}
+\noindent{\color{ink}\rule{\textwidth}{0.8pt}}
+
+\end{document}

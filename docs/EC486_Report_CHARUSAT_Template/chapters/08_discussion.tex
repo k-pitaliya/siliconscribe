@@ -1,0 +1,115 @@
+\chapter{Discussion}
+\label{ch:discussion}
+
+This chapter interprets the results: the failure modes that shaped the design, how the system scales with stronger models, and how it was planned, deployed and costed.
+
+\section{Engineering Findings}
+\label{sec:discussion}
+
+The final system is the product of several live failures. They are reported here
+because they are the most transferable part of the work.
+
+\begin{table}[H]
+\centering
+\caption{Live failure modes found during validation and their fixes.}
+\label{tab:failures}
+\footnotesize
+\begin{tabularx}{\textwidth}{@{}p{3.9cm}p{5.3cm}X@{}}
+\toprule
+\textbf{Failure} & \textbf{Evidence} & \textbf{Fix} \\
+\midrule
+Reasoning tokens consumed the output budget & Empty \code{content}; the model's scratchpad was almost used as a testbench & Reasoning disabled by default; empty-content error is explicit; reasoning text is never returned as code \\
+Silent mid-run offline swap & A live run failed at intent parsing and was replaced by a curated design & Disable fallback after the first successful live call; fail honestly \\
+wire assigned in a procedural block & Icarus: ``not a valid l-value'' & Deterministic wire$\rightarrow$reg repair, scoped by file \\
+\code{disable} inside a function & Icarus: ``cannot disable functions'' & Deterministic \code{disable}$\rightarrow$\code{return} repair \\
+Testbench oracle width bug & 35-bit concatenation compared with a 4-bit output; expected and got printed identically & Prompt requires width-correct comparisons; fixer checks the oracle against the spec \\
+Malformed JSON fix response & Unescaped Verilog quotes/newlines broke the parser & XML-section protocol plus tolerant JSON salvage \\
+Model listing mismatch & UI offered a Zen model while OpenRouter was active; the run fell back & \code{/api/models} exposes only the configured model when it is not curated \\
+TB-only fix discarded & The loop hashed only the RTL, so an oracle repair looked like a no-op & State hash covers RTL \emph{and} TB \\
+Free model stalled on one prompt & s1 testbench generation timed out three times (Section~\ref{sec:eval}) & Per-run model menu; the run is reported as ``no result'', not as a failure \\
+Watchdog shorter than the test & \code{gpt-oss-120b} testbench ended before printing its summary & ERROR with 0 checks; never PASS \\
+Testbench sampled one cycle early & separate testbench model, FAIL 124/146 on a correct counter & failing checks not rewritten away; disagreement between the two models reported \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+Two conclusions follow. First, \textbf{the model is not the only source of bugs}:
+the orchestrator, the prompt contract, the response parser, and the model catalog
+all produced defects that looked like ``the LLM is weak.'' Second, \textbf{the
+simulator is the right oracle}: every one of these defects was found by executing
+the pipeline, not by reading the code.
+
+Model choice also matters. The free Nemotron Lightning model produced plausible but
+incorrect Boolean equations for the priority encoder; the larger
+\code{nvidia/nemotron-3-ultra-550b-a55b:free} produced a correct \code{casez} chain
+that passed the independent specification-derived testbench. The application therefore reports
+the active model and does not pretend all models are equivalent.
+
+\section{Scalability and Extensibility}
+\label{sec:scale}
+
+SiliconScribe was built model-agnostic and tool-agnostic. Every result in this report was obtained with free-tier language models because of budget, not because of an architectural limit. The model is chosen per run from the model menu (OpenCode, Cloudflare Workers AI, NVIDIA NIM), or any other OpenAI-compatible endpoint can be set through environment variables, so a stronger model is a configuration change, not a code change.
+
+\subsection{Quality scales with the model}
+The priority-encoder example of Section~\ref{sec:discussion} is a measured case: the same pipeline and simulator rejected one model's incorrect equations and passed a larger model's correct design on the first attempt. The evaluation gave a second case: the 4-bit counter prompt stalled three times on DeepSeek V4.1 Flash but passed on \code{opencode/hy4-flash-free} (Section~\ref{sec:eval}). A stronger model is expected to raise the first-attempt pass rate and reduce repairs, with the simulator still deciding PASS or FAIL.
+
+\subsection{Per-stage model routing}
+The pipeline already separates five model calls: specification parsing, RTL generation, testbench generation, explanation and diagnosis-and-repair. A deployment can route each to a different model with \code{LLM_MODEL_INTENT}, \code{LLM_MODEL_RTL}, \code{LLM_MODEL_TESTBENCH}, \code{LLM_MODEL_EXPLAIN} and \code{LLM_MODEL_FIX}. The sensible policy is to spend budget where correctness is decided, a strong model for the testbench and the diagnosis, and a cheap model for the cosmetic explanation. A model chosen explicitly per request still takes precedence, and the web interface's default selection does not disable routing. This is implemented and covered by automated tests. The interface also offers the most useful split directly: ``Testbench written by'' lets a different model, even from another provider, write the testbench (Section~\ref{sec:trustimpl}).
+
+\subsection{Scaling dimensions}
+\begin{table}[H]
+\centering
+\caption{What is in place today and the path to scale along each dimension.}
+\label{tab:scale}
+\footnotesize
+\begin{tabularx}{\textwidth}{@{}p{2.5cm}XX@{}}
+\toprule
+\textbf{Dimension} & \textbf{In place today} & \textbf{Scaling path} \\
+\midrule
+Language models & Per-run model menu (OpenCode, Cloudflare Workers AI, NVIDIA NIM, read live); any OpenAI-compatible endpoint; per-request model and reasoning effort & Frontier and domain-tuned RTL models (for example VeriGen- or ChipNeMo-style) behind the same interface; automatic model selection driven by an evaluation suite \\
+Stage routing & Five stage models by environment variable (implemented, tested) & Cost, latency and accuracy aware routing policy; fallback chains \\
+Verification strength & Specification-only testbench; anti-cheat guard; mutation score and toggle coverage on every PASS; optional separate testbench model; second opinion; specification review & Golden reference models; SVA assertions and formal equivalence; line and branch coverage; coverage-directed stimulus \\
+Machine-learning models beyond LLMs & Clear seams: spec parsing, stimulus, diagnosis & Learned stimulus and coverage-closure agents; retrieval of similar verified designs as examples; learned bug localisers that rank suspicious RTL lines from failing vectors \\
+EDA toolchain & Icarus Verilog; Yosys and OpenSTA on the sky130 library for a pre-layout timing and area estimate; Verilator lint hook; OpenROAD stub & Place and route with OpenROAD for post-layout timing; more corners; line and branch coverage with a simulator that supports the generated testbenches \\
+Runtime & Single FastAPI process; blocking routes in a thread pool; SQLite; in-memory rate limiter & Job queue and worker pool; container or microVM sandbox per simulation; PostgreSQL; authentication and tenancy; object storage; metrics and tracing \\
+Design size & Single blocks; evaluated on blocks under about 100 lines & Hierarchical decomposition: specification to sub-blocks to integration tests \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{What this does and does not claim}
+Model quality is shown above to matter, and the routing seam is implemented. Scaling to many concurrent users needs the runtime items in Table~\ref{tab:scale} (the deployment today is a single node with an in-process rate limiter and a local database); these are additions around an unchanged core, not a redesign.
+
+\section{Project Timeline, Deployment and Cost}
+\label{sec:project}
+
+\subsection{Development timeline}
+\begin{table}[H]
+\centering
+\caption{Milestones (from the repository history and dated artefacts).}
+\label{tab:timeline}
+\footnotesize
+\begin{tabularx}{\textwidth}{@{}p{2.6cm}X@{}}
+\toprule
+\textbf{Date (2026)} & \textbf{Milestone} \\
+\midrule
+23 July & Baseline; Docker, CI/CD, structured logging, health check, rate limiting, no-progress guard, VCD truncation metadata, frontend and backend tests \\
+29 August & Zero-budget provider, hardening, lint and synthesis wrappers, SQLite projects, UVM export; QA and security audit \\
+4--5 September & Vercel and Render free-tier deployment, live provider, 8-bit ALU, real reasoning-effort levels, CORS and rate-limit fixes \\
+15 October & Progress report \\
+September--November & Specification-only testbenches, structured diagnosis, compiler repairs, honest degraded mode, live validation \\
+6 November & Live evidence captured; final review (sandbox, server freeze, testbench hardening, persistence fix, model routing); final report and presentation \\
+November (after 6 Nov.) & Second review round; testbench strength by mutation, measured toggle coverage, Yosys and OpenSTA timing and area on sky130, model menu (OpenCode, Cloudflare, NVIDIA NIM), specification review, separate testbench model, second opinion, CORS hardening, live evaluation on fifteen prompts \\
+19 November & Final verification of the tool (Table~\ref{tab:verify}) \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{Deployment}
+A multi-stage Docker image builds the frontend with Node 20 and serves it from a Python 3.12 image that also contains Icarus Verilog and Yosys, with a health check on \code{/health}. The configuration targets Vercel for the static frontend (which rewrites \code{/api} to the backend) and Render for the backend container; free tiers sleep when idle, so the interface explains cold-start delays. Docker Compose runs the whole system locally in one container. The image does not yet include OpenSTA or the sky130 library, so inside the container the timing and area estimate reports itself as not available.
+
+\subsection{Cost}
+Development and validation cost nothing beyond the laptop: open-source tools and free-tier models (free OpenCode models, the Cloudflare Workers AI free allowance of 10,000 neurons a day, and the NVIDIA NIM free queue). The price of free models is time and quota: a live run took a median of 360~s. When scaling, cost is driven by tokens per model call times calls per run, plus hosting. Per-stage routing keeps the expensive model on the testbench and diagnosis stages only, and the deterministic compiler repairs avoid model calls altogether for mechanical errors.
+
+\subsection{Third-party components}
+Icarus Verilog (GPL-2.0), Yosys (ISC), OpenSTA (GPL-3.0), the SkyWater SKY130 library (Apache-2.0), FastAPI and Pydantic (MIT), Uvicorn (BSD-3-Clause), React, Vite and CodeMirror (MIT) and SQLite (public domain). Generated designs belong to the user; no user data leaves the server except the prompt and code sent to the chosen model provider (or two providers when a separate testbench model is chosen).

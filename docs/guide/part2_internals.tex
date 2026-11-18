@@ -1,0 +1,784 @@
+% ============================================================================
+%  PART II: How SiliconScribe works
+% ============================================================================
+
+\chapter{Architecture and Code Map}
+\label{ch:arch}
+
+\section{Three tiers}
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[node distance=10mm and 8mm]
+  \node[hbox,minimum width=13.4cm] (fe) {FRONTEND \quad React 18 + Vite + TypeScript (runs in the browser)};
+  \node[box,below=3mm of fe.south west,anchor=north west,minimum width=13.4cm,align=left,font=\scriptsize] (fed)
+    {Sidebar: prompt, run timeline, examples, Model menu, ``Testbench written by'', specification review, target clock \\
+     Design / Results / Test cases / Waveform / Schematic tabs \textbullet\ Projects menu \textbullet\ Export UVM, Re-run, Stop \textbullet\ theme};
+  \node[hbox,below=12mm of fed.south west,anchor=north west,minimum width=9.1cm] (be) {BACKEND \quad FastAPI + Pydantic (Python)};
+  \node[box,below=3mm of be.south west,anchor=north west,minimum width=9.1cm,text width=8.8cm,align=left,font=\scriptsize] (bed)
+    {\file{main.py}: routes, CORS, rate limit, SSE streaming\\
+     \file{orchestrator.py}: pipeline, repair loop, second opinion\\
+     \file{llm_service.py} + \file{model_catalog.py}: providers, model menu, prompts\\
+     \file{simulator.py}: Icarus Verilog and sandbox\\
+     \file{mutation.py}: testbench strength \textbullet\ \file{timing.py}: timing and area\\
+     linter, checks, VCD parser and toggle coverage, schematic, synthesis, UVM export, SQLite};
+  \node[hbox,right=4mm of be,minimum width=3.9cm] (llm) {LLM PROVIDERS};
+  \node[box,below=3mm of llm.south west,anchor=north west,minimum width=3.9cm,text width=3.6cm,align=left,font=\scriptsize] (llmd)
+    {OpenCode app (local)\\ Cloudflare Workers AI\\ NVIDIA NIM\\ any OpenAI-compatible API\\ keys only in \file{backend/.env}};
+  \node[hbox,below=12mm of bed.south west,anchor=north west,minimum width=9.1cm] (eda) {EDA TOOLCHAIN \quad local subprocesses};
+  \node[box,below=3mm of eda.south west,anchor=north west,minimum width=9.1cm,align=left,font=\scriptsize] (edad)
+    {Icarus Verilog 12 (\code{iverilog}, \code{vvp}) \textbullet\ Yosys 0.71 \textbullet\ OpenSTA 3.2.0 \textbullet\ sky130 cell library\\ Verilator if installed \textbullet\ one workspace folder per design, time limits, scrubbed environment};
+  \draw[arr,<->] (fed.south) ++(-2.5,0) -- node[right,font=\scriptsize]{HTTP + Server-Sent Events} ++(0,-1.2);
+  \draw[arr,<->] (bed.east) -- (llmd.west);
+  \draw[arr] (bed.south) ++(-1,0) -- node[right,font=\scriptsize]{subprocess} ++(0,-1.2);
+\end{tikzpicture}
+\caption{The three tiers. The backend is the only part that holds secrets or runs programs.}
+\end{figure}
+
+\begin{keyidea}
+The browser never talks to the AI provider and never runs tools. All secrets (API keys) and all execution stay in the backend, which is why the frontend can be a static website. The web page never asks for a key: keys are read only from \file{backend/.env} (or the environment of the terminal that starts the backend).
+\end{keyidea}
+
+\section{Folder map}
+
+\begin{center}
+\small
+\begin{longtable}{@{}p{5.3cm}p{9.8cm}@{}}
+\toprule
+\textbf{Path} & \textbf{What lives there} \\ \midrule \endhead
+\file{backend/main.py} & The web server: every HTTP endpoint, the rate limiter, CORS, SSE streaming, saving finished runs. \\
+\file{backend/orchestrator.py} & The ``brain'': runs the stages in order, validates outputs, runs the self-correction loop and its guards, re-runs the original testbench, asks for a second opinion, starts the strength and timing checks, handles fallback. \\
+\file{backend/llm_service.py} & Talks to AI providers: the system prompts, provider selection (OpenCode app, Cloudflare, NVIDIA NIM, OpenAI-compatible, offline), per-stage model routing, response parsing. \\
+\file{backend/model_catalog.py} & Builds the Model menu: reads the OpenCode app's model list and the live Cloudflare and NVIDIA NIM catalogues, caches them, and checks every model id before it is used. \\
+\file{backend/simulator.py} & Runs Icarus Verilog safely: sandbox policy, file writing, compile, run, verdict. \\
+\file{backend/mutation.py} & Testbench strength: injects small bugs into a passing design and counts how many the testbench catches. \\
+\file{backend/timing.py} & Pre-layout timing and area: Yosys maps the design to sky130 cells, OpenSTA times the netlist. \\
+\file{backend/pdk/} & The sky130 cell library file (\file{sky130hd_tt.lib}) that timing needs, with a README saying where to fetch it. \\
+\file{backend/models.py} & The data contracts (Pydantic models) for every request, response and record. \\
+\file{backend/offline_designs.py} & Built-in designs (counter, 4- and 8-bit ALU, full adder, 4:1 mux) with their testbenches, used offline and for the mutation sweep. \\
+\file{backend/linter.py} & Non-blocking lint: Verilator, then Icarus, then pattern heuristics. \\
+\file{backend/cov_metrics.py} & Builds the coverage summary from the simulation result. \\
+\file{backend/checks.py} & Turns the testbench's \code{CHK|...} lines into per-check rows and exact per-type counters for the Test cases tab (display only; never decides the verdict). \\
+\file{backend/vcd_parser.py} & Reads the VCD waveform into JSON for the browser, and measures toggle coverage from the same file. \\
+\file{backend/schematic.py}, \file{synthesis.py} & Port-level block diagram; generic (unmapped) Yosys synthesis with honest labelling. \\
+\file{backend/uvm_templates.py} & Generates the 16-file UVM export bundle. \\
+\file{backend/db.py}, \file{cleanup.py} & SQLite project storage; deletion of old workspace folders. \\
+\file{backend/openroad.py} & A stub for a future physical-design flow (reports ``not available''). \\
+\file{backend/tools/mutation_sweep.py} & The 27-mutant testbench-quality sweep over the built-in designs. \\
+\file{backend/tools/verify_mapping.py} & Checks the timing stage itself: simulates the mapped gate netlist with the same testbench, recounts area and cells, and checks that the minimum period does not depend on the target. \\
+\file{backend/tools/preflight.py} & Demo-day readiness check: tools, library, models, offline demo, saved results (with \code{--live}, one tiny model call). \\
+\file{backend/tools/evaluate_live.py} & Runs the fixed 15-prompt live evaluation and writes \file{evaluation/results.jsonl} and \file{summary.md}. \\
+\file{backend/tools/build_opensta.sh} & Builds OpenSTA from source into \file{~/.local/opensta} (no Homebrew). \\
+\file{backend/evaluation/} & Recorded live results: \file{results.jsonl}, \file{summary.md}, the final designs and testbenches in \file{artifacts/}. \\
+\file{backend/evaluation/independent/} & Hand-written reference testbenches (\file{tb_c1.v} \ldots\ \file{tb_s6.v}), \file{run.py} that checks each evaluated design against them, and \file{strength.py} that checks the references themselves with every mutant. \\
+\file{backend/tests/} & 436 automated backend tests in 31 test files, plus \file{conftest.py} (shared test set-up) and two fake servers (\file{cf_fake.py}, \file{nim_fake.py}) so Cloudflare and NIM code is tested without the internet. \\
+\file{backend/workspace/} & Runtime files: one folder per design (\file{design.sv}, \file{testbench.sv}, \file{transcript.log}, \file{design.vcd}) and \file{projects.db}. \\
+\file{frontend/src/App.tsx} & The page: holds all state and connects the components. \\
+\file{frontend/src/api.ts} & Every call to the backend, including the SSE stream reader. \\
+\file{frontend/src/types.ts} & TypeScript copies of the backend data shapes. \\
+\file{frontend/src/theme.ts} & Light, dark or system theme; an explicit choice is remembered in the browser. \\
+\file{frontend/src/components/} & PromptPanel, ModelPicker, TestbenchModelSelect, SpecReview, SpecSummary, AgentChat, CodeEditor, ResultsPanel, TestCasesView, WaveformViewer, SchematicView (plus their tests). \\
+\file{docs/} & Report, presentation, poster, screenshots, live evidence, this guide. \\
+\file{run.sh}, \file{Dockerfile}, \file{docker-compose.yml}, \file{render.yaml}, \file{vercel.json} & Ways to run and deploy (Chapter~\ref{ch:running}). \\
+\bottomrule
+\end{longtable}
+\end{center}
+
+% ---------------------------------------------------------------------------
+\chapter{The Journey of One Request}
+\label{ch:journey}
+
+This chapter follows a single prompt from the moment you press Generate RTL to the final PASS. Each step names the function that does the work, so you can open the code and follow along.
+
+\begin{figure}[H]
+\centering
+\newcommand{\msg}[5]{\draw[arr#5] (#1,#3) -- node[above,font=\scriptsize]{#4} (#2,#3);}
+\resizebox{\textwidth}{!}{%
+\begin{tikzpicture}[font=\scriptsize]
+  \foreach \x/\n/\l in {0/B/Browser,3.1/A/FastAPI route,6.2/O/Orchestrator,9.3/L/LLM provider,12.4/S/EDA tools}{
+    \node[hbox,minimum width=2.6cm] (\n) at (\x,0) {\l};
+    \draw[midgrey,dashed] (\x,-0.45) -- (\x,-10.4);
+  }
+  \msg{0}{3.1}{-1.0}{POST /api/design/stream}{}
+  \msg{3.1}{6.2}{-1.6}{pipeline\_events()}{}
+  \msg{6.2}{9.3}{-2.2}{parse\_intent}{}
+  \msg{9.3}{6.2}{-2.7}{RTLDesignSpec}{,dashed}
+  \msg{6.2}{0}{-3.1}{SSE: start, intent}{,dashed}
+  \msg{6.2}{9.3}{-3.7}{generate\_rtl, generate\_testbench, explain}{}
+  \msg{6.2}{0}{-4.3}{SSE: rtl, lint, testbench, explanation}{,dashed}
+  \msg{6.2}{12.4}{-4.9}{simulate(): iverilog + vvp}{}
+  \msg{12.4}{6.2}{-5.4}{transcript + VCD}{,dashed}
+  \msg{6.2}{0}{-5.8}{SSE: simulate (PASS / FAIL / ERROR)}{,dashed}
+  \node[draw=badred,dashed,rounded corners,minimum width=10.2cm,minimum height=2.2cm,anchor=north west] (loopbox) at (5.6,-6.15) {};
+  \node[anchor=north east,font=\scriptsize,text=badred] at ($(loopbox.north east)+(-0.1,-0.08)$) {loop while FAIL/ERROR/TIMEOUT and iterations remain};
+  \msg{6.2}{9.3}{-7.0}{fix\_design (or compiler repair first)}{}
+  \msg{6.2}{0}{-7.5}{SSE: fixing, fix}{,dashed}
+  \msg{6.2}{12.4}{-8.0}{re-simulate}{}
+  \msg{6.2}{12.4}{-9.05}{after a PASS: mutants, Yosys + OpenSTA}{}
+  \msg{6.2}{0}{-9.55}{SSE: synthesis, strength, timing, done}{,dashed}
+  \node[font=\scriptsize,align=left,text=inkgrey] at (3.1,-10.1) {route saves the project to SQLite};
+\end{tikzpicture}}
+\caption{Sequence of one streamed run. Solid arrows are calls; dashed arrows are replies and streamed events.}
+\label{fig:sequence}
+\end{figure}
+
+\section{Step by step}
+
+\begin{enumerate}[leftmargin=*,label=\textbf{Step \arabic*.}]
+  \item \textbf{You type and press Generate RTL} (or Ctrl/Cmd+Enter). \code{PromptPanel.submit} rejects an empty prompt or one longer than 2000 characters, clamps the target clock to 1--10000 MHz (the slider itself goes from 10 to 500) and calls \code{App.handleGenerate}.
+  \item \textbf{Optional: review the specification.} If ``Review the specification before generating'' is ticked, \code{handleGenerate} first calls \code{api.parseSpec}, which sends \code{POST /api/spec/parse}. The server only runs \code{parse_intent} and returns the specification. The page shows it in the SpecReview panel, you edit the behaviour and constraints, and ``Generate with this specification'' starts the run with that exact specification (Section~\ref{sec:specreview}).
+  \item \textbf{The browser opens a stream.} \code{startRun} clears the previous results and calls \code{api.streamDesign}, which sends \code{POST /api/design/stream} with the prompt, target clock, the chosen model, the optional testbench model, the optional confirmed specification, the thinking level, \code{self_correct=true}, \code{max_iterations=5} and \code{timeout_seconds=30}.
+  \item \textbf{The server checks the request.} FastAPI validates the JSON against \code{RunRequest} (HTTP 422 if invalid). This includes the model ids (Section~\ref{sec:modelid}) and the bounds on a user specification. \code{design_stream} applies the rate limit, creates a fresh design id with \code{_new_design_id} (a full random UUID) and starts \code{pipeline_events}.
+  \item \textbf{Specification.} The orchestrator calls \code{parse_intent}, unless you already confirmed a specification. The model returns JSON describing the module name, parameters, ports (name, direction, width), behaviour and constraints, which is validated as an \code{RTLDesignSpec}. Event \code{intent} is streamed.
+  \item \textbf{RTL.} \code{generate_rtl} is called with the specification. The orchestrator checks the reply contains a complete \code{module <name> ... endmodule}; if not, it retries once, then fails clearly. Event \code{rtl}. The linter may add a \code{lint} event.
+  \item \textbf{Testbench.} \code{generate_testbench} is called with the specification (by the separate testbench model if you chose one). The result must be a complete module named \code{testbench}, must really instantiate the design and must contain at least one check; otherwise retry once, then refuse. Event \code{testbench}.
+  \item \textbf{Explanation.} \code{explain_design} writes 2--3 sentences. If this cosmetic step fails, a placeholder is used and the run continues. Event \code{explanation}.
+  \item \textbf{First simulation.} \code{simulator.simulate} scans the code against the sandbox policy, writes the two files, compiles, runs and parses the transcript. The result is recorded as iteration 0. Event \code{simulate}.
+  \item \textbf{Self-correction loop} (only if FAIL, ERROR or TIMEOUT): compiler repair or LLM diagnosis, guards, re-simulation, up to \code{max_iterations} times (Chapter~\ref{ch:pipeline}). Events \code{fixing}, \code{fix}, \code{simulate}.
+  \item \textbf{Post-processing.} Coverage summary, VCD parsed into a waveform, port-level schematic, generic synthesis (event \code{synthesis}). If the run passed only after the testbench was changed, the original testbench is run again on the final design, and a fresh second-opinion testbench is requested (event \code{second_opinion}). Then, for a PASS only, testbench strength (event \code{strength}) and the timing and area estimate (event \code{timing}). Chapters~\ref{ch:trust} and~\ref{ch:timing} explain these.
+  \item \textbf{Done.} A full \code{RunResponse} is built and sent in the \code{done} event. It records which model wrote the design and, if different, which wrote the testbench. \code{design_stream} saves it to SQLite before forwarding it.
+  \item \textbf{The page updates.} For each event, \code{startRun} adds a message to the run timeline in the sidebar and fills the editors and result panels; on \code{done} it loads the final response, switches to the Results tab and refreshes the Projects list.
+\end{enumerate}
+
+\section{The event protocol}
+
+Every streamed message is one JSON object with a \code{stage} field. The full list:
+
+\begin{center}
+\small
+\begin{tabularx}{\textwidth}{@{}>{\ttfamily}lX@{}}
+\toprule
+\textrm{\textbf{stage}} & \textbf{Meaning and extra fields} \\
+\midrule
+start & Run started; names the provider and model. \\
+intent & Specification ready: \code{rtl_spec}, and \code{fallback_notice} if degraded. \\
+rtl & RTL ready: \code{rtl_code}. \\
+lint & Lint found something: \code{target} (rtl, tb or fix) and \code{lint} (errors, warnings). Informational only. \\
+testbench & Testbench ready: \code{testbench_code}. \\
+explanation & \code{explanation} text. \\
+simulate & One simulation finished: \code{iteration}, \code{status}, \code{result}. \\
+fixing & About to ask the model to diagnose (iteration number). \\
+fix & A fix was applied, or the loop stopped: \code{fix_summary}, \code{fix_type} (compiler\_repair, llm\_diagnosis or offline\_scripted), \code{diagnosis}, new code. \\
+synthesis & Generic synthesis result or ``not available''. \\
+second\_opinion & Sent twice when a repair rewrote the testbench: first ``asking for a fresh testbench'', then \code{second_opinion} (status PASS, FAIL or unavailable, with counts and the model). \\
+strength & After a PASS: \code{strength} (bugs injected, bugs caught, survivors). \\
+timing & After a PASS, when the tools exist: \code{timing} (slack, area, cells, or the reason it was refused). \\
+done & Final verdict: \code{status}, \code{response} (the complete RunResponse). \\
+error & Something failed: a short, safe \code{message}. \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+% ---------------------------------------------------------------------------
+\chapter{The Pipeline and Self-Correction Loop}
+\label{ch:pipeline}
+
+All of this lives in \file{backend/orchestrator.py}, mainly in the generator function \code{pipeline_events}. A \textbf{generator} is a Python function that produces values one at a time with \code{yield}; each yielded value here is one event, which is exactly what streaming needs. The one-shot route uses \code{run_pipeline}, which simply consumes the same events and returns the final response.
+
+\section{Validation between stages}
+
+The orchestrator does not pass model output blindly to the next stage:
+
+\begin{description}
+  \item[\code{_has_complete_module(code, name)}] True only if the text contains \code{endmodule} and a \code{module <name>} header. Catches truncated or chatty answers before they reach the compiler, where they would cause a cryptic syntax error.
+  \item[\code{_tb_check_count(tb)}] Counts the places where a testbench can actually fail: increments of a fail or error counter, \code{$error} / \code{$fatal}, \code{assert(} and calls of the standard \code{chk(...)} task. Comments and strings are blanked out first (\code{_strip_comments_and_strings}), so a comment such as \code{// $error} does not count, and a bare \code{fail_count = 0} is not a check. A testbench with zero checks cannot fail, so it is refused: ``Refusing to report PASS from a testbench that cannot fail.''
+  \item[\code{_tb_problems(tb, name)}] The full acceptance test for a testbench: a complete module named \code{testbench}, at least one check, and a real instance of the design (\code{_instantiates_dut}), not just a mention of its name. The same rules apply to a testbench proposed by a repair.
+  \item[Retry once.] RTL and testbench generation each get one automatic retry when the answer is invalid; a second failure stops the run with a clear message.
+\end{description}
+
+\section{The self-correction loop}
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[node distance=7mm and 10mm]
+  \node[box] (sim) {Simulate};
+  \node[diamond,draw=navy,align=center,aspect=2.2,inner sep=1pt,font=\small,below=of sim] (d1) {PASS?};
+  \node[okbox,right=of d1] (done) {Done};
+  \node[diamond,draw=navy,align=center,aspect=2.2,inner sep=1pt,font=\small,below=of d1] (d2) {ERROR with a\\ known compiler\\ message?};
+  \node[box,right=of d2] (cr) {Compiler repair\\ \scriptsize wire$\to$reg, disable$\to$return};
+  \node[box,below=of d2] (llm) {LLM diagnosis + patch\\ \scriptsize symptom, root cause, fix, confidence};
+  \node[box,below=of llm] (ac) {Anti-cheat: drop TB change\\ if it removed checks};
+  \node[diamond,draw=navy,align=center,aspect=2.2,inner sep=1pt,font=\small,below=of ac] (d3) {Changed and\\ never seen?};
+  \node[badbox,right=of d3] (stop) {Stop: no-op\\ or oscillation};
+  \draw[arr] (sim)--(d1); \draw[arr] (d1)--node[above,font=\scriptsize]{yes}(done);
+  \draw[arr] (d1)--node[left,font=\scriptsize]{no}(d2);
+  \draw[arr] (d2)--node[above,font=\scriptsize]{yes}(cr);
+  \draw[arr] (d2)--node[left,font=\scriptsize]{no}(llm);
+  \draw[arr] (llm)--(ac); \draw[arr] (ac)--(d3);
+  \draw[arr] (d3)--node[above,font=\scriptsize]{no}(stop);
+  \draw[arr] (cr.north) |- (sim.east);
+  \draw[arr] (d3.west) -- ++(-1.6,0) |- node[pos=0.25,left,font=\scriptsize]{yes: re-simulate} (sim.west);
+\end{tikzpicture}
+\caption{One pass of the loop. It also stops when \code{max_iterations} is reached (5 from the UI).}
+\end{figure}
+
+The loop condition is:
+\begin{lstlisting}[style=plain]
+while self_correct and result.status in ("FAIL", "ERROR", "TIMEOUT") and iteration < max_iterations:
+\end{lstlisting}
+Each pass is recorded as an \code{IterationRecord} (iteration number, status, fix summary, fix type, diagnosis, pass/fail counts, last 1200 characters of the log) so the UI can show a timeline.
+
+\subsection{Deterministic compiler repairs}
+\label{sec:compilerrepair}
+
+Some failures are mechanical, and the compiler names the exact problem. Asking an LLM to guess would be slower and less reliable, so \code{_compiler_repairs} fixes two of them directly:
+
+\begin{description}
+  \item[\code{_repair_compile_errors} (wire to reg).] Icarus reports \code{design.sv:LINE: error: X is not a valid l-value} when a \code{wire} is assigned inside an \code{initial} or \code{always} block. The function finds the file the compiler blamed and changes only that declaration, \code{wire [3:0] X;} to \code{reg [3:0] X;}.
+  \item[\code{_repair_disable_functions} (disable to return).] Icarus rejects \code{disable fname;} used as an early exit inside a function. It is replaced with \code{return fname;}, which Icarus accepts and which keeps the first-match behaviour.
+\end{description}
+
+Each repair produces a structured diagnosis with confidence ``high'' and the compiler line as evidence, and is labelled \code{fix_type = "compiler_repair"} so it is never confused with AI reasoning.
+
+\subsection{LLM diagnosis}
+
+Otherwise, \code{fix_design} sends the debugger model the specification (``source of truth''), the RTL, the testbench and the last 4000 characters of the simulator log. The prompt requires the answer in tagged sections:
+
+\begin{lstlisting}[style=plain]
+<diagnosis>
+symptom: ...        root_cause: ...
+fix_location: ...   confidence: high|medium|low
+</diagnosis>
+<rtl> ...full corrected RTL... </rtl>
+<testbench> ...full testbench... </testbench>
+<summary> one sentence </summary>
+\end{lstlisting}
+
+The prompt also tells the model to check the testbench against the specification first: if the testbench's expected value is wrong, the bug is in the testbench, not the RTL. This rule came from a real live failure (a 32-bit expected value compared with a 3-bit output).
+
+\subsection{Anti-cheat guard}
+
+If the last run compiled and ran (FAIL, not ERROR or TIMEOUT), and the proposed testbench has \emph{fewer} checks than the current one, the testbench change is thrown away and the note ``Testbench change rejected: it removed self-checks'' is added. A testbench that did not even compile, or that hung, may be rewritten. A proposed RTL that is not a complete module with the right name, or a proposed testbench that fails \code{_tb_problems}, is also rejected.
+
+When a separate model wrote the testbench (Section~\ref{sec:independenttb}), the rule is stricter: after a FAIL, \emph{no} testbench change from the design model is applied at all (``Testbench change not applied: a separate model wrote it, so a failing check is reported and not rewritten away'').
+
+Even an accepted testbench change leaves a trace. At the end of the run, if the result is PASS and the testbench is no longer the one first generated, the \emph{original} testbench is run again on the final design. If it still fails, the result carries the warning ``The testbench was modified during repair, and the ORIGINAL testbench still reports \ldots{} Review the testbench change before trusting this PASS.''
+
+\subsection{No-op and oscillation guards}
+
+\code{_state_hash} computes a SHA-256 fingerprint of the RTL and testbench together, after removing comments and all whitespace, so cosmetic edits do not count as changes. If the fix produces the same fingerprint as now, the loop stops (``Model returned no change''). If it produces a fingerprint seen earlier, the loop stops (``Oscillation detected''). Tracking the testbench as well as the RTL matters: a fix that only repairs a wrong expected value in the testbench is a real change.
+
+\begin{viva}
+\emph{``What stops the AI from cheating?''} Several things: the testbench is written from the specification, and its prompt tells it the RTL is withheld; a fix may not reduce the number of checks in a testbench that already ran; if the testbench changed, the original one is run again at the end and a fresh second-opinion testbench is asked for; with a separate testbench model, a failing check is never rewritten by the design model; and only the simulator's own Passed/Failed counts decide the verdict. Also, a fix that changes nothing or repeats an earlier state stops the loop.
+\end{viva}
+
+\section{Post-processing}
+
+After the loop, in this order, the orchestrator:
+\begin{enumerate}
+  \item adds the coverage summary (\code{compute_coverage}), the parsed waveform (\code{parse_vcd}) and the port-level schematic (\code{build_schematic});
+  \item runs generic Yosys synthesis if Yosys is installed (if not, the \code{synthesis} event says so; nothing is invented);
+  \item if the run passed but the testbench was changed during repair, re-runs the original testbench and asks for a second opinion (Section~\ref{sec:secondopinion});
+  \item for a PASS, measures testbench strength (Section~\ref{sec:strength});
+  \item for a PASS, when Yosys, OpenSTA and the cell library are all present, runs the timing and area estimate (Chapter~\ref{ch:timing});
+  \item joins every warning (too few checks, weak testbench, original testbench still failing, second opinion disagrees, the two models disagree) into one \code{verification_warning} shown on the result.
+\end{enumerate}
+Each extra check is wrapped so that if it fails it only disappears from the result; it can never break a run that already has a verdict. Measured toggle coverage is not a separate stage: the simulator computes it every time it parses a result (Section~\ref{sec:toggle}).
+
+\section{Fallback policy: honest degraded mode}
+
+All model calls go through \code{_call_llm} inside \code{pipeline_events}:
+
+\begin{enumerate}
+  \item If the run is already offline, call the per-run \code{OfflineProvider}.
+  \item Otherwise call the live provider. If it raises an error, \code{_is_upstream_error} decides whether this was the provider's fault (connection error, timeout, rate limit, HTTP 401/403/429/5xx, empty answer). Programming errors are \emph{not} hidden; they surface as errors.
+  \item For a provider failure \emph{before any live call has succeeded}, switch this run to offline mode and set a visible \code{fallback_notice}.
+  \item For a provider failure \emph{after} a live call succeeded (\code{live_ok}), fail honestly: ``LLM became unavailable mid-run''. Swapping to a curated design at that point would silently replace your design with an unrelated counter. A specification you confirmed counts as user work, so it sets \code{live_ok} too.
+  \item If \emph{you} picked a model in the Model menu (not the server's default) and it fails, the run is never swapped for the scripted demo. \code{_chosen_model_problem} says in plain words why: ``The model you chose (\ldots) could not be used: its usage limit has been reached / it did not answer in time / the provider did not accept the credentials \ldots{} Pick another model from the Model menu.'' The same happens when the separate testbench model fails (``The testbench model you chose \ldots'').
+\end{enumerate}
+
+Each run gets its own offline provider instance, so one user's ``buggy demo'' flag cannot leak into another user's run. The helper \code{_invoke} also lets older provider stubs work by dropping the optional \code{reasoning_effort} and \code{spec} arguments only when the function says it does not accept them.
+
+For a demo, this gives a three-step fallback ladder: a live model; then the offline scripted demo (labelled ``Offline demo'' or ``Degraded mode'' on screen); then saved live results opened from the Projects menu. The preflight tool (Chapter~\ref{ch:testing}) checks that all three are ready.
+
+% ---------------------------------------------------------------------------
+\chapter{Measuring How Much a PASS Is Worth}
+\label{ch:trust}
+
+A PASS only says that the testbench found nothing wrong. It does not say whether the testbench \emph{could} have found something. If the model writes a weak testbench (few checks, wrong expected values, or checks that a repair quietly relaxed), a wrong design can still pass. This chapter describes the five things SiliconScribe does around the loop to show how much a particular PASS is worth.
+
+\begin{analogy}
+A student passes a test. Before you trust the mark, you ask: was the test hard enough (strength)? Did it cover the whole syllabus (coverage)? If the teacher changed the answer key halfway through, does a second, fresh paper agree (second opinion)? Was the paper set by someone other than the student (separate testbench model)? Was the question itself what you meant to ask (specification review)?
+\end{analogy}
+
+\section{Testbench strength (mutation testing)}
+\label{sec:strength}
+
+Mutation testing (Section~\ref{sec:mutation}) is normally run once, by hand, on known designs. \file{backend/mutation.py} runs it automatically on \emph{every} design that passes, using that design's own testbench.
+
+\begin{enumerate}
+  \item \code{mask_code} makes a same-length copy of the RTL with comments, strings, compiler directives and parameter declarations blanked out, so nothing in them is ever changed.
+  \item \code{candidate_mutants} lists every one-token change the operators can make: an arithmetic, logic or comparison operator swapped (for example \code{+} to \code{-}, \code{&} to \code{|}, \code{==} to \code{!=}, \code{<} to \code{<=}), a \code{~} or \code{!} removed, \code{posedge} swapped with \code{negedge}, a sized constant changed by one, the lowest bit of a binary or hex literal flipped, a 1-bit constant flipped, or an \code{if} condition negated. Bit ranges such as \code{[WIDTH-1:0]} and loop headers are protected: changing them alters a declaration or can create an endless loop, not a realistic bug.
+  \item \code{select_mutants} picks up to 12 of them (\code{STRENGTH_MAX_MUTANTS}), spread across the kinds of change and along the file, in a fixed (repeatable) way.
+  \item \code{run_strength} simulates the \emph{same} testbench against each mutant, with 6 seconds per mutant and a 40-second budget overall (\code{STRENGTH_BUDGET_SECONDS}). A mutant that does not compile says nothing and is not counted. A mutant whose run is not a PASS is \textbf{caught}; one that still passes \textbf{survived}.
+\end{enumerate}
+
+The result is shown as ``Caught N of M injected bugs'', with each survivor's line number and change. If the time budget runs out, the score is marked as stopped early.
+
+\begin{warnbox}
+A survivor is ``not noticed'', not ``proven missed'': some mutants are \textbf{equivalent} (the changed design behaves exactly like the original), so no testbench could catch them. The sample is small and syntactic. The score is evidence about the testbench, not a proof. When at least 5 mutants ran and fewer than half were caught, \code{weak_strength_note} adds a ``Weak testbench'' warning to the PASS.
+\end{warnbox}
+
+\section{Measured toggle coverage}
+\label{sec:toggle}
+
+Coverage asks how much of the design the tests exercised. SiliconScribe measures one kind directly: \textbf{toggle coverage}. A bit is covered when the simulator recorded it going from 0 to 1 \emph{and} from 1 to 0. A bit that never moved was never really tested.
+
+\code{toggle_coverage} in \file{backend/vcd_parser.py} reads the VCD file the simulator wrote (not anything the testbench prints). It counts only signals declared inside the design instance under the testbench, so testbench variables cannot inflate the number. A change through \code{x} or \code{z} does not count. The result is a percentage of bits, the number of bits and signals, and up to 12 signals that never switched (with the bit positions that never rose or never fell). If the VCD was larger than the 8 MB read limit, the figure is marked as a lower bound.
+
+\begin{warnbox}
+Only toggle coverage is measured. Line and branch coverage are not. Verilator was tried for them and rejected: with the pip-installed Verilator only 3 of 12 evaluated designs built, and the testbenches of two designs (c3, c4) stopped with ``unsupported tristate construct''. The older \code{compute_coverage} summary (vectors, pass rate, any \code{COV:} lines a testbench prints) is still there, but it only repeats what the testbench reported.
+\end{warnbox}
+
+\section{The second opinion}
+\label{sec:secondopinion}
+
+The weakest kind of PASS is one that only appeared after a repair \emph{rewrote the testbench}. Maybe the repair fixed a wrong expected value (good). Maybe it relaxed a correct check (bad). The simulator cannot tell which.
+
+So, when the final status is PASS and the testbench is no longer the one first generated, the orchestrator asks for a \textbf{fresh testbench} from the same specification (by the same testbench model), checks it with \code{_tb_problems}, and runs the final design against it. There are three outcomes:
+\begin{description}
+  \item[Agrees] The fresh testbench passes: ``Second opinion agrees: a fresh testbench, written from the same specification, passes all N of N checks.''
+  \item[Disagrees] The fresh testbench fails: a warning is added to the PASS (``do not trust this PASS'').
+  \item[Unavailable] The fresh testbench could not be generated, was unusable, or did not run cleanly. The reason is shown; nothing is assumed.
+\end{description}
+The second opinion is skipped in offline mode (the scripted demo has nothing new to say) and can be turned off with \code{SECOND_OPINION_ENABLED=0}.
+
+A real example (s2 prompt, an 8-bit loadable up/down counter, model hy4-flash-free): PASS 8672/8672 after one repair that rewrote the testbench. The fresh testbench also passed (8517/8517), while the original testbench still failed, which was shown as a warning. A hand-written reference then gave 0 mismatches in 40,027 cycles: the design was correct and the original testbench was wrong.
+
+\section{A separate model for the testbench}
+\label{sec:independenttb}
+
+By default one model writes both the design and the testbench. Withholding the RTL from the testbench step removes the most direct circular check, but one risk remains: if the model misreads the specification, it can misread it the same way twice, and the wrong design and the wrong testbench agree.
+
+The ``Testbench written by'' menu lets a \emph{different} model, even from a different provider, write the testbench (\code{testbench_model} in the request). Then three rules change:
+\begin{itemize}
+  \item After a FAIL, the design model is \textbf{never} allowed to change the testbench: a failing check is reported, not rewritten away. Only a testbench that does not compile or hangs may be repaired.
+  \item If the two models disagree (the run ends in FAIL), the result says so and names both models: ``Either the design or the testbench misreads the specification: compare the first failing check with the specification before changing either.''
+  \item The result records both models (``Written by \ldots. Testbench written by \ldots, a separate model'').
+\end{itemize}
+
+\begin{keyidea}
+Independence makes failures more honest, not passes more frequent. A real example: design by opencode/hy4-flash-free, testbench by nim/poolside/laguna-xs-2.1, 4-bit counter: FAIL 124/146. The counter was correct; the testbench sampled one cycle early. The app refused to pass it and reported that the two models disagree. With one model, a repair could have quietly ``fixed'' either side.
+\end{keyidea}
+
+It costs one more model call per run, and with the free models tried it was not reliable enough to be the default, which is why it is an option.
+
+\section{Reviewing the specification}
+\label{sec:specreview}
+
+Everything is built from the specification, and the specification is written by the model. If it is wrong (wrong reset polarity, a missing flag), both the design and the testbench will follow it. ``Review the specification before generating'' puts you in the loop at that point:
+\begin{enumerate}
+  \item \code{POST /api/spec/parse} runs only \code{parse_intent} and returns the specification.
+  \item The SpecReview panel shows the module name, the ports table and parameters, and lets you edit the behaviour text and the constraints (one per line).
+  \item ``Generate with this specification'' sends it as \code{spec} in the run request. The orchestrator then skips \code{parse_intent} and uses exactly that specification.
+\end{enumerate}
+
+A specification from the browser is untrusted input: its names end up in file patterns and prompts. \code{check_user_spec} therefore requires plain identifiers for the module, port and parameter names, 1 to 64 ports, at most 16 parameters, at most 4000 characters of behaviour and at most 30 constraints of 500 characters. The specification actually used is shown read-only on the Results tab under ``Specification the design was built from''.
+
+% ---------------------------------------------------------------------------
+\chapter{The Timing and Area Estimate}
+\label{ch:timing}
+
+Simulation answers ``does the design do the right thing?''. A chip designer also asks ``how big is it?'' and ``how fast can it run?''. After a PASS, \file{backend/timing.py} gives an early answer to both, using two free tools and a real cell library.
+
+\section{The idea in plain words}
+
+\begin{description}
+  \item[Standard cells.] A chip is built from a library of small, pre-designed blocks called \textbf{standard cells}: a NAND gate, an inverter, a flip-flop, and so on. A foundry publishes, for each cell, its area in square micrometres and how long a signal takes to pass through it. That data lives in a \textbf{liberty file} (\file{.lib}).
+  \item[sky130.] SiliconScribe uses the open \textbf{SkyWater 130 nm} library, high-density variant (\code{sky130_fd_sc_hd}), at its \textbf{typical corner}: 25\,\textdegree C and 1.8 V. The file is \file{backend/pdk/sky130hd_tt.lib}.
+  \item[Mapping (Yosys).] \textbf{Yosys} turns the RTL into a \textbf{netlist}: a list of real sky130 cells and the wires between them. Adding up the cells' areas gives the \textbf{mapped area}.
+  \item[Timing (OpenSTA).] \textbf{OpenSTA} is a \textbf{static timing analysis} tool. It does not simulate. It adds up the cell delays along every path from a flip-flop (or input) to the next flip-flop (or output) and compares the longest one, the \textbf{critical path}, with the clock period. The margin left over is the \textbf{slack}: positive means the logic is fast enough for the target clock, negative means it is too slow.
+\end{description}
+
+\begin{analogy}
+A clock period is the time between two drum beats. Every signal must finish its journey through the gates before the next beat. Slack is how many nanoseconds early the slowest signal arrives. A slack of +9.27 ns at 100 MHz (a 10 ns beat) means the slowest path takes only about 0.73 ns.
+\end{analogy}
+
+\section{What one run does}
+
+\code{run_timing(rtl, module, work_dir, target_mhz, testbench_code)} never raises; every outcome is a \code{TimingReport}.
+\begin{enumerate}
+  \item \textbf{Check the tools}: Yosys and OpenSTA on the PATH and the liberty file present (\code{missing_requirements}). If anything is missing, the run simply has no timing section.
+  \item \textbf{Check the input}: a legal module name, the same sandbox scan as simulation, and at most 200 KB of RTL.
+  \item \textbf{Apply parameter overrides.} If the testbench instantiates the design as \code{mux #(.WIDTH(16)) dut} or \code{alu #(8) dut}, \code{parameter_overrides} reads those plain numbers (positional ones are matched to the parameters the design declares) so the circuit timed is the circuit that was simulated. Expressions are never guessed; they are reported as ``not applied''.
+  \item \textbf{Map with Yosys} (\code{_map_with_yosys}): read the design, \code{proc; tribuf} (so a tri-state survives as a cell that can be detected), \code{synth -flatten} (hierarchy is flattened, so area covers every sub-module), map flip-flops and logic to sky130 cells (low-power isolation cells excluded), write the statistics and \file{netlist.v}.
+  \item \textbf{Read what was really built} (\code{analyze_netlist}): which input ports drive the flip-flops' clock pins, whether any unmapped cell, latch or clock-gating cell is present.
+  \item \textbf{Refuse instead of guessing} (next section).
+  \item \textbf{Time with OpenSTA}: write a small script that reads the library and netlist, creates one clock per clock port found in the netlist at the target period, sets input and output delays to zero, and reports the worst setup path. A design with no flip-flops is timed against a virtual clock, so the answer is its longest input-to-output path.
+  \item \textbf{Parse the report} (\code{parse_mapped_stats}, \code{parse_sta}): area, sequential area, cell count, flip-flops, the most common cell types, worst slack, maximum frequency ($1000 / (\text{period} - \text{slack})$ MHz), and the critical path's start, end and delay.
+\end{enumerate}
+
+\section{Clocks come from the netlist}
+
+It would be easy to guess the clock from a port name such as \code{clk}. \file{timing.py} does not. It reads the mapped netlist and takes whatever input port is actually wired to the flip-flops' clock pins, whatever its name. A design with several clocks gets one clock each; paths between them are not timed and the note says so.
+
+\section{When the estimate refuses}
+
+Some designs cannot be timed honestly with this simple setup. For them the report gives a reason instead of a number:
+\begin{itemize}
+  \item \textbf{tri-state buffers}: Yosys would otherwise quietly turn them into plain wires, so the circuit timed would not be the one simulated;
+  \item \textbf{latches}: latch-based timing is not estimated;
+  \item \textbf{combinational loops}: path timing is not defined (OpenSTA reports a disabled loop edge);
+  \item \textbf{derived or gated clocks}: a flip-flop clocked by internal logic or a clock-gating cell rather than an input port;
+  \item \textbf{no logic cells}: a design that maps to only wires or constants has nothing to time;
+  \item \textbf{not synthesizable as written}: Yosys could not map it.
+\end{itemize}
+
+\section{What the numbers are, and are not}
+
+\begin{warnbox}[Pre-layout estimate: not sign-off]
+The app prints this with every result: one typical corner; no placement or routing, so \textbf{no wire delay}; an ideal clock (no clock tree); zero input and output delays; \textbf{setup analysis only} (hold needs a real clock tree to mean anything). \textbf{Power is not reported.} Real chips are checked after place and route, at several corners. So this answers ``is this logic anywhere near the target clock, and roughly how big is it?'', nothing more. Never present it as final (sign-off) timing or as the area of a manufactured chip.
+\end{warnbox}
+
+Examples from the built-in designs: the 4-bit counter maps to 11 cells, 150.144\,\umsq{}, minimum period 0.727 ns (meets 100 MHz with +9.27 ns slack); the 8-bit ALU has no clock, 109 cells, 636.861\,\umsq{}, longest path 2.69 ns. The live-generated FIFO (s6) is 120 cells, 1830.51\,\umsq{}, minimum period 1.845 ns.
+
+\section{How the estimate itself was checked}
+
+\file{backend/tools/verify_mapping.py} checks the timing stage with three tests that do not read the number they check from the same place:
+\begin{enumerate}
+  \item \textbf{Gate-level simulation}: Yosys writes simulation models of the sky130 cells straight from the liberty file; the mapped netlist is simulated in Icarus with the \emph{same} testbench as the RTL and must give identical Passed/Failed counts. This shows the netlist computes what the RTL computes.
+  \item \textbf{Area recount}: area and cell count are recomputed from \file{netlist.v} and the liberty file and compared with what \code{run_timing} reported.
+  \item \textbf{Timing sanity}: the design is timed at a second target; the implied minimum period ($\text{period} - \text{slack}$) must not change.
+\end{enumerate}
+On 19 designs (the 5 built-in ones and the saved evaluation designs) all 19 were equivalent at gate level. A design the estimate refuses on purpose is reported as REFUSED with its reason, not as a failure. The checker was also given deliberately broken netlists and caught them.
+
+\section{The tool versions}
+
+Yosys 0.71 runs as a WebAssembly build installed with \code{yowasp-yosys}, reached through a small \code{yosys} shim in \file{~/.local/bin}. OpenSTA 3.2.0 was built from source (\file{backend/tools/build_opensta.sh}) and is reached as \code{sta}. The orchestrator runs timing only when \code{TIMING_ENABLED} is on (the default) and \code{missing_requirements()} is empty. \code{POST /api/timing/run} runs the same function on its own.
+
+% ---------------------------------------------------------------------------
+\chapter{The LLM Service}
+\label{ch:llm}
+
+\file{backend/llm_service.py} talks to the AI providers; \file{backend/model_catalog.py} decides which models the Model menu offers. No other file knows about providers.
+
+\section{Choosing the default provider}
+
+At start-up, \code{_make_provider} reads environment variables (from \file{backend/.env}, which wins over stale shell variables) and picks, in order:
+
+\begin{center}
+\small
+\begin{tabularx}{\textwidth}{@{}clX@{}}
+\toprule
+\textbf{Priority} & \textbf{Provider} & \textbf{Selected when} \\
+\midrule
+0 & Offline & \code{OFFLINE_MODE=1} (always wins, even if keys are set). \\
+1 & OpenCode app & \code{LLM_PROVIDER=opencode-app} and the \code{opencode} command exists. Model from \code{LLM_MODEL}. This is the set-up used for the live demo and evaluation. \\
+2 & OpenCode Zen & \code{OPENCODE_API_KEY} or \code{ZEN_API_KEY} is set. Model from \code{ZEN_MODEL} or \code{LLM_MODEL}. \\
+3 & NVIDIA (older single-model path) & \code{NVIDIA_API_KEY} is set. \\
+4 & OpenAI or compatible & \code{OPENAI_API_KEY} is set; add \code{OPENAI_BASE_URL} for OpenRouter, Groq, a local server, etc. \\
+5 & Offline & Nothing configured. \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+Placeholder values such as \code{your_key_here} are treated as empty. Rows 2--4 are an \code{OpenAIProvider}, configured with a base URL and model name.
+
+\section{The OpenCode app provider}
+
+OpenCode is a coding assistant app that the user installs and signs in to with their own account; its free models are meant to be used from inside the app. \code{OpenCodeAppProvider._chat} therefore drives the app's own scripting command instead of imitating its API:
+\begin{lstlisting}[style=plain]
+opencode run -m <model> --agent plan --archived --format json "<prompt>"
+\end{lstlisting}
+Every call runs in a fresh, empty temporary folder with the read-only \code{plan} agent (change it with \code{OPENCODE_AGENT}), and with an environment that has the Cloudflare and NIM credentials removed (\code{model_catalog.child_env}). The JSON lines the app prints are read; the text parts become the answer, an error event becomes an upstream error. It is a local, single-user convenience: not something to expose on a public server.
+
+\section{Model routing: one menu, three sources}
+\label{sec:routing}
+
+Each run can use a different model, chosen in the Model menu. The model id itself says which provider serves it; \code{get_provider(model)} routes it:
+
+\begin{center}
+\small
+\begin{tabularx}{\textwidth}{@{}lp{3.7cm}X@{}}
+\toprule
+\textbf{Id looks like} & \textbf{Served by} & \textbf{Notes} \\
+\midrule
+\code{opencode/deepseek-v4.1-flash-free} & The configured provider (normally the OpenCode app) & Every model the installed app lists with \code{opencode models}, about 460. A model counts as free only when its name ends in \code{-free} or \code{:free}; the rest are hidden behind ``Show other models'' and are never claimed to be paid, because the price cannot be known from here. \\
+\code{github-copilot/auto} & The OpenCode app, after Copilot is connected in it & On the Free and Student plans only ``auto'' exists: GitHub picks the model and does not say which, so the result cannot name its model and runs are not reproducible. It uses your Copilot allowance. \\
+\code{@cf/openai/gpt-oss-120b} & \code{CloudflareProvider} (Cloudflare Workers AI) & Live catalogue of text-generation models on your account (40 when checked). Needs \code{CLOUDFLARE_ACCOUNT_ID} and \code{CLOUDFLARE_API_TOKEN}. \\
+\code{nim/poolside/laguna-xs-2.1} & \code{NimProvider} (NVIDIA NIM hosted API) & Live catalogue of chat models (15 when checked); the \code{nim/} prefix keeps them apart from OpenCode's own \code{nvidia/...} ids and is removed before the request. Needs \code{NVIDIA_NIM_API_KEY} (a key starting \code{nvapi-}); no other NVIDIA variable is read for this. \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+Cloudflare and NIM both use the same OpenAI-compatible chat code as every other provider. They get no \code{reasoning} request field (both are strict about unknown fields) and no per-stage model routing (the \code{LLM_MODEL_<STAGE>} variables name OpenCode models). If one of them is chosen but not set up, the run stops with ``Cloudflare is not set up\ldots'' or ``NVIDIA NIM is not set up\ldots''.
+
+\begin{keyidea}
+Keys live only in \file{backend/.env} (git-ignored) or the environment of the terminal that starts the backend. The web page never asks for, stores or receives a key. \code{cloudflare_status} and \code{nim_status} return models and hints, never the key. Simulation, synthesis and timing tools get a scrubbed environment, and the OpenCode app gets an environment without the Cloudflare and NIM credentials.
+\end{keyidea}
+
+\section{The model catalogue (\texttt{model\_catalog.py})}
+
+\begin{description}
+  \item[\code{opencode_models}] Runs \code{opencode models} in an empty temporary folder (40 s limit) and parses the \code{provider/model} lines with \code{parse_opencode_models}: free ones first within each provider, GitHub Copilot entries carry the note above. A good listing is cached for 10 minutes, a failed one for 30 seconds.
+  \item[\code{cloudflare_status}] Reads up to 5 pages of Cloudflare's model search, keeps text-generation models, and caches them for 30 minutes. If the list cannot be read it shows a short suggested list with a hint saying so.
+  \item[\code{nim_status}] Reads NVIDIA's \code{/models} list and drops entries that are not chat models (embeddings, speech, safety classifiers, image models) and one known to answer 404. Models that answered quickly in a live test are listed first.
+  \item[\code{list_models}] (in \file{llm_service.py}) Combines the three: the OpenCode list (free ones only unless \code{include_paid}), then Cloudflare, then NIM, plus a \code{providers} list saying which tabs are available and why not. The configured default model is always first. \code{GET /api/models?refresh=true} re-reads all catalogues and is rate limited, because it calls out.
+\end{description}
+
+Model names change often (NVIDIA retired DeepSeek V4.1 Flash on 16 Nov 2026 with HTTP 410), which is why the menu reads the catalogues live instead of a hand-written list.
+
+\section{Checking model ids}
+\label{sec:modelid}
+
+A model id from the browser ends up as an argument of a subprocess (\code{opencode run -m <id>}) or part of a URL. An id starting with \code{-} could be read as a command-line flag. So every id must match
+\begin{lstlisting}[style=plain]
+^[A-Za-z0-9@][A-Za-z0-9._:/@+-]{0,99}$
+\end{lstlisting}
+(no leading dash, no spaces or shell characters, at most 100 characters). The check is done twice: by Pydantic on every request (\code{model} and \code{testbench_model}) and again by \code{is_valid_model_id} just before the subprocess is started.
+
+\section{One chat call: \texttt{OpenAIProvider.\_chat}}
+
+\begin{enumerate}
+  \item \textbf{Pick the model.} A model the user chose in the UI (if different from the default) wins; otherwise the stage-specific model from \code{LLM_MODEL_INTENT}, \code{_RTL}, \code{_TESTBENCH}, \code{_EXPLAIN} or \code{_FIX}; otherwise the default (or the cheaper ``mini'' model for the explanation).
+  \item \textbf{Control hidden reasoning.} If no reasoning effort was requested, send \texttt{reasoning: \{enabled: false\}}, because hidden reasoning tokens count against the answer budget. Gateways that reject this field get one retry without it.
+  \item \textbf{Send} with the configured timeout (default 120 s, \code{LLM_TIMEOUT_SECONDS}) and token budget (default 8192, \code{LLM_MAX_TOKENS}).
+  \item \textbf{Classify failures.} Provider errors are re-raised with the prefix \code{LLM_UPSTREAM:} so the orchestrator can recognise them.
+  \item \textbf{Reject bad answers.} If the model stopped because it hit the token limit (\code{finish_reason = "length"}) or returned empty content, raise an error. The code deliberately never uses the model's hidden reasoning text as an answer; that once produced a half-written function shipped as a testbench.
+\end{enumerate}
+
+\section{The five stage functions}
+
+\begin{center}
+\small
+\begin{tabularx}{\textwidth}{@{}lcX@{}}
+\toprule
+\textbf{Function} & \textbf{Temp.} & \textbf{What it sends and returns} \\
+\midrule
+\code{parse_intent} & 0.3 & The prompt; returns JSON validated as \code{RTLDesignSpec}. \\
+\code{generate_rtl} & 0.2 & Module name, parameters, ports, behaviour, constraints, optional target frequency; returns the extracted module. \\
+\code{generate_testbench} & 0.3 & The same specification, \emph{without the RTL}, with an explicit note that the RTL is withheld; returns the extracted testbench. \\
+\code{explain_design} & 0.5 & The RTL; returns 2--3 sentences. \\
+\code{fix_design} & 0.2 & Spec, RTL, testbench, last 4000 log characters; returns new code, summary, diagnosis, \code{fix_type = "llm_diagnosis"}. \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+The full system prompts are in \file{backend/llm_service.py} (and Appendix~B of the project report). The testbench prompt insists on Icarus-compatible Verilog-2001, a top module named \code{testbench}, a reset sequence first, directed corner cases plus exhaustive testing when there are at most 4096 input combinations (otherwise at least 100 random vectors), every comparison through the standard \code{chk} task (which uses \code{===} and prints one \code{CHK|...} line per check), the exact \code{Passed:}/\code{Failed:}/\code{ALL TESTS PASSED} summary lines, and a watchdog that prints a failure and stops a hung run.
+
+\section{Reading the model's answer}
+
+Models wrap code in prose and Markdown fences. The parsers are deliberately forgiving:
+
+\begin{description}
+  \item[\code{_strip_code_fence}] Finds every complete \code{module ... endmodule} unit, fenced or not, and returns the \emph{longest}. Models sometimes put the real module unfenced and a short example in a fence, so ``first fence'' is unreliable.
+  \item[\code{_extract_json}] Finds the outermost \texttt{\{...\}} and parses it, accepting raw newlines inside strings (models often paste Verilog into JSON without escaping).
+  \item[\code{_parse_fix_response}] Reads the \code{<diagnosis>}, \code{<rtl>}, \code{<testbench>} and \code{<summary>} sections; falls back to JSON, then to \code{_salvage_fix_json}, which recovers each field by locating the next known key.
+\end{description}
+
+\section{The offline provider}
+
+\code{OfflineProvider} needs no internet. It is used when \code{OFFLINE_MODE=1}, when nothing is configured, or as the labelled fallback described in Chapter~\ref{ch:pipeline}. It matches keywords in the prompt (\code{match_design}): ``alu'' with ``8'' gives the 8-bit ALU, then ``alu'', ``counter'', ``adder'' or ``mux''; anything else defaults to the counter, with a notice saying the request did not match. A prompt containing ``buggy'' gets the counter with a deliberate bug (counting by two), which demonstrates the repair loop. Its ``fix'' simply swaps in the known-correct design, so it reports \code{fix_type = "offline_scripted"} and \emph{no} diagnosis, because inventing a root cause would be dishonest.
+
+\section{The model list for other providers}
+
+With the OpenCode app, the menu lists what the app offers (Section~\ref{sec:routing}). With any other configured provider (Zen, NVIDIA through \code{NVIDIA_API_KEY}, OpenAI-compatible), \code{list_models} offers a short curated list, or only the configured model if it is not in that list, so the UI does not send a model name the provider cannot serve.
+
+% ---------------------------------------------------------------------------
+\chapter{The Simulator and Sandbox}
+\label{ch:simulator}
+
+\file{backend/simulator.py} runs untrusted code, so it is written defensively.
+
+\section{The path of one simulation}
+
+\code{IcarusSimulator.simulate(design_id, rtl, tb, timeout)}:
+
+\begin{enumerate}
+  \item \textbf{Validate the design id}: 1--32 characters of letters, digits, \code{_} or \code{-}, and the resolved folder must stay inside the workspace. This blocks tricks such as \code{../../etc}.
+  \item \textbf{Policy scan} (\code{sandbox_violations} plus \code{rtl_integrity_violations}); any violation returns status ERROR with the reasons, before any file is written.
+  \item \textbf{Wait for a slot}: at most 2 simulations run at once (\code{SIM_MAX_CONCURRENT}); extra requests wait their turn.
+  \item \textbf{Write files} (\code{write_files}): each file at most 200 KB; \code{design.sv} and \code{testbench.sv} in the design's folder; \code{ensure_vcd_dump} inserts \code{$dumpfile("design.vcd")} and \code{$dumpvars(0, testbench)} if the testbench has none.
+  \item \textbf{Compile} (\code{compile}): \code{iverilog -g2012 -Wall}, 30-second limit, scrubbed environment. A one-line file with \code{`timescale 1ns/1ps} is compiled first so every file has a sensible default time unit without shifting line numbers. Failure returns ERROR with parsed file/line errors. A port-width mismatch between testbench and design, which Icarus only warns about, is treated as an error, because a narrower wire silently hides the upper bits.
+  \item \textbf{Run} (\code{run}): \code{vvp} with the timeout clamped to 1--120 s, an output-size cap (\code{ulimit -f}), a CPU-time cap (\code{ulimit -t}) and a memory cap (\code{ulimit -v}, 1024 MB by default, enforced on Linux only), stdin closed, transcript to \file{transcript.log}. Overrun returns TIMEOUT, with the last output kept so the fixer can see where it hung.
+  \item \textbf{Decide the verdict} (\code{parse_results}), read the \code{CHK} rows (\file{checks.py}, display only) and measure toggle coverage from the VCD.
+\end{enumerate}
+
+\section{How the verdict is decided}
+\label{sec:verdict}
+
+The testbench prints its own summary, so \code{_decide_verdict} must not trust the first or the loosest match. Each rule below came from a reproduced review finding.
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}Xl@{}}
+\toprule
+\textbf{Condition in the transcript} & \textbf{Status} \\
+\midrule
+No whole-line \code{Passed: <number>} and \code{Failed: <number>} pair (for example \code{Failed: x}) & ERROR \\
+\code{Failed: N} with N $>$ 0 (the \emph{last} pair counts) & FAIL \\
+\code{Failed: 0}, but the log has lines starting with FAIL, ERROR or FATAL & FAIL \\
+\code{Passed: 0}: no checks were executed & ERROR \\
+The simulator exited with a non-zero code (killed by a limit, crashed) & ERROR \\
+Otherwise (\code{Passed} $>$ 0, \code{Failed: 0}, clean exit) & PASS \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+So a PASS needs a valid summary \emph{and} at least one executed check. Zero checks is never a PASS. A testbench whose watchdog fires before it prints its summary has no valid summary, so the run is an ERROR. The words \code{ALL TESTS PASSED} alone never decide anything.
+
+Test count is passed plus failed. Up to 20 FAIL/ERROR lines are collected as errors. The \code{log_excerpt} the debugger sees is the first 1000 and the last 1500 characters of the transcript (with passing \code{CHK} lines removed), so the first failing vector is not cut off.
+
+The design under test must not be able to write the verdict either. \code{rtl_integrity_violations} rejects RTL that contains \code{Passed:}, \code{Failed:}, \code{ALL TESTS PASSED}, \code{$finish}, \code{$stop} or \code{$fatal}, or that reaches into the testbench (\code{testbench.}...). A design that printed a fake summary at time 0 was once reported as PASS; it is now refused.
+
+\section{The sandbox policy}
+
+Generated Verilog runs with the server's permissions, and Verilog has file-access system tasks. The final review proved the risk: a planted secret file was read by a testbench and returned in the API response. The protection has these layers:
+
+\begin{enumerate}
+  \item \textbf{Static policy.} Reject \code{$fopen}, \code{$fwrite}, \code{$fdisplay}, \code{$fgets}, \code{$fscanf}, \code{$fread}, \code{$readmemh}/\code{b}, \code{$writememh}/\code{b}, \code{$system}, \code{$sdf_annotate}, \code{$dumpports} and their variants; any \code{`include}; macro token pasting; and any \code{$dumpfile} that is not a plain file name in quotes. Comments are \emph{not} stripped first, because a \code{"//"} inside a string could fool a naive comment stripper into hiding a forbidden call. A false alarm is cheap; a miss is not.
+  \item \textbf{Allow-list of system tasks.} A list of forbidden tasks always misses one (a review found a testbench that wrote a file with \code{$fopena} and \code{$fputc} and still got PASS). So every system task must also be on an allow-list of side-effect-free tasks: printing, simulation control, time and random numbers, waveform dump, string formatting and maths. Anything else is refused.
+  \item \textbf{The same check in several places.} The scan runs before compiling, before the linter calls its tools, and before the timing stage maps the design, not only before simulation.
+  \item \textbf{Scrubbed environment.} \code{clean_env} passes only \code{PATH}, \code{LANG}, \code{LC_ALL} and \code{TMPDIR} to the tools, so API keys never reach them.
+  \item \textbf{Resource caps.} \code{ulimit -f} limits any file the simulation writes (about 64 MB), so an endless \code{$display} loop cannot fill the disk; CPU time and memory are capped (memory on Linux only); at most 2 simulations at once.
+\end{enumerate}
+
+\begin{warnbox}
+This is defence in depth, not a jail. A static scan of a language as flexible as Verilog cannot be proven complete. For many users on one server, each simulation should run in a container or micro-VM. The report lists this as a limitation.
+\end{warnbox}
+
+% ---------------------------------------------------------------------------
+\chapter{Supporting Modules}
+\label{ch:support}
+
+\section{Linter (\texttt{linter.py})}
+
+\code{VerilogLinter.lint(rtl, tb)} returns \code{ok}, \code{errors}, \code{warnings} and raw output. It tries Verilator (\code{--lint-only -Wall}), then Icarus (compile to \file{/dev/null}), and always runs pattern heuristics (\code{_heuristic_checks}) such as unbalanced \code{module}/\code{endmodule}. With no tool installed, heuristic errors stay errors, so broken code is never reported as clean. The orchestrator runs lint three times (RTL alone, RTL plus testbench, after each fix) and only reports; lint never blocks the pipeline.
+
+\section{Coverage (\texttt{cov\_metrics.py})}
+\label{sec:coverage}
+
+\code{compute_coverage} always returns test vectors, passed, failed, pass rate and \code{bins}. Bins come from lines the testbench prints as \code{COV: <bin> <count>}. If the testbench prints figures such as ``Toggle coverage: 85\%'', they are picked up as well. It is honestly scoped: it summarises what the testbench reported. The \emph{measured} figure is separate: \code{toggle_coverage} in \file{vcd_parser.py} reads the simulator's VCD and is stored as \code{measured_toggle} on every simulation result (Section~\ref{sec:toggle}). The toggle figure on the Results tab is always the measured one.
+
+\section{VCD parser (\texttt{vcd\_parser.py})}
+\label{sec:vcd}
+
+\code{parse_vcd} reads at most 8 MB of the VCD, the timescale, and every \code{$var} declaration (stripping \code{[3:0]} from names, since width is stored separately). It then walks the value changes: \texttt{\#t} sets the time, \code{0!}/\code{1!} are single-bit changes, \code{b0101 code} are bus changes (converted to hex by \code{_bin_to_hex}; any \code{x} or \code{z} bit makes the whole value \code{x} or \code{z}). Limits: 40 signals and 2000 changes per signal, with flags telling the UI when something was truncated.
+
+\section{Schematic and synthesis}
+
+\code{build_schematic} groups the specification's ports into inputs, outputs and inouts; the frontend draws a block with ports on each side. \code{YosysSynthesizer} runs \code{read_verilog; hierarchy; proc; opt; synth; check; stat; write_json} with a 30-second limit, \emph{without} a cell library. It reports Yosys' generic (unmapped) cell count, the most common cell types, up to five Yosys warnings (with folder paths reduced to file names), flip-flops and latches (with a warning when a latch was inferred, usually an incomplete \code{if} or \code{case}), and a relative area proxy (cells $\times$ 5), with explicit flags \code{liberty_mapped: false}, \code{area_units: "relative_proxy"} and \code{tech_node: null}. When the timing stage produced a real mapped area, the Results tab hides the proxy and shows the mapped area in \umsq{} instead (Chapter~\ref{ch:timing}).
+
+\section{UVM export (\texttt{uvm\_templates.py})}
+
+\code{generate_uvm_bundle(spec)} writes 16 files from templates: interface, sequence item, sequencer, sequence, driver, monitor, agent, scoreboard, coverage, environment, test, package, top module, Makefile, file list and README. It detects clocks, resets and opcode ports to adapt the templates (for example an ALU-style scoreboard). Only ALU-like designs get a real reference model in the scoreboard; for other designs the scoreboard is a placeholder that logs transactions and leaves a marked hook for the user's own reference model. The bundle is zipped and downloaded by the browser. It is export-only and has never been compiled in Questa here.
+
+\section{Persistence (\texttt{db.py}) and cleanup}
+
+One SQLite table, \code{projects}, with columns for id, prompt, module name, spec, RTL, testbench, explanation, status, pass/fail counts, iterations, creation time, a waveform-truncated flag, and \code{data} (the full response as JSON). \code{save_project}, \code{get_project}, \code{list_projects}, \code{count_projects} and \code{delete_project} do what their names say. \code{cleanup_old_workspaces} deletes design folders older than 24 hours at start-up.
+
+\section{Data contracts (\texttt{models.py})}
+
+\begin{center}
+\small
+\begin{tabularx}{\textwidth}{@{}lX@{}}
+\toprule
+\textbf{Model} & \textbf{Holds} \\
+\midrule
+\code{PortSpec} & name, direction (input/output/inout), width 1--1024 (accepts strings like ``4''; a parameter name defaults to 1), description. \\
+\code{RTLDesignSpec} & module name, parameters, ports, behaviour, constraints. \\
+\code{RunRequest} & prompt ($\le$2000 chars), target MHz (1--10000), self\_correct, max\_iterations (0--10, default 5), timeout (1--120 s, default 30), model, testbench model (both pattern-checked, Section~\ref{sec:modelid}), an optional confirmed specification (bounded by \code{check_user_spec}), reasoning effort. \\
+\code{SpecParseRequest} & prompt, model and reasoning effort for \code{/api/spec/parse}. \\
+\code{SimulationRequest} & design id (pattern-checked), RTL and testbench ($\le$50000 chars each), timeout. \\
+\code{SimulationResult} & status, counts, coverage, errors, waveform/transcript paths, log excerpt, check rows and groups, \code{measured_toggle}. \\
+\code{ToggleCoverage} & percent, bits toggled and total, signals, up to 12 untoggled signals, a partial flag. \\
+\code{StrengthReport} & status (ok, partial, skipped), mutants run, caught, invalid, survivors (description and line), note. \\
+\code{TimingReport} & available, library, clock, target and period, slack, met, fmax, critical path, area, sequential area, cells, flip-flops, cell types, note, error. \\
+\code{SecondOpinion} & status (PASS, FAIL, unavailable), counts, the model, a note. \\
+\code{IterationRecord} & one pass of the loop (see Chapter~\ref{ch:pipeline}). \\
+\code{Waveform}, \code{Schematic} & data for the two visual tabs. \\
+\code{RunResponse} & everything above for one run, plus synthesis, \code{fallback_notice}, \code{verification_warning}, \code{model}, \code{testbench_model}, \code{independent_testbench}. \\
+\code{UVMExportRequest/Response} & prompt and optional module name; the files, count and base64 zip. \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+% ---------------------------------------------------------------------------
+\chapter{The Backend API}
+\label{ch:api}
+
+\begin{center}
+\small
+\begin{longtable}{@{}>{\ttfamily}l>{\ttfamily}p{4.1cm}p{8.1cm}@{}}
+\toprule
+\textrm{\textbf{Method}} & \textrm{\textbf{Path}} & \textbf{Purpose} \\ \midrule \endhead
+GET & / & Name, provider, offline flag, simulator availability. \\
+GET & /health & \texttt{\{"status":"ok","simulator":true\}} for health checks. \\
+GET & /api/models & The Model menu: models from all sources, which sources are available (with hints), how many are hidden, and whether the app is offline. \code{?include_paid=true} also lists models not marked free; \code{?refresh=true} re-reads the catalogues. \\
+POST & /api/spec/parse & Turn a prompt into a specification and stop, for review before generation. \\
+POST & /api/design/stream & The main route: the full pipeline as Server-Sent Events. Saves the finished project. \\
+POST & /api/design/run & The same pipeline, returning one JSON response at the end. Saves the project. \\
+POST & /api/simulation/run & Simulate a hand-edited RTL/testbench pair once (the Re-run button). No auto-fix. \\
+POST & /api/synthesis/run & Generic Yosys synthesis; returns \texttt{\{"available": false\}} when not installed. \\
+POST & /api/timing/run & The timing and area estimate on its own (RTL, module name, target, optional testbench for parameter overrides). \\
+GET & /api/projects & List saved projects (limit 1--100, offset). \\
+GET & /api/projects/\{id\} & Load one saved project. \\
+DELETE & /api/projects/\{id\} & Delete one saved project. \\
+POST & /api/uvm/export & Generate the UVM bundle (files and zip). \\
+POST & /api/admin/cleanup & Delete old workspaces; disabled unless \code{ADMIN_TOKEN} is set and sent as \code{X-Admin-Token}. \\
+\bottomrule
+\end{longtable}
+\end{center}
+
+\textbf{Design choices in \file{main.py}:}
+\begin{itemize}
+  \item \textbf{CORS: this machine only.} Browsers may call the API only from local addresses (\code{http://localhost:5173}, \code{http://127.0.0.1:5173}, the preview ports 4173 and \code{http://localhost:3000}). Extra origins can be added one by one, as exact addresses, with \code{CORS_ALLOW_ORIGINS}; a wildcard is ignored. There is deliberately no pattern such as \code{*.vercel.app}: anyone can host a page there, and that page could make a visitor's browser call a backend that holds model keys. Credentials (cookies) are not allowed, and only GET, POST, DELETE and OPTIONS are accepted.
+  \item Every route except \code{/}, \code{/health} and a plain \code{/api/models} calls \code{_check_rate_limit}: 20 requests per 60 seconds per IP, protected by a lock because handlers run in threads. By default the IP is the real socket address. Only when \code{TRUST_PROXY_HEADERS=1} (behind a trusted proxy such as Render) is the \emph{last} \code{X-Forwarded-For} entry used, which the proxy adds; otherwise any caller could fake that header to dodge the limit.
+  \item Simulation, synthesis, timing, model list, specification, project and export routes are plain \code{def}, so FastAPI runs them in a thread pool and the server stays responsive during a simulation or a slow model listing.
+  \item Model ids in every request are checked against the safe pattern (Section~\ref{sec:modelid}) before anything else happens; a bad one is HTTP 422.
+  \item Errors are logged in full on the server, but clients only receive a short, safe message such as ``Internal server error'', so stack traces and file paths never leak.
+  \item Design ids are full UUIDs; an earlier 8-character id could collide and overwrite another project.
+  \item If a built frontend exists in \file{static/} (the Docker image), the backend serves it too, so one container runs the whole app.
+\end{itemize}
+
+% ---------------------------------------------------------------------------
+\chapter{The Frontend}
+\label{ch:frontend}
+
+\begin{figure}[H]
+\centering
+\resizebox{\textwidth}{!}{%
+\begin{tikzpicture}[node distance=6mm and 5mm,font=\small]
+  \node[hbox] (app) {App.tsx \\ \scriptsize all state + handlers};
+  \node[box,below left=10mm and 14mm of app,align=center] (pp) {PromptPanel \\ \scriptsize ModelPicker, TestbenchModelSelect, AgentChat};
+  \node[box,below=22mm of app] (spec) {SpecReview};
+  \node[box,right=24mm of app] (rp) {ResultsPanel};
+  \node[box,above right=4mm and 6mm of rp,align=left,font=\scriptsize] (tabs) {CodeEditor (Design) \\ TestCasesView \\ WaveformViewer \\ SchematicView \\ SpecSummary};
+  \node[box,left=22mm of app] (api) {api.ts \\ \scriptsize HTTP + SSE};
+  \foreach \t in {pp,spec,rp} \draw[arr] (app)--(\t);
+  \draw[arr] (rp)--(tabs); \draw[arr,<->] (app)--(api);
+\end{tikzpicture}}
+\caption{Component tree. App owns the data; components receive it as props and report user actions back.}
+\end{figure}
+
+\section{App.tsx: state and handlers}
+
+\code{App} keeps all state with React's \code{useState}: the provider badge, the model list and sources, the chosen model, testbench model and thinking level, the review-the-specification switch, the RTL and testbench text, module name, explanation, result, waveform, schematic, iteration history, design id, synthesis, strength, timing, second opinion, the models that wrote the design and testbench, the specification used, lint info, fallback notice and warning, timeline messages and saved projects. On first load it calls \code{getModels} (which also tells it whether the backend is live or offline) and \code{listProjects}. If the backend cannot be reached, it shows an offline-demo badge instead of failing. The chosen model, testbench model, ``Show other models'' and the review switch are remembered in the browser (\code{localStorage}).
+
+\begin{description}
+  \item[\code{loadModels}, \code{chooseModel}] Read the Model menu from \code{/api/models}; keep the current choice if it is still offered, otherwise restore the remembered one, otherwise use the server's default. A testbench model that is no longer offered is cleared.
+  \item[\code{handleGenerate}] If the review switch is on (and the app is live), call \code{parseSpec} and show the SpecReview panel; otherwise call \code{startRun} straight away.
+  \item[\code{startRun}] Clears old results, opens the stream (with the confirmed specification if there is one), and for each event: adds a timeline message, shows a fallback notice once (\code{lastNoticeRef} prevents duplicates), and fills whichever fields the event carries. On \code{done} it loads the complete response, switches to the Results tab and refreshes Projects. It turns common network problems into friendly messages.
+  \item[\code{handleCancel}] Aborts the stream (the Stop button).
+  \item[\code{handleReRun}] Sends the edited code to \code{/api/simulation/run} once, without the AI. It clears strength, timing, second opinion and ``Written by'', because those described the previous code, not the edited one.
+  \item[\code{handleUVMExport}] Requests the bundle and downloads the zip.
+  \item[\code{handleLoadProject}, \code{handleDeleteProject}] Open or delete a saved run (deleting asks for confirmation).
+\end{description}
+
+\section{api.ts and streaming}
+
+The browser's built-in \code{EventSource} cannot send a POST body, so \code{streamDesign} uses \code{fetch} and reads the response body as a stream. It decodes chunks into a buffer, splits on blank lines (\texttt{\textbackslash n\textbackslash n}), takes the \code{data:} line of each frame and parses its JSON. HTTP 502/504 errors become ``Render is waking up\ldots'' because the free backend sleeps after 15 minutes idle.
+
+\section{The components}
+
+\begin{description}
+  \item[PromptPanel] The sidebar: the ``Describe the block'' text box with a character count, the Generate RTL button, the run timeline (passed in as a child), four example chips (including ``Buggy counter'', scripted only in offline mode), the Model menu, ``Testbench written by'', ``Review the specification before generating'', a thinking-level selector for models that have one, and the Target clock slider (10--500 MHz). Ctrl/Cmd+Enter submits.
+  \item[ModelPicker] Three source tabs (OpenCode, Cloudflare, NVIDIA NIM) with arrow-key navigation, a refresh button, the model drop-down grouped by provider (free models marked ``(free)''), the model's note, a hint when a source is not set up, and on the OpenCode tab the ``Show other models'' check box with the number hidden.
+  \item[TestbenchModelSelect] ``Testbench written by'': ``Same model as the design'' or any model from any source.
+  \item[SpecReview] The specification review panel: module, ports and parameters, editable behaviour and constraints, ``Generate with this specification'' and Cancel.
+  \item[AgentChat] The run timeline: one message per event with an icon for its stage and status, the structured diagnosis when present, a ``Working\ldots'' timer while a run is going, and the design explanation.
+  \item[CodeEditor] Two tabs (RTL and testbench) using CodeMirror with Verilog highlighting, editable, with a copy button. Edited code can be re-simulated with Re-run. It is shown on the Design tab (before any run, the Design tab shows a welcome page with recent projects instead).
+  \item[ResultsPanel] Five tabs: Design, Results, Test cases, Waveform, Schematic. \emph{Results}: the verdict (status badge, tests, passed, failed, pass rate), ``Written by'', the second opinion, warnings, then sections for testbench strength, synthesis, timing and area, toggle coverage, test types, lint, the self-correction loop, errors and the specification used (SpecSummary).
+  \item[TestCasesView] Every executed check, with filters, search and a bit-by-bit comparison (Section~\ref{sec:testcases}).
+  \item[WaveformViewer] Draws the waveform as SVG: a time ruler, single-bit signals as high/low lines, buses as labelled hex segments, zoom (0.5$\times$ to 4$\times$) and reset, and a notice when data was truncated. No external tool such as GTKWave is needed.
+  \item[SchematicView] Draws the module as a box with input ports on the left, outputs on the right and widths shown as \code{[n:0]}.
+\end{description}

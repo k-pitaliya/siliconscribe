@@ -1,0 +1,187 @@
+% ============================================================================
+%  SiliconScribe: Complete Guide Manual (zero prior knowledge)
+%  Kushal Pitaliya (23EC105), EC486 Minor Project, CSPIT CHARUSAT
+%  Build (from docs/guide/):  python3 gen_function_index.py && tectonic SiliconScribe_Guide_Manual.tex
+% ============================================================================
+\documentclass[11pt,a4paper,oneside]{report}
+
+\usepackage[a4paper,margin=2.3cm,headheight=14pt]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\renewcommand*\familydefault{\sfdefault}
+\usepackage{microtype}
+\usepackage{amsmath}
+\usepackage{graphicx}
+\graphicspath{{figures/}{../screenshots/}}
+\usepackage[table]{xcolor}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,shapes.geometric,calc,fit,backgrounds}
+\usepackage{listings}
+\usepackage{float}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{tabularx}
+\usepackage{longtable}
+\usepackage{enumitem}
+\setlist{itemsep=2pt,topsep=4pt}
+\usepackage{caption}
+\captionsetup{font=small,labelfont=bf}
+\usepackage[most]{tcolorbox}
+\usepackage{titlesec}
+\usepackage{fancyhdr}
+\usepackage{xurl}
+\usepackage[hidelinks]{hyperref}
+\hypersetup{pdftitle={SiliconScribe - Complete Guide Manual},pdfauthor={Kushal Pitaliya (23EC105)}}
+\setlength{\emergencystretch}{3em}
+\tolerance=2000
+\setlength{\parskip}{4pt}
+\setlength{\parindent}{0pt}
+
+% ------------------------------------------------------------------ colours
+\definecolor{navy}{RGB}{24,43,73}
+\definecolor{accent}{RGB}{37,99,235}
+\definecolor{okgreen}{RGB}{21,128,61}
+\definecolor{badred}{RGB}{185,28,28}
+\definecolor{amber}{RGB}{180,83,9}
+\definecolor{softgrey}{RGB}{243,244,246}
+\definecolor{midgrey}{RGB}{156,163,175}
+\definecolor{inkgrey}{RGB}{71,85,105}
+
+% ------------------------------------------------------------------ headings
+\titleformat{\chapter}[display]{\normalfont\sffamily\color{navy}}
+  {\large\bfseries CHAPTER \thechapter}{4pt}{\LARGE\bfseries}
+\titlespacing*{\chapter}{0pt}{-10pt}{14pt}
+\titleformat{\section}{\normalfont\Large\bfseries\color{navy}}{\thesection}{0.6em}{}
+\titleformat{\subsection}{\normalfont\large\bfseries\color{navy}}{\thesubsection}{0.6em}{}
+\titleformat{\part}[display]{\centering\normalfont\color{navy}}{\Large\bfseries PART \thepart}{10pt}{\Huge\bfseries}
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small\color{inkgrey}SiliconScribe Guide Manual}
+\fancyhead[R]{\small\color{inkgrey}\leftmark}
+\fancyfoot[C]{\small\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+\fancypagestyle{plain}{\fancyhf{}\fancyfoot[C]{\small\thepage}\renewcommand{\headrulewidth}{0pt}}
+
+% ------------------------------------------------------------------ helpers
+\newcommand{\code}[1]{\texttt{\detokenize{#1}}}
+\newcommand{\file}[1]{\nolinkurl{#1}}
+\newcommand{\umsq}{\ensuremath{\mu}m\textsuperscript{2}}
+
+\newtcolorbox{keyidea}[1][Key idea]{enhanced,breakable,colback=accent!6,colframe=accent,
+  fonttitle=\bfseries,title=#1,boxrule=0.8pt,arc=2pt,left=6pt,right=6pt,top=4pt,bottom=4pt}
+\newtcolorbox{analogy}[1][Everyday analogy]{enhanced,breakable,colback=okgreen!6,colframe=okgreen,
+  fonttitle=\bfseries,title=#1,boxrule=0.8pt,arc=2pt,left=6pt,right=6pt,top=4pt,bottom=4pt}
+\newtcolorbox{viva}[1][Viva tip]{enhanced,breakable,colback=amber!7,colframe=amber,
+  fonttitle=\bfseries,title=#1,boxrule=0.8pt,arc=2pt,left=6pt,right=6pt,top=4pt,bottom=4pt}
+\newtcolorbox{warnbox}[1][Watch out]{enhanced,breakable,colback=badred!5,colframe=badred,
+  fonttitle=\bfseries,title=#1,boxrule=0.8pt,arc=2pt,left=6pt,right=6pt,top=4pt,bottom=4pt}
+
+\lstdefinestyle{vlog}{language=Verilog,basicstyle=\ttfamily\footnotesize,keywordstyle=\bfseries\color{navy},
+  commentstyle=\itshape\color{inkgrey},frame=single,rulecolor=\color{midgrey},backgroundcolor=\color{softgrey},
+  numbers=left,numberstyle=\tiny\color{midgrey},columns=fullflexible,keepspaces=true,breaklines=true,
+  showstringspaces=false,aboveskip=6pt,belowskip=6pt}
+\lstdefinestyle{plain}{basicstyle=\ttfamily\footnotesize,frame=single,rulecolor=\color{midgrey},
+  backgroundcolor=\color{softgrey},columns=fullflexible,keepspaces=true,breaklines=true,showstringspaces=false}
+\lstset{style=vlog}
+
+% tikz styles
+\tikzset{
+  box/.style={draw=navy,fill=white,rounded corners=2pt,align=center,font=\small,minimum height=8mm,inner sep=4pt},
+  hbox/.style={draw=navy,fill=navy,text=white,rounded corners=2pt,align=center,font=\small\bfseries,minimum height=8mm,inner sep=4pt},
+  okbox/.style={draw=okgreen,fill=okgreen!12,rounded corners=2pt,align=center,font=\small,minimum height=8mm,inner sep=4pt},
+  badbox/.style={draw=badred,fill=badred!8,rounded corners=2pt,align=center,font=\small,minimum height=8mm,inner sep=4pt},
+  arr/.style={-{Stealth[length=2.2mm]},thick,draw=navy},
+  note/.style={font=\scriptsize\itshape,text=inkgrey,align=center},
+}
+
+\begin{document}
+
+% ============================================================== TITLE ======
+\begin{titlepage}
+\centering
+\vspace*{2.2cm}
+{\color{navy}\rule{\textwidth}{1.2pt}}\\[14pt]
+{\Huge\bfseries\color{navy} SiliconScribe}\\[10pt]
+{\LARGE Complete Guide Manual}\\[8pt]
+{\large How every part works, why it is built that way,\\ and what each function does}\\[14pt]
+{\color{navy}\rule{\textwidth}{1.2pt}}\\[2.2cm]
+
+\begin{tikzpicture}[node distance=7mm]
+  \node[hbox] (p) {Your idea\\ \scriptsize in plain English};
+  \node[box,right=of p] (s) {Typed\\ specification};
+  \node[box,right=of s] (g) {RTL +\\ testbench};
+  \node[box,right=of g] (sim) {Real\\ simulator};
+  \node[okbox,right=of sim] (ok) {Design that\\ passes its tests};
+  \draw[arr] (p)--(s); \draw[arr] (s)--(g); \draw[arr] (g)--(sim); \draw[arr] (sim)--(ok);
+  \draw[arr,badred] (sim.south) -- ++(0,-0.7) -| node[pos=0.25,below,font=\scriptsize,text=badred]{fail: diagnose and repair} (g.south);
+\end{tikzpicture}
+
+\vfill
+{\large Written for readers with \textbf{no previous knowledge} of chip design, Verilog, AI or web development}\\[1.2cm]
+{\large\bfseries Kushal Pitaliya \quad(Roll No.\ 23EC105)}\\[4pt]
+EC486 Minor Project \textbullet\ B.Tech Electronics \& Communication Engineering, 7th Semester\\[2pt]
+V.\ T.\ Patel Department of Electronics \& Communication Engineering, CSPIT, CHARUSAT\\[2pt]
+Academic Year 2026--27 \textbullet\ November 2026
+\end{titlepage}
+
+\pagenumbering{roman}
+\tableofcontents
+\clearpage
+
+% ============================================================== HOW TO READ ==
+\chapter*{How to Use This Guide}
+\addcontentsline{toc}{chapter}{How to Use This Guide}
+\markboth{How to Use This Guide}{}
+
+This manual explains SiliconScribe from the ground up. It assumes you know nothing about digital hardware, Verilog, artificial intelligence or web software. Every technical word is explained the first time it appears, and the Glossary (Appendix~\ref{app:glossary}) collects them all.
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}>{\bfseries}p{4.1cm}X@{}}
+\toprule
+If you are\ldots & Read\ldots \\
+\midrule
+Completely new & Part~I in order (Chapters 1--7), then Chapter~\ref{ch:journey} (the journey of one request). \\
+A student preparing for the viva & Chapters~\ref{ch:bigpicture}, \ref{ch:journey}, \ref{ch:pipeline} and \ref{ch:why}, then the question bank in Chapter~\ref{ch:vivaqa}. \\
+A developer who wants to run or change the code & Part~II (Chapters~\ref{ch:arch}--\ref{ch:frontend}) and Part~III, with the function index in Appendix~\ref{app:index}. \\
+An examiner checking the claims & Chapters~\ref{ch:pipeline}, \ref{ch:trust}, \ref{ch:timing}, \ref{ch:simulator}, \ref{ch:testing} and \ref{ch:why}. \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+Throughout the guide you will see four kinds of boxes:
+
+\begin{keyidea}
+The single most important point of a section. If you read nothing else, read these.
+\end{keyidea}
+\begin{analogy}
+A comparison with everyday life, to build intuition before the technical detail.
+\end{analogy}
+\begin{viva}
+A question an examiner is likely to ask, and how to answer it in your own words.
+\end{viva}
+\begin{warnbox}
+A limitation, a common mistake, or something the system deliberately does \emph{not} do.
+\end{warnbox}
+
+File names such as \file{backend/orchestrator.py} and function names such as \code{pipeline_events} refer to the real code in the project folder \file{ai-eda-playground/}. Everything described here was checked against that code; nothing is invented or assumed.
+
+\clearpage
+\pagenumbering{arabic}
+
+% ============================================================== PART I =====
+\part{Background from Zero}
+\input{part1_background}
+
+\part{How SiliconScribe Works}
+\input{part2_internals}
+
+\part{Using, Testing and Extending}
+\input{part3_using}
+
+\appendix
+\titleformat{\chapter}[display]{\normalfont\sffamily\color{navy}}{\large\bfseries APPENDIX \thechapter}{4pt}{\LARGE\bfseries}
+\input{appendices}
+
+\end{document}

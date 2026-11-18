@@ -1,0 +1,65 @@
+\chapter{Introduction}
+\label{sec:intro}
+
+\section{Motivation and Problem Statement}
+Digital design is unforgiving: a single wrong bit in a priority encoder, a missing
+reset in a state machine, or a width mismatch in a comparison can silently corrupt a
+datapath. An engineer writing RTL must also write the testbench that proves the RTL
+correct. Verification is widely reported as the largest share of front-end effort,
+and it is exactly the part that generic code generation does not solve.
+
+Applying a general-purpose LLM directly to hardware design fails in three concrete
+ways:
+
+\begin{enumerate}[label=\textbf{\arabic*.}]
+\item \textbf{Toolchain incompatibility.} Models emit SystemVerilog that the free
+simulator does not implement. Icarus Verilog 12.0 in \code{-g2012} mode accepts much of
+the synthesizable subset (\code{logic}, \code{always_ff}, \code{return}) but rejects
+\code{break} and \code{continue}, \code{disable} of a function, the \code{inside}
+operator, streaming concatenation, concurrent assertions (\code{property},
+\code{sequence}) and class constraints, so code that looks valid to a human fails to
+compile.
+\item \textbf{No execution awareness.} A language model cannot observe a simulation
+cycle, a clock edge, a race, or an assertion. It can only produce plausible text.
+\item \textbf{No real diagnosis.} A model that is simply told ``make it pass'' tends
+to weaken the testbench, delete checks, or regenerate a different design. That is
+not debugging; it is test evasion.
+\end{enumerate}
+
+\section{Project Objectives}
+This individual EC486 project builds an execution-grounded assistant with the
+following objectives:
+
+\begin{itemize}
+\item \textbf{Specification first:} parse an arbitrary prompt into a typed
+\code{RTLDesignSpec} with explicit ports, widths, reset polarity, and edge cases,
+and let the user review and edit it before anything is generated.
+\item \textbf{Independent verification:} generate the testbench from the
+specification only, never from the RTL body, so the two cannot trivially agree;
+optionally let a different model write the testbench.
+\item \textbf{Real simulation:} compile and run every candidate with Icarus
+Verilog and decide PASS/FAIL from the simulator, not from the model's claim.
+\item \textbf{Structured diagnosis:} require \code{symptom}, \code{root_cause},
+\code{fix_location}, and \code{confidence}, grounded in the first failing vector.
+\item \textbf{Safe repair:} reject fixes that delete checks, apply mechanical
+compiler-evidenced repairs deterministically, and stop on no-op or oscillation.
+\item \textbf{Measure the evidence:} after a PASS, report testbench strength by
+mutation testing, measured toggle coverage and, when a repair rewrote the testbench,
+a second-opinion testbench.
+\item \textbf{Early physical estimate:} map a passing design to the SkyWater 130\,nm
+cell library and report pre-layout timing and area, or refuse with a reason.
+\item \textbf{Honest degradation:} never silently replace a user's design with a
+curated demo after a live call has succeeded, and never replace a model the user
+chose.
+\end{itemize}
+
+\section{Contributions}
+The final submission contributes: (i) an end-to-end live pipeline validated on an
+arbitrary prompt; (ii) a specification-only testbench generator with explicit Icarus
+compatibility rules; (iii) a structured diagnosis/fix loop with deterministic
+compiler repairs; (iv) an anti-cheat check-count guard and state-hash oscillation
+guard; (v) a truthful degraded-mode policy; (vi) a reproducible test suite that
+proves the testbenches can actually fail semantic bugs, with a measured mutation score; (vii) a final review that found and fixed a sandbox hole, a server-freeze defect and testbench gaps; (viii) trust features around every PASS: a reviewable specification, an optional separate testbench model, a second-opinion testbench, a per-run strength score and measured toggle coverage; (ix) a pre-layout timing and area estimate with Yosys and OpenSTA on the SkyWater 130\,nm library, checked by gate-level simulation of the mapped netlist; (x) a per-run model menu over three providers (the OpenCode app, Cloudflare Workers AI and NVIDIA NIM); and (xi) a live evaluation on 15 prompts with independent reference testbenches. The design is model-agnostic, so it scales with stronger models (Section~\ref{sec:scale}).
+
+\section{Report Organisation}
+Chapter~\ref{sec:related} surveys related work and Chapter~\ref{sec:req} sets out the requirements. Chapter~\ref{sec:arch} presents the architecture and detailed design, Chapter~\ref{sec:method} the methodology, and Chapter~\ref{sec:impl} the implementation and testing strategy. Chapter~\ref{sec:results} reports the measured results. Chapter~\ref{ch:discussion} discusses the engineering findings, the scalability path and the timeline, deployment and cost. Chapter~\ref{sec:conclusion} concludes, states the limitations and lists future work. Appendices give reproduction steps, the complete prompt set and a live-generated testbench.

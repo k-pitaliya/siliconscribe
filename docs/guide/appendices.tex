@@ -1,0 +1,243 @@
+% ============================================================================
+%  Appendices
+% ============================================================================
+
+\chapter{Glossary}
+\label{app:glossary}
+
+\begin{description}[style=nextline,itemsep=1pt]
+  \item[ALU] Arithmetic logic unit: computes add, subtract, AND, OR, XOR and similar, chosen by an opcode.
+  \item[API] Application programming interface: a defined way for programs to call each other, here over HTTP.
+  \item[Assertion] A statement in a testbench that must hold; if it fails, the test fails.
+  \item[Asynchronous reset] A reset that acts immediately, without waiting for a clock edge.
+  \item[Backend] The server half of the app (Python, FastAPI) that does the work and holds secrets.
+  \item[Bus] A group of wires carrying a multi-bit value; its width is the number of bits.
+  \item[casez] A Verilog case statement where \code{?} bits are ``don't care''.
+  \item[Clock] A square-wave signal; flip-flops update on its rising edge.
+  \item[Combinational logic] Logic whose outputs depend only on current inputs (no memory).
+  \item[Compile (Verilog)] Check and translate source code into a runnable simulation (\code{iverilog}).
+  \item[Component (React)] A reusable piece of the user interface.
+  \item[CORS] Browser rule listing which websites may call an API (here: this machine only).
+  \item[Coverage] A measure of how much of a design or its behaviour the tests exercised.
+  \item[Critical path] The slowest path through the logic; it sets the highest clock frequency.
+  \item[Degraded mode] Running on built-in designs because the AI provider is unavailable, clearly labelled.
+  \item[Design id] A random UUID naming one run's workspace folder and saved project.
+  \item[Directed test] A hand-chosen test case, usually a corner case.
+  \item[DUT] Device under test: the design being verified.
+  \item[EDA] Electronic design automation: software for designing chips.
+  \item[Equivalent mutant] A changed design that behaves exactly like the original, so no testbench can catch it.
+  \item[Endpoint] One address of a web API, such as \code{POST /api/design/stream}.
+  \item[Event (SSE)] One streamed JSON message describing a pipeline stage.
+  \item[Flatten] Merge all sub-modules into one, so area and timing cover the whole design.
+  \item[Flip-flop] A one-bit memory element that updates on a clock edge.
+  \item[FPGA] A chip that can be reconfigured to implement any digital circuit.
+  \item[Frontend] The browser half of the app (React, TypeScript).
+  \item[Generator (Python)] A function that yields values one at a time; used to stream events.
+  \item[Hallucination] An AI stating something false with confidence.
+  \item[HDL] Hardware description language, such as Verilog.
+  \item[Icarus Verilog] The free simulator SiliconScribe uses (\code{iverilog} + \code{vvp}).
+  \item[Instantiate] Place a copy of a module inside another module and connect its ports.
+  \item[JSON] A text format of named fields used for data exchange.
+  \item[Latch] A memory element that is transparent while its enable is active; usually an accident in combinational code.
+  \item[Lint] Static checks for suspicious code, without running it.
+  \item[LLM] Large language model: an AI that writes text, including code.
+  \item[Module] One hardware block in Verilog, from \code{module} to \code{endmodule}.
+  \item[Mutant / mutation testing] A deliberately broken copy of a design, used to check that tests catch bugs.
+  \item[Model menu] The sidebar control that chooses the AI model per run, from OpenCode, Cloudflare or NVIDIA NIM.
+  \item[Netlist] A list of gates and their connections, produced by synthesis.
+  \item[No-op guard] Stops the loop when a fix changes nothing.
+  \item[Non-blocking assignment] \code{<=} in Verilog: all registers update together at the clock edge.
+  \item[Offline provider] Built-in designs used without an AI service.
+  \item[OpenCode app] An installed coding-assistant app whose models SiliconScribe can use through its command line.
+  \item[OpenSTA] The open-source static timing analysis tool SiliconScribe uses.
+  \item[Opcode] A small input that selects an operation (for example in an ALU).
+  \item[OpenAI-compatible] An API that accepts the same request format as OpenAI's.
+  \item[Oracle] Whatever supplies the expected values in a test.
+  \item[Oscillation guard] Stops the loop when a fix returns to a version tried before.
+  \item[Parameter] A Verilog constant that can be changed per use, such as \code{WIDTH}.
+  \item[PDK / liberty file] A foundry's process data; the liberty file gives real cell areas and delays.
+  \item[Port] A pin of a module: input, output or inout, with a width.
+  \item[PPA] Power, performance and area: the three key physical metrics of a chip.
+  \item[Pre-layout] Before the cells are placed and wired on a chip; such timing has no wire delay.
+  \item[Prompt] The text instruction given to an AI.
+  \item[Pydantic] Python library that validates data shapes.
+  \item[Rate limit] A cap on requests per user per time window (here 20 per minute).
+  \item[Reasoning tokens] Hidden ``thinking'' output of some models, which uses the answer budget.
+  \item[Register] A group of flip-flops holding a value.
+  \item[Reset] A signal that forces registers to a known value; active-low resets act at 0.
+  \item[RTL] Register-transfer level: hardware described as registers and the logic between them.
+  \item[Sandbox policy] Rules that reject Verilog constructs able to access files or run programs.
+  \item[Second opinion] A fresh testbench written from the same specification and run on the final design after a repair changed the first one.
+  \item[Self-checking testbench] A testbench that compares results itself and prints a verdict.
+  \item[Sequential logic] Logic with memory, updated by a clock.
+  \item[Sign-off] Final timing checks after place and route at all corners; SiliconScribe does not do this.
+  \item[Simulation] Running a design in software to observe its behaviour over time.
+  \item[sky130] The open SkyWater 130 nm process and its standard-cell library.
+  \item[Slack] Clock period minus the delay of the slowest path; negative means too slow.
+  \item[Specification (spec)] The structured description of the module: name, ports, widths, behaviour, constraints.
+  \item[SQLite] A small single-file database.
+  \item[SSE] Server-Sent Events: one-way streaming of messages over HTTP.
+  \item[Standard cell] A pre-designed gate or flip-flop from a foundry library, with known area and delay.
+  \item[Static timing analysis (STA)] Adding up cell delays along every path, without simulating, to check a clock target.
+  \item[Stimulus] The input values a testbench applies.
+  \item[Synthesis] Converting RTL into gates (Yosys).
+  \item[SystemVerilog] The modern superset of Verilog, with classes and verification features.
+  \item[Temperature] How random an AI's output is.
+  \item[Testbench] A Verilog module that tests a design.
+  \item[Testbench strength] The share of injected bugs a testbench catches (mutation testing).
+  \item[Toggle coverage] The share of design signal bits seen going both 0 to 1 and 1 to 0 in simulation.
+  \item[Token] A word fragment; the unit an LLM reads and writes.
+  \item[UVM] Universal Verification Methodology: the industry's class-based testbench framework.
+  \item[VCD] Value change dump: the text waveform file.
+  \item[Verilog] The hardware description language used here.
+  \item[Watchdog] A testbench timer that stops a hung simulation with a failure message.
+  \item[Waveform] A picture of signals changing over time.
+  \item[Width] The number of bits in a signal or bus.
+  \item[wire vs reg] A \code{wire} is a continuous connection; a \code{reg} is assigned inside procedural blocks.
+  \item[Workspace] The folder holding one subfolder per design run.
+  \item[x / z] Simulation values meaning unknown (x) and undriven (z).
+  \item[Yosys] The open-source synthesis tool (used here as a WebAssembly build).
+\end{description}
+
+% ---------------------------------------------------------------------------
+\chapter{Request and Response Examples}
+\label{app:api}
+
+\section{Starting a streamed run}
+
+\begin{lstlisting}[style=plain]
+POST /api/design/stream
+Content-Type: application/json
+
+{"prompt": "Design a 4-bit synchronous up-counter with async reset and enable",
+ "target_frequency_mhz": 100, "self_correct": true, "max_iterations": 5,
+ "timeout_seconds": 30, "model": "opencode/deepseek-v4.1-flash-free",
+ "testbench_model": null, "spec": null}
+\end{lstlisting}
+
+\section{What streams back (shortened)}
+
+\begin{lstlisting}[style=plain]
+data: {"stage": "start", "message": "Parsing requirement (provider: opencode-app, model: ...)..."}
+
+data: {"stage": "intent", "message": "Identified module 'counter' with 4 ports.",
+       "rtl_spec": {"module_name": "counter", "ports": [...], "behavior": "...", ...},
+       "fallback_notice": null}
+
+data: {"stage": "rtl", "message": "Generated RTL.", "rtl_code": "module counter ..."}
+
+data: {"stage": "testbench", "message": "Generated self-checking testbench.", "testbench_code": "..."}
+
+data: {"stage": "simulate", "iteration": 0, "status": "PASS",
+       "message": "Simulation passed: N/N tests.", "result": {...}}
+
+data: {"stage": "strength", "message": "Testbench strength: caught N of M injected bugs.",
+       "strength": {"status": "ok", "total": M, "killed": N, "survivors": [...], ...}}
+
+data: {"stage": "timing", "message": "Timing: meets 100 MHz (slack +9.27 ns, ...); 150.144 um^2 in 11 cells.",
+       "timing": {"available": true, "slack_ns": 9.27, "area_um2": 150.144, ...}}
+
+data: {"stage": "done", "status": "PASS", "message": "Design passes on the first attempt.",
+       "response": {"design_id": "3f9c...", "status": "PASS", "iterations": 0,
+                    "model": "opencode/deepseek-v4.1-flash-free", ...}}
+\end{lstlisting}
+
+\section{A repair event}
+
+\begin{lstlisting}[style=plain]
+data: {"stage": "fix", "iteration": 1, "fix_type": "llm_diagnosis",
+       "fix_summary": "Changed the increment from 2'd2 to 1'b1.",
+       "diagnosis": {"symptom": "Testbench expects +1 per cycle, output counts 2, 4, 6...",
+                     "root_cause": "The RTL increments by 2'd2 instead of 1.",
+                     "fix_location": "counter.v line 10", "confidence": "high"},
+       "rtl_code": "...", "testbench_code": "..."}
+\end{lstlisting}
+
+\section{Re-simulating edited code}
+
+\begin{lstlisting}[style=plain]
+POST /api/simulation/run
+{"design_id": "3f9c...", "rtl_code": "...", "testbench_code": "...", "timeout_seconds": 30}
+
+-> {"status": "FAIL", "test_count": 20, "pass_count": 1, "fail_count": 19,
+    "coverage": {"test_vectors": 20, "passed": 1, "failed": 19, "pass_rate": 5.0, "bins": {}},
+    "errors": [...], "log_excerpt": "FAIL: expected=2 got=4 ...",
+    "checks": [...], "check_groups": [...], "measured_toggle": {...}, "waveform": {...}}
+\end{lstlisting}
+
+\section{Reviewing a specification first}
+
+\begin{lstlisting}[style=plain]
+POST /api/spec/parse
+{"prompt": "Design a 4-bit synchronous up-counter with async reset and enable",
+ "model": "opencode/deepseek-v4.1-flash-free"}
+
+-> {"module_name": "...", "parameters": [...], "ports": [...],
+    "behavior": "...", "constraints": [...]}
+\end{lstlisting}
+The (possibly edited) object is then sent back as \code{"spec"} in \code{POST /api/design/stream}.
+
+\section{The model menu}
+
+\begin{lstlisting}[style=plain]
+GET /api/models
+-> {"offline": false, "current": "opencode/deepseek-v4.1-flash-free",
+    "models": [{"id": "...", "label": "...", "provider": "...", "group": "...",
+                "free": true, "note": "Marked free by its name", ...}, ...],
+    "providers": [{"id": "opencode", "label": "OpenCode", "available": true, ...},
+                  {"id": "cloudflare", "label": "Cloudflare", "available": false,
+                   "hint": "Cloudflare is not set up. ..."},
+                  {"id": "nim", "label": "NVIDIA NIM", ...}],
+    "paid_hidden": ..., "stage_models": {}}
+\end{lstlisting}
+
+% ---------------------------------------------------------------------------
+\chapter{Frontend Function Reference}
+\label{app:frontend}
+
+\begin{center}
+\small
+\begin{longtable}{@{}p{3.3cm}>{\raggedright\arraybackslash}p{4.2cm}p{7.8cm}@{}}
+\toprule
+\textbf{File} & \textbf{Function} & \textbf{What it does} \\ \midrule \endhead
+\file{api.ts} & \code{getStatus} & Provider and offline state (via \code{/api/models}, falling back to \code{/}). \\
+ & \code{getModels} & Fetch the Model menu (optionally with models not marked free, or re-read). \\
+ & \code{parseSpec} & Ask for the specification only (\code{/api/spec/parse}). \\
+ & \code{runDesign} & One-shot pipeline call (\code{/api/design/run}). \\
+ & \code{streamDesign} & Streamed pipeline: POST, read the body stream, split SSE frames, parse each JSON event. \\
+ & \code{reSimulate} & Simulate edited code once (\code{/api/simulation/run}). \\
+ & \code{listProjects}, \code{getProject}, \code{deleteProject} & Projects menu operations. \\
+ & \code{exportUVM} & Request the UVM bundle. \\
+\file{App.tsx} & \code{loadModels}, \code{chooseModel} & Read the Model menu, keep or restore the chosen model, remember a new choice. \\
+ & \code{handleGenerate} & Show the specification review first if it is switched on, otherwise start the run. \\
+ & \code{startRun} & Run the streamed pipeline and apply each event to the page. \\
+ & \code{handleCancel} & Abort the running stream. \\
+ & \code{handleReRun} & Re-simulate edited code. \\
+ & \code{handleUVMExport} & Download the UVM zip. \\
+ & \code{handleLoadProject}, \code{handleDeleteProject} & Load or delete a saved project. \\
+ & \code{refreshProjects}, \code{pushMsg} & Reload the project list; add a timeline message. \\
+\file{PromptPanel.tsx} & \code{submit}, \code{clampFreq}, \code{handleTextareaKey} & Validate and send the prompt; keep the target clock in 1--10000; Ctrl/Cmd+Enter. \\
+\file{ModelPicker.tsx} & \code{familyOf}, \code{switchView}, \code{onKeyDown} & Which tab a model belongs to; switch between OpenCode, Cloudflare and NVIDIA NIM (also with arrow keys). \\
+\file{TestbenchModelSelect.tsx} & (component) & ``Testbench written by'' drop-down. \\
+\file{SpecReview.tsx} & \code{parseConstraints}, \code{confirm} & Turn the constraints box into a list; send the edited specification. \\
+\file{SpecSummary.tsx} & (component) & Read-only ``Specification the design was built from''. \\
+\file{TestCasesView.tsx} & \code{binString}, \code{BitsView} & Show expected and actual values bit by bit with differing bits highlighted. \\
+\file{theme.ts} & \code{useTheme}, \code{applyTheme} & Cycle system, light and dark; remember an explicit choice. \\
+\file{CodeEditor.tsx} & tab switch, copy & RTL/testbench tabs with Verilog highlighting and copy-to-clipboard. \\
+\file{AgentChat.tsx} & \code{stageIcon}, \code{formatElapsed}, \code{RunTimer} & Pick an icon for each stage and status; the ``Working\ldots'' timer. \\
+\file{ResultsPanel.tsx} & \code{ResultsView}, \code{Metric}, \code{describeUntoggled} & Verdict and metrics, Written by, second opinion, warnings, strength, synthesis, timing, toggle coverage, test types, lint, repair timeline, specification. \\
+\file{WaveformViewer.tsx}, \file{waveformUtils.ts} & \code{zoomAt}, \code{resetView}, \code{groupSignals}, \code{valueAt}, \code{formatValue} & Zoom and fit the SVG waveform; group signals by role; value at the cursor in hex, binary or decimal. \\
+\file{SchematicView.tsx} & (component) & Draw the module box with ports and widths, e.g.\ \code{count[3:0]}. \\
+\bottomrule
+\end{longtable}
+\end{center}
+
+% ---------------------------------------------------------------------------
+\chapter{Backend Function Index}
+\label{app:index}
+
+Every function and method in the backend, generated directly from the source code by \file{docs/guide/gen_function_index.py}. The description is the first line of the function's own documentation where it has one, otherwise a summary written from reading the code.
+
+{\small
+\input{function_index}
+}

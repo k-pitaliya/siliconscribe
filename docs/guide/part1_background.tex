@@ -1,0 +1,451 @@
+% ============================================================================
+%  PART I: Background from zero
+% ============================================================================
+
+\chapter{The Big Picture in One Chapter}
+\label{ch:bigpicture}
+
+\section{What SiliconScribe is}
+
+SiliconScribe is a web application. You type a description of a small piece of digital hardware in plain English, for example:
+
+\begin{quote}\itshape
+``Design a 4-bit synchronous up-counter with async reset and enable.''
+\end{quote}
+
+and after a while (a short wait with the built-in offline designs; with a free live AI model, a few minutes: the median in the evaluation was 360 seconds) you get back:
+
+\begin{enumerate}
+  \item \textbf{RTL code}: the hardware described in the Verilog language, ready for a chip or FPGA flow.
+  \item \textbf{A testbench}: a second Verilog program whose only job is to test the first one.
+  \item \textbf{A verdict from a real simulator}: PASS or FAIL, with how many checks passed and failed, and every check listed.
+  \item \textbf{A waveform}: a picture of every signal changing over time.
+  \item \textbf{If something failed}: a diagnosis of why, a minimal fix, and the evidence that the fix worked.
+  \item \textbf{How much the PASS is worth}: how many deliberately injected bugs the testbench catches, how much of the design's wiring the test actually exercised, and (after some repairs) a second opinion from a fresh testbench.
+  \item \textbf{An early size and speed estimate}: the design mapped onto real chip cells (SkyWater 130 nm), with its area and whether it meets the target clock. This is a pre-layout estimate, not a final chip measurement.
+\end{enumerate}
+
+The words ``RTL'', ``Verilog'', ``testbench'' and ``simulator'' are all explained in the next chapters. For now, the important point is the idea behind the project.
+
+\section{The problem it solves}
+
+Large language models (LLMs) such as the ones behind ChatGPT can write Verilog. But they write it the way a student writes an exam answer without ever checking it: they never run the code. The model produces text that \emph{looks} right. Whether the hardware actually works is a different question, and the model cannot answer it.
+
+When people use a chat model directly for hardware, three things go wrong (Chapter~\ref{ch:ai} explains each one):
+
+\begin{enumerate}
+  \item The code often does not compile with real tools.
+  \item The model cannot observe its own design running, so it cannot know whether it is correct.
+  \item When told ``make it pass'', models tend to weaken or delete the tests instead of fixing the design.
+\end{enumerate}
+
+\section{The core idea: close the loop with a real simulator}
+
+\begin{keyidea}
+SiliconScribe never trusts the AI's claim that a design works. A real Verilog simulator (Icarus Verilog) runs every design, and only the simulator's result decides PASS or FAIL. The AI writes; the simulator judges.
+\end{keyidea}
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}
+  \node[hbox] (p) at (0,0) {Prompt};
+  \node[box] (spec) at (2.75,0) {Specification\\ \scriptsize ports, widths, behaviour};
+  \node[box] (rtl) at (6.1,0.95) {RTL generator};
+  \node[box] (tb) at (6.1,-0.95) {Testbench generator\\ \scriptsize sees the spec only};
+  \node[box] (sim) at (9.4,0) {Icarus Verilog\\ \scriptsize compile + run};
+  \node[okbox] (pass) at (12.3,0) {PASS\\ \scriptsize waveform, report};
+  \node[badbox] (fix) at (10.2,-2.55) {Diagnose + patch\\ \scriptsize with guards};
+  \draw[arr] (p)--(spec); \draw[arr] (spec.east)--(rtl.west); \draw[arr] (spec.east)--(tb.west);
+  \draw[arr] (rtl.east)--(sim.west); \draw[arr] (tb.east)--(sim.west); \draw[arr] (sim)--(pass);
+  \draw[arr,badred] ($(sim.south)+(0.7,0)$) -- node[right,font=\scriptsize]{FAIL / ERROR} ($(fix.north)+(-0.1,0)$);
+  \draw[arr,badred] (fix.west) -- (tb.south |- fix.west) node[midway,below,font=\scriptsize]{patched code, re-simulate} -- (tb.south);
+\end{tikzpicture}
+\caption{The closed loop. Two generators work from the same specification but never see each other's code; the simulator is the only judge.}
+\label{fig:loop}
+\end{figure}
+
+\begin{analogy}
+Think of an exam. If the same student writes both the answers and the answer key, a wrong answer and a wrong key can agree, and the student ``scores'' full marks. SiliconScribe has the answer key (the testbench) written from the \emph{question} (the specification), never from the student's answer (the RTL). Then an impartial examiner (the simulator) marks the paper.
+\end{analogy}
+
+\section{What makes it trustworthy}
+
+These safeguards stop the system from fooling itself or its user:
+
+\begin{description}
+  \item[Independent testbench.] The testbench generator is never shown the RTL. It derives every expected value from the specification. Optionally a \emph{different} AI model writes it.
+  \item[Simulator as the oracle.] PASS or FAIL comes from the simulator output, never from the model. A PASS needs a valid summary and at least one executed check.
+  \item[Anti-cheat guard.] A ``fix'' that deletes test checks from a testbench that already ran is rejected. If a repair changed the testbench, the original one is run again and a fresh second-opinion testbench is asked for.
+  \item[Loop guards.] If a fix changes nothing, or brings back a version already tried, the loop stops instead of burning time.
+  \item[Testing the test.] After every PASS, small bugs are injected into the design to see whether the testbench notices (testbench strength), and toggle coverage is measured from the simulator's own waveform file.
+  \item[You can check the question.] The specification the model wrote can be reviewed and edited before anything is built.
+  \item[Honest degraded mode.] If the AI service is unavailable, the app says so clearly and labels results as coming from built-in examples. A model you chose yourself is never silently replaced.
+\end{description}
+
+\section{Results in numbers}
+
+\begin{center}
+\begin{tabular}{@{}lr@{}}
+\toprule
+Live evaluation, 15 prompts (DeepSeek V4.1 Flash) & 14 done: 8 PASS at once, 6 after repair \\
+Median time per live run & 360 s (3 to 13 minutes) \\
+Injected bugs caught by the live testbenches & 102 of 111 (92\%) \\
+Evaluated designs correct against hand-written references & 14 of 14 \\
+Mutation sweep of the built-in designs & 27 of 27 caught \\
+Timing netlists equal to the RTL at gate level & 19 of 19 designs \\
+Automated tests & 436 backend + 211 frontend, all passing \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The 15th prompt (a 4-bit counter) did not complete: testbench generation timed out three times. It is reported as ``no result'', never as a pass or a failure. Chapter~\ref{ch:testing} lists the commands behind every number.
+
+% ---------------------------------------------------------------------------
+\chapter{Digital Hardware Basics}
+\label{ch:hardware}
+
+This chapter gives just enough electronics to understand what the generated designs do.
+
+\section{Bits, signals and buses}
+
+Digital hardware works with \textbf{bits}: values that are either 0 or 1 (in a real circuit, a low or a high voltage). A wire carrying one bit is a \textbf{signal}. A group of wires that together carry a number is a \textbf{bus}, and the number of wires is its \textbf{width}. A 4-bit bus can carry the numbers 0 to 15 ($2^4-1$); an 8-bit bus carries 0 to 255.
+
+Bus values are usually written in \textbf{hexadecimal} (base 16, digits 0--9 and a--f), so the 4-bit value 1011 (eleven) is written \code{b} and the 8-bit value 1111 1111 is \code{ff}. SiliconScribe's waveform viewer shows buses this way.
+
+\section{Logic gates and combinational logic}
+
+A \textbf{logic gate} computes an output bit from input bits: AND (1 only if all inputs are 1), OR (1 if any input is 1), NOT (inverts), XOR (1 if the inputs differ). Connecting gates gives \textbf{combinational logic}: circuits whose outputs depend \emph{only} on the current inputs, with no memory. Examples SiliconScribe can build:
+
+\begin{itemize}
+  \item \textbf{Multiplexer (mux)}: a selector. A 4:1 mux has four data inputs and a 2-bit select input; the output copies whichever input is selected.
+  \item \textbf{Full adder}: adds two bits and a carry-in, producing a sum bit and a carry-out.
+  \item \textbf{Priority encoder}: given 8 request lines, outputs the index (0--7) of the highest-numbered active line, plus a ``valid'' flag that is 1 if any line is active.
+  \item \textbf{ALU} (arithmetic logic unit): computes add, subtract, AND, OR, XOR and so on, chosen by an \textbf{opcode} input, and flags conditions such as overflow.
+\end{itemize}
+
+\section{Sequential logic, clocks and resets}
+
+\textbf{Sequential logic} has memory: its outputs depend on the past as well as the present. The memory elements are \textbf{flip-flops} (one bit each); a group of flip-flops holding a value is a \textbf{register}.
+
+Flip-flops change only at the instant a \textbf{clock} signal rises from 0 to 1 (the \textbf{rising edge} or \code{posedge}). The clock is a square wave that ticks millions of times per second; its frequency (for example 100 MHz) is the ``target frequency'' you can set in the app.
+
+A \textbf{reset} forces registers to a known starting value. Two properties matter:
+
+\begin{itemize}
+  \item \textbf{Synchronous vs asynchronous}: a synchronous reset takes effect at the next clock edge; an asynchronous reset takes effect immediately.
+  \item \textbf{Active-high vs active-low}: an active-low reset (often named \code{rst_n}, ``n'' for negative) resets when the signal is 0.
+\end{itemize}
+
+\begin{analogy}
+A clock is like a drummer in a marching band: nobody moves between beats, and on each beat everyone takes exactly one step. A reset is the band leader shouting ``back to the start line''.
+\end{analogy}
+
+The \textbf{counter} used throughout this guide is sequential: on every rising clock edge, if \code{enable} is 1, its 4-bit \code{count} goes up by one (wrapping from 15 back to 0); if \code{enable} is 0 it holds its value; and an active-low asynchronous reset clears it to 0 at once.
+
+\section{RTL: the level designers work at}
+
+Engineers do not draw millions of gates. They describe hardware at the \textbf{register-transfer level (RTL)}: which registers exist and how values move between them on each clock edge. A tool called a \textbf{synthesizer} later converts RTL into gates. ``Generating RTL'' therefore means writing the design description, not drawing the circuit.
+
+% ---------------------------------------------------------------------------
+\chapter{Describing Hardware with Verilog}
+\label{ch:verilog}
+
+\textbf{Verilog} is a hardware description language (HDL). It looks a little like the C programming language, but it describes circuits that all run at the same time, not instructions that run one after another. \textbf{SystemVerilog} is its modern superset. SiliconScribe generates Verilog-2001 style code because the simulator it uses (Icarus Verilog) supports that best.
+
+\section{A complete example: the curated counter}
+
+This is the real counter design that ships with SiliconScribe (\file{backend/offline_designs.py}):
+
+\begin{lstlisting}
+module counter #(
+    parameter WIDTH = 4
+)(
+    input  wire             clk,
+    input  wire             rst_n,
+    input  wire             enable,
+    output reg  [WIDTH-1:0] count
+);
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n)
+            count <= {WIDTH{1'b0}};
+        else if (enable)
+            count <= count + 1'b1;
+    end
+endmodule
+\end{lstlisting}
+
+Line by line:
+
+\begin{description}[style=nextline]
+  \item[\code{module counter ... endmodule}] A \textbf{module} is one hardware block, like a chip with pins. Everything between \code{module} and \code{endmodule} describes it.
+  \item[\code{parameter WIDTH = 4}] A \textbf{parameter} is a constant that can be changed when the module is used, so the same code can build a 4-bit or 8-bit counter.
+  \item[\code{input wire clk}] The \textbf{ports} are the pins. \code{input} and \code{output} give the direction. \code{[WIDTH-1:0]} declares a bus from bit 3 down to bit 0.
+  \item[\code{wire} vs \code{reg}] A \code{wire} is a plain connection driven continuously. A \code{reg} is a variable assigned inside an \code{always} or \code{initial} block. Mixing them up is one of the most common errors, and SiliconScribe repairs it automatically (Section~\ref{sec:compilerrepair}).
+  \item[\code{always @(posedge clk or negedge rst_n)}] Run this block on every rising clock edge, or the moment reset falls to 0 (that is what makes the reset asynchronous).
+  \item[\code{if (!rst_n) count <= ...}] If reset is active (0), clear the count. \texttt{\{WIDTH\{1'b0\}\}} means ``WIDTH copies of a single 0 bit''.
+  \item[\code{count <= count + 1'b1}] Otherwise, if enabled, add one. The \code{<=} is a \textbf{non-blocking assignment}: all registers update together at the clock edge, exactly like real flip-flops.
+\end{description}
+
+\section{Number literals}
+
+Verilog numbers carry their width and base: \code{1'b1} is a 1-bit binary 1, \code{2'd2} is a 2-bit decimal 2, \code{4'hF} is a 4-bit hexadecimal 15, and \code{8'b1???????} uses \code{?} as ``don't care'' bits inside a \code{casez} statement. This matters later: the seeded bug in the live repair demo was \code{count + 2'd2} (count by two) instead of \code{count + 1'b1}.
+
+\section{Four-valued logic: 0, 1, x and z}
+
+A simulated signal can be 0, 1, \code{x} (unknown, for example an uninitialised register) or \code{z} (high impedance, an undriven wire). This is why testbenches compare with \code{===} (case equality, which treats \code{x} as a distinct value) rather than \code{==} (which returns unknown if either side contains \code{x}). With \code{==}, an output stuck at \code{x} could slip past a check; with \code{===} it fails.
+
+\section{Combinational code and casez}
+
+Combinational logic is written with \code{assign} (continuous assignment) or an \code{always @(*)} block. The live-generated priority encoder used a \code{casez} statement, which matches patterns with don't-care bits, highest priority first:
+
+\begin{lstlisting}
+always @(*) begin
+    code = 3'd0; valid = 1'b0;
+    casez (in)
+        8'b1???????: begin code = 3'd7; valid = 1'b1; end
+        8'b01??????: begin code = 3'd6; valid = 1'b1; end
+        // ... down to ...
+        8'b00000001: begin code = 3'd0; valid = 1'b1; end
+        default:     begin code = 3'd0; valid = 1'b0; end
+    endcase
+end
+\end{lstlisting}
+
+\section{Constructs Icarus Verilog rejects}
+
+Icarus Verilog 12.0 in its \code{-g2012} mode accepts much of the synthesizable SystemVerilog that LLMs write: \code{logic}, \code{always_ff}, \code{always_comb}, \code{enum}, packed structs, \code{return} inside functions, \code{string} and queues, and simple classes and immediate \code{assert} statements. It rejects a specific set: \code{break} and \code{continue}; \code{disable} of a function (the error is ``Cannot disable functions'', although \code{disable} of a named block or a task is fine); the \code{inside} operator; streaming concatenation; concurrent assertions (\code{property}, \code{sequence}); virtual classes and class \code{constraint} blocks; and interface \code{modport}s. Each of these was checked by compiling a one-line example. The generation prompts therefore ask for conservative Verilog-2001 style, which avoids the whole list and stays portable to other tools, and the orchestrator repairs the two most common failures automatically when they still appear.
+
+% ---------------------------------------------------------------------------
+\chapter{Verification: Proving a Design Works}
+\label{ch:verification}
+
+\section{DUT and testbench}
+
+The design being tested is the \textbf{DUT} (device under test). A \textbf{testbench} is a separate Verilog module, conventionally named \code{testbench}, that has no ports of its own. It creates the DUT inside itself, drives its inputs (the \textbf{stimulus}), watches its outputs, and checks them against \textbf{expected values}. The thing that knows the expected values is called the \textbf{oracle} or \textbf{reference model}.
+
+A \textbf{self-checking} testbench does the comparison itself and prints a verdict, so no human has to read waveforms to decide whether the design works.
+
+\section{The curated counter testbench, explained}
+
+The listing is a simplified teaching version of the idea. The shipped testbench has the same structure, but it logs every comparison through a small \code{chk} task (so the Test cases tab can list each check with its type) and runs 57 checks of four types: reset, directed, hold and corner.
+
+\begin{lstlisting}
+`timescale 1ns/1ps
+module testbench;
+    reg clk, rst_n, enable;
+    wire [3:0] count;
+    integer pass_count = 0;
+    integer fail_count = 0;
+    integer expected;
+
+    counter #(4) dut (.clk(clk), .rst_n(rst_n), .enable(enable), .count(count));
+
+    initial clk = 0;
+    always #5 clk = ~clk;            // a clock with a 10 ns period
+
+    initial begin
+        rst_n = 0; enable = 0; expected = 0;
+        @(negedge clk); rst_n = 1; enable = 1;
+        repeat (20) begin
+            @(negedge clk);
+            expected = (expected + 1) % 16;   // the oracle
+            if (count === expected[3:0]) pass_count = pass_count + 1;
+            else begin
+                $display("FAIL: expected=%0d got=%0d", expected, count);
+                fail_count = fail_count + 1;
+            end
+        end
+        // ... phases 2-4: enable low must HOLD, async reset must CLEAR,
+        //     counting must RESUME from zero (more checks in the shipped file) ...
+        $display("Passed: %0d", pass_count);
+        $display("Failed: %0d", fail_count);
+        if (fail_count == 0) $display("ALL TESTS PASSED");
+        $finish;
+    end
+endmodule
+\end{lstlisting}
+
+\begin{itemize}
+  \item \code{`timescale 1ns/1ps} sets the unit of delays: \texttt{\#5} means 5 ns.
+  \item \texttt{counter \#(4) dut (...)} \textbf{instantiates} the DUT and connects its ports to the testbench's signals.
+  \item \texttt{always \#5 clk = \textasciitilde clk} toggles the clock every 5 ns.
+  \item \code{@(negedge clk)} waits for the falling clock edge, so checks happen safely between rising edges.
+  \item \code{$display} prints to the simulator transcript; \code{$finish} ends the simulation.
+  \item The three final lines are a \textbf{contract} with SiliconScribe: the simulator wrapper reads \code{Passed:}, \code{Failed:} and \code{ALL TESTS PASSED} from the transcript to decide the verdict (Section~\ref{sec:verdict}).
+\end{itemize}
+
+\section{Directed and random stimulus}
+
+\textbf{Directed} tests are hand-picked cases, usually corner cases such as all zeros, all ones, and each single active bit. \textbf{Random} tests use \code{$random} to try many arbitrary inputs. SiliconScribe's testbench prompt asks for both: directed corner cases plus at least 100 randomized vectors.
+
+\begin{warnbox}
+Random testing is strong but not exhaustive. The archived priority-encoder testbench uses 16 directed cases and 100 random vectors, so it checks many but not all of the 256 possible 8-bit inputs. That is honest evidence, not proof.
+\end{warnbox}
+
+\section{Coverage}
+
+\textbf{Coverage} measures how much of the design or its behaviour the tests exercised. Industrial flows use instrumented code coverage (lines, branches, toggles) and functional coverage (which interesting cases occurred). SiliconScribe measures one of these itself: \textbf{toggle coverage}, the share of the design's signal bits that the simulation saw go both from 0 to 1 and from 1 to 0. A bit that never moved was never really tested. It is read from the simulator's own waveform file, not from what the testbench claims (Section~\ref{sec:toggle}). Line and branch coverage are not measured.
+
+\section{Mutation testing: testing the tests}
+\label{sec:mutation}
+
+How do you know a testbench is good? Break the design on purpose and see whether the testbench notices. Each deliberately broken copy is a \textbf{mutant}; if the testbench fails it, the mutant is \textbf{killed}; if it still passes, the mutant \textbf{survived} and the testbench has a blind spot. This idea, called \textbf{mutation testing}, comes from DeMillo, Lipton and Sayward (1978).
+
+SiliconScribe uses the idea twice. First, a fixed sweep (\file{backend/tools/mutation_sweep.py}) injects known bugs such as ``count by two'', ``reset ignored'', ``enable ignored'', ``ADD replaced by SUB'' and ``mux inputs swapped'' into the built-in designs. An early 14-bug version caught only 11; the three survivors exposed real gaps (enable not tested, overflow flag not checked, undefined opcodes not driven). After the testbenches were hardened and the sweep grew to 27 bugs, all 27 are caught. Second, and more important, the app does it automatically after every PASS, on the model's own design and testbench: this is the \textbf{testbench strength} shown with each result (Section~\ref{sec:strength}).
+
+One caution: a mutant can be \textbf{equivalent}, meaning the change does not alter what the design does (for example in code that can never be reached). No testbench can catch it, so a survivor is ``not noticed'', not ``proven missed''.
+
+\section{Why the oracle must be independent}
+
+\begin{keyidea}
+If the same model, looking at the same RTL, writes the testbench, it tends to encode the same mistake in both, and a wrong design passes. SiliconScribe withholds the RTL from the testbench generator so the expected values must come from the specification.
+\end{keyidea}
+
+\begin{warnbox}
+One common-mode risk remains: by default the \emph{same} model reads the \emph{same} specification for both. If it misreads the spec, both can be wrong in the same way. SiliconScribe offers three answers: you can review and correct the specification before generation; you can choose a \emph{different} model to write the testbench; and after a repair that rewrote the testbench, a fresh testbench gives a second opinion (Chapter~\ref{ch:trust}). For the evaluation, hand-written reference testbenches were used as an outside check.
+\end{warnbox}
+
+% ---------------------------------------------------------------------------
+\chapter{EDA Tools Used}
+\label{ch:tools}
+
+\textbf{EDA} (electronic design automation) is the software chip engineers use. SiliconScribe drives these tools as separate programs (subprocesses).
+
+\section{Icarus Verilog: the simulator}
+
+\textbf{Icarus Verilog} is a free, open-source Verilog simulator. It works in two steps:
+
+\begin{enumerate}
+  \item \textbf{Compile} with \code{iverilog}: read the source files, check them, and produce a compiled simulation file (\file{testbench.vvp}). Syntax or type errors stop here; SiliconScribe reports this as status \textbf{ERROR}.
+  \item \textbf{Run} with \code{vvp}: execute the compiled simulation. The testbench's \code{$display} output goes to a transcript (\file{transcript.log}); signal changes go to a waveform file.
+\end{enumerate}
+
+SiliconScribe uses exactly this command to compile:
+\begin{lstlisting}[style=plain]
+iverilog -o testbench.vvp -g2012 -Wall _timescale.v design.sv testbench.sv
+\end{lstlisting}
+where \code{-g2012} enables the 2012 language mode and \code{-Wall} turns on all warnings. \file{_timescale.v} is a one-line file the app writes (\code{`timescale 1ns/1ps}) so every file gets a sensible default time unit.
+
+\section{VCD: the waveform file}
+
+A \textbf{VCD} (value change dump) file is a plain-text record of every signal change. The testbench requests one with \code{$dumpfile("design.vcd")} and \code{$dumpvars}. If a generated testbench forgets, SiliconScribe adds those lines automatically. A small excerpt looks like:
+
+\begin{lstlisting}[style=plain]
+$var wire 1 ! clk $end
+$var reg 4 " count [3:0] $end
+$enddefinitions $end
+#0
+0!
+b0000 "
+#5
+1!
+b0001 "
+\end{lstlisting}
+
+Each signal gets a short code (\code{!}, \code{"}); \texttt{\#5} means ``time 5''; \code{1!} means ``clk became 1''; \code{b0001 "} means ``count became binary 0001''. SiliconScribe's own parser turns this into data the browser draws (Section~\ref{sec:vcd}).
+
+\section{Yosys: synthesis}
+
+\textbf{Yosys} is an open-source synthesizer: it converts RTL into a \textbf{netlist} of gates and reports how many cells (gates and flip-flops) the design needs. SiliconScribe uses it twice:
+\begin{itemize}
+  \item \textbf{Generic synthesis}, without a cell library: a count of Yosys' own generic cells, flip-flops and latches. Its area figure is only a \emph{relative proxy} (cells $\times$ 5), not square micrometres, and the app labels it so.
+  \item \textbf{Mapping to real cells} for the timing and area estimate: the design is mapped onto the cells of a real chip library (next section), which gives a real area in square micrometres (\umsq{}).
+\end{itemize}
+SiliconScribe uses Yosys 0.71 as a WebAssembly build (\code{yowasp-yosys}), so it installs with pip. If Yosys is missing, the app says ``Synthesis not available'' instead of inventing numbers.
+
+\section{Cell libraries, sky130 and OpenSTA: timing}
+
+A real chip is built from a foundry's library of small pre-designed blocks called \textbf{standard cells} (NAND gates, inverters, flip-flops\ldots). For each cell, a \textbf{liberty file} gives its area and how long a signal takes to pass through it. SiliconScribe uses the open \textbf{SkyWater 130 nm} library (\textbf{sky130}), at its typical operating point (25\,\textdegree C, 1.8 V).
+
+\textbf{OpenSTA} is an open-source \textbf{static timing analysis} tool. Instead of simulating, it adds up the cell delays along every path between flip-flops (or from inputs to outputs) and compares the slowest one with the clock period. The time left over is the \textbf{slack}: positive means the design is fast enough for the target clock, negative means it is too slow.
+
+\begin{warnbox}
+These numbers are a \textbf{pre-layout estimate}: the cells are not yet placed on a chip, so the delay of the wires between them is not included, the clock is ideal, and only one operating point is checked. They answer ``is this anywhere near the target clock, and roughly how big is it?''. They are not the final timing checks done before a chip is made, and not the area of a manufactured chip. Chapter~\ref{ch:timing} explains the details.
+\end{warnbox}
+
+\section{Verilator: linting}
+
+\textbf{Linting} means checking code for suspicious patterns without running it. SiliconScribe's linter uses Verilator if available, otherwise Icarus, otherwise simple built-in pattern checks. Lint results are shown for information only and never block the pipeline.
+
+\section{UVM: the industrial testbench style}
+
+\textbf{UVM} (Universal Verification Methodology) is the industry-standard way to build large testbenches in SystemVerilog classes: a sequencer generates transactions, a driver applies them, a monitor observes, a scoreboard checks, and coverage is collected. SiliconScribe can \emph{export} a 16-file UVM bundle for a commercial simulator. It cannot run it, because Icarus does not support UVM, and no commercial licence was available. The export is labelled accordingly.
+
+% ---------------------------------------------------------------------------
+\chapter{AI Basics: Language Models and APIs}
+\label{ch:ai}
+
+\section{What a large language model is}
+
+A \textbf{large language model (LLM)} is a program trained on huge amounts of text to predict the next piece of text. Given a \textbf{prompt}, it writes a continuation one \textbf{token} (a word fragment) at a time. Because it has read a great deal of code, it can write plausible Verilog. But it predicts text; it does not run circuits.
+
+\section{The words you will meet}
+
+\begin{description}
+  \item[System prompt.] Standing instructions sent before the user's message (``You are an expert Verilog designer\ldots''). SiliconScribe has one per stage; Appendix~B of the project report prints them in full.
+  \item[Temperature.] How random the output is. Low (0.2) gives focused, repeatable answers; SiliconScribe uses 0.2 for RTL and fixes, 0.3 for the specification and testbench, 0.5 for the explanation.
+  \item[Max tokens.] The maximum length of an answer (8192 by default here, configurable with \code{LLM_MAX_TOKENS}).
+  \item[Reasoning tokens.] Some models ``think'' in hidden tokens before answering. Those count against max tokens, so a model can use its whole budget thinking and return nothing. SiliconScribe disables hidden reasoning unless the user asks for it.
+  \item[API.] An application programming interface: a way for one program to call another over the internet. LLMs are reached through an HTTP API.
+  \item[OpenAI-compatible API.] Many providers (Cloudflare Workers AI, NVIDIA NIM, OpenRouter, OpenCode Zen, local servers) accept the same request format as OpenAI. SiliconScribe uses one client for all of them.
+  \item[The OpenCode app.] A coding-assistant program you install and sign in to with your own account. It offers several hundred models, some free. SiliconScribe can use it as its model source by running the app's own command-line interface (Section~\ref{sec:routing}). GitHub Copilot can be connected inside the OpenCode app and then appears there too.
+  \item[API key.] A secret string that proves to a provider who is calling. In SiliconScribe keys live only in the file \file{backend/.env} on your own computer; the web page never asks for one.
+  \item[Hallucination.] When a model confidently states something false. SiliconScribe's answer is to never take the model's word for correctness.
+\end{description}
+
+\section{Why an LLM alone fails at hardware}
+
+\begin{enumerate}
+  \item \textbf{Toolchain incompatibility.} Models emit SystemVerilog features Icarus rejects, so the code never compiles.
+  \item \textbf{No execution awareness.} A model cannot see a clock edge, a race condition or a failing check. It can only produce text that resembles working code.
+  \item \textbf{No real diagnosis.} Asked to ``make it pass'', a model often weakens the testbench, deletes checks or swaps in a different design. That is test evasion, not debugging.
+\end{enumerate}
+
+Each failure has a direct answer in SiliconScribe: Icarus-safe prompts plus automatic compiler repairs; the simulator as the judge; and the anti-cheat and loop guards.
+
+\section{Free tiers and model quality}
+
+The project was built on a zero budget, so live runs used free models. The report documents a measured case: a small free model produced plausible but wrong logic for the priority encoder, while a larger free model produced a correct design that passed first time. Same pipeline, same simulator; only the model differed. Quality therefore rises with the model, and the architecture does not need to change. That is why the model can be chosen per run from a menu.
+
+Free models have costs of their own: they are slow (the final evaluation with DeepSeek V4.1 Flash took a median of 360 seconds per run, up to 13 minutes), their daily quotas run out, and their names change or disappear. One free model on Cloudflare wrote a correct counter but a testbench whose watchdog timer was shorter than its own test, so it never printed a summary; the app reported ERROR with 0 checks instead of calling it a PASS.
+
+% ---------------------------------------------------------------------------
+\chapter{Web Software Basics}
+\label{ch:web}
+
+\section{Frontend and backend}
+
+A web application has two halves:
+
+\begin{itemize}
+  \item The \textbf{frontend} runs in your browser and draws the interface. SiliconScribe's is written in \textbf{TypeScript} (JavaScript with types) using \textbf{React}, a library that builds the page from reusable \textbf{components} and redraws them when their \textbf{state} (data) changes. \textbf{Vite} is the tool that builds and serves it during development.
+  \item The \textbf{backend} runs on a server and does the work. SiliconScribe's is written in \textbf{Python} using \textbf{FastAPI}, a framework that turns Python functions into web addresses (\textbf{endpoints}).
+\end{itemize}
+
+\begin{analogy}
+The frontend is a restaurant's dining room and menu; the backend is the kitchen. You order at the table (click Generate), the waiter carries the order (an HTTP request), and the kitchen cooks (generates and simulates) and sends the dish back.
+\end{analogy}
+
+\section{HTTP, JSON and endpoints}
+
+The browser and server talk using \textbf{HTTP}. A request has a method (\code{GET} to read, \code{POST} to send data, \code{DELETE} to remove) and a path such as \code{/api/design/stream}. Data travels as \textbf{JSON}, a text format of named fields, for example \texttt{\{"prompt": "Design a counter", "max\_iterations": 5\}}. The server answers with a status code: 200 means OK, 422 means invalid input, 429 means too many requests, 500 means a server error.
+
+\section{Streaming with Server-Sent Events}
+
+A full generation takes from seconds (offline) to several minutes (free live models). Instead of making you wait for one big answer, the backend sends a series of small messages as each stage finishes, using \textbf{Server-Sent Events (SSE)}: one long HTTP response in which each message is a line starting with \code{data:} followed by JSON, and messages are separated by a blank line. The frontend reads them as they arrive and updates the agent timeline live.
+
+\section{Data validation with Pydantic}
+
+\textbf{Pydantic} lets the backend declare the exact shape of every piece of data (for example: a prompt is text of at most 2000 characters; a port width is an integer from 1 to 1024). Invalid requests are rejected automatically with HTTP 422 before any work starts. The shapes live in \file{backend/models.py}.
+
+\section{Storage with SQLite}
+
+\textbf{SQLite} is a small database stored in one file. SiliconScribe keeps every finished run in \file{backend/workspace/projects.db} so the Projects menu can list and reload them.
+
+\section{Threads and blocking}
+
+A web server handles many requests at once. FastAPI can run a handler either on its main \textbf{event loop} (\code{async def}) or in a pool of \textbf{threads} (plain \code{def}). Work that waits on a subprocess, such as a simulation, must not run on the event loop, or every other request freezes until it finishes. The final review found exactly that bug (a health check took 6.5 seconds during an 8-second simulation) and fixed it by making those handlers plain \code{def}; the health check now answers in about 1 ms.
+
+\section{Safety basics: CORS and rate limiting}
+
+\textbf{CORS} (cross-origin resource sharing) tells browsers which websites may call the API; SiliconScribe allows pages from this machine only (\code{localhost} and \code{127.0.0.1}), and any other address must be added by name with \code{CORS_ALLOW_ORIGINS}. This matters because the backend holds model keys: a stranger's web page must not be able to make your browser use them. \textbf{Rate limiting} stops one user from flooding the server: at most 20 requests per minute per IP address, otherwise HTTP 429.

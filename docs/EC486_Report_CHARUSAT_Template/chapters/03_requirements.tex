@@ -1,0 +1,53 @@
+\chapter{Requirements Analysis}
+\label{sec:req}
+
+\section{Users}
+The intended users are students and early-career engineers learning RTL design and verification, candidates preparing for hardware interviews, and engineers who want quick prototypes without tool setup.
+
+\section{Functional requirements}
+\begin{table}[H]
+\centering
+\caption{Functional requirements, where they are realised and how they are verified.}
+\label{tab:fr}
+\footnotesize
+\begin{tabularx}{\textwidth}{@{}l X p{3.2cm} p{4.3cm}@{}}
+\toprule
+\textbf{ID} & \textbf{Requirement} & \textbf{Realised in} & \textbf{Verified by} \\
+\midrule
+FR1 & Accept a natural-language prompt (up to 2000 characters) and derive a typed specification & \code{models.py}, \code{parse_intent} & \code{test_models}, \code{test_api} \\
+FR2 & Generate synthesizable Verilog RTL from the specification & \code{generate_rtl} & \code{test_orchestrator} \\
+FR3 & Generate a self-checking testbench from the specification only & \code{generate_testbench} & \code{test_verification_quality} \\
+FR4 & Compile and simulate with Icarus Verilog under a timeout & \code{simulator.py} & \code{test_simulator}, \code{test_edge_cases} \\
+FR5 & Decide PASS/FAIL/ERROR/TIMEOUT from the simulation; zero executed checks is never PASS & \code{parse_results} & \code{test_simulator}, \code{test_verdict_integrity} \\
+FR6 & Diagnose and repair failures with guards & \code{orchestrator.py} & \code{test_orchestrator} \\
+FR7 & Stream progress to the browser & SSE route & \code{test_api} \\
+FR8 & Show the waveform from the VCD & \code{vcd_parser.py}, viewer & \code{test_vcd_parser}, vitest \\
+FR9 & Edit code and re-run the simulation & \code{/api/simulation/run} & \code{test_api} \\
+FR10 & Lint without blocking the pipeline & \code{linter.py} & \code{test_linter} \\
+FR11 & Persist and reload projects & \code{db.py} & \code{test_stream_persistence} \\
+FR12 & Export a UVM bundle & \code{uvm_templates.py} & CI bundle check \\
+FR13 & Choose the model for each run from the OpenCode app, Cloudflare Workers AI or NVIDIA NIM; keys only from the server environment & \code{llm_service.py}, \code{model_catalog.py} & \code{test_model_routing}, \code{test_model_catalog}, \code{test_model_switching} \\
+FR14 & Label degraded runs honestly; never replace a model the user chose with the demo & fallback policy & \code{test_orchestrator}, \code{test_model_switching} \\
+FR15 & Show the parsed specification for review and run with exactly the confirmed specification & \code{/api/spec/parse}, \code{RunRequest.spec} & \code{test_spec_review}, vitest \\
+FR16 & Let a separate model write the testbench; a failing check is never rewritten away by the design model & \code{testbench_model} & \code{test_independent_testbench} \\
+FR17 & Run a second-opinion testbench when a PASS came only after the testbench was rewritten & \code{orchestrator.py} & \code{test_independent_testbench} \\
+FR18 & Report testbench strength by mutation testing after a PASS & \code{mutation.py} & \code{test_mutation} \\
+FR19 & Measure toggle coverage of design signals from the VCD & \code{vcd_parser.py} & \code{test_toggle_coverage} \\
+FR20 & Estimate pre-layout timing and area on sky130, or refuse with a reason & \code{timing.py}, \code{/api/timing/run} & \code{test_timing}, \code{test_verify_mapping} \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{Non-functional requirements}
+\begin{itemize}
+\item \textbf{Correctness and honesty:} PASS only from the simulator; labelled fallbacks; no fabricated metrics; every result records which model wrote the design (and the testbench, when a separate model was used); timing and area are always labelled as a pre-layout estimate.
+\item \textbf{Security:} strict input limits, path validation, rate limiting, sandbox policy and generic error messages (Section~\ref{sec:security}); API keys are read only from the git-ignored \code{backend/.env}, never from the web page; model identifiers are validated before they become subprocess arguments; the API accepts browser calls from this machine only (CORS restricted to localhost).
+\item \textbf{Performance:} an offline run completes in well under a second on a laptop (Section~\ref{sec:perf}); live runs are dominated by model latency (median 360\,s per run with the free model used in the evaluation).
+\item \textbf{Usability:} live agent timeline, example prompts, keyboard shortcut, empty and error states, cancel button, and a model menu that shows free models first.
+\item \textbf{Accessibility:} keyboard-operable tabs and named controls; an automated axe-core audit must report zero violations in both themes, for passing and failing runs, on every tab.
+\item \textbf{Portability and cost:} runs on macOS, Linux or Docker with only open-source tools and free-tier models.
+\item \textbf{Maintainability:} automated tests, lint and CI on every push.
+\end{itemize}
+
+\section{Constraints}
+No commercial EDA licence was available, so UVM is export-only and there is no sign-off flow: timing uses the open SkyWater 130\,nm library at one typical corner, without placement or routing. The budget was zero, so live validation used free-tier models, which are slow and quota-limited. The project was developed by a single student within one semester.

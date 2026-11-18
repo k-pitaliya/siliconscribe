@@ -1,0 +1,38 @@
+\chapter{Literature Survey and Related Work}
+\label{sec:related}
+
+\section{Language models for hardware description}
+VeriGen~\cite{verigen} fine-tunes open code language models on Verilog from public repositories and textbooks and shows that a modest domain-tuned model can rival much larger general models on Verilog completion. ChipNeMo~\cite{chipnemo} adapts general LLMs to chip design through domain-adaptive pre-training and fine-tuning, and evaluates them on an engineering assistant, EDA script generation and bug summarisation. Chip-Chat~\cite{chipchat} studies conversational co-design: an engineer and ChatGPT-4 co-designed an 8-bit accumulator processor that was verified on an FPGA and taped out on a SkyWater 130\,nm shuttle, with the human handling verification and debugging.
+
+\section{Evaluation and tool feedback}
+VerilogEval~\cite{verilogeval} provides 156 problems drawn from HDLBits and judges generated code by simulating it against golden reference solutions; a later revision~\cite{verilogeval2} adds specification-to-RTL tasks, automatic failure classification and in-context-learning support. AutoChip~\cite{autochip} feeds compiler and simulator output back to the model so it can iteratively repair its Verilog, and reports that including compiler context from Icarus Verilog improves accuracy.
+
+The closest related work generates the \emph{testbench} rather than the design. AutoBench~\cite{autobench} produces a hybrid testbench (drivers and checkers, partly in Python) from a description of the design under test and ships an evaluation framework for scoring generated testbenches; CorrectBench~\cite{correctbench} adds functional self-validation and self-correction of the generated testbench through a conversational agent. SiliconScribe shares the premise that the checker must be generated and validated, not assumed, but differs in scope and mechanism: it targets a single open-source simulator end to end, generates the testbench from the specification without ever showing it the design, forbids the repair loop from weakening that testbench (a minimum check count, a design-instance check and a re-run of the original testbench on the final design), reports every executed check back to the user, and measures the testbench's strength by mutation. It does not reproduce the evaluation protocols of those works, so no performance comparison is claimed.
+
+\section{Measuring test quality}
+Mutation testing, introduced by DeMillo, Lipton and Sayward~\cite{demillo}, judges a test suite by whether it detects small injected faults; the coupling effect argues that tests catching simple faults also tend to catch complex ones. SiliconScribe applies this idea to its own testbenches: after every PASS it injects up to 12 one-token bugs into the design and reports how many the testbench catches (Section~\ref{sec:strength}, Chapter~\ref{sec:results}).
+
+\section{Open-source implementation tools}
+Yosys~\cite{yosys} is an open-source synthesis suite that can map RTL to the cells of a liberty library. OpenSTA~\cite{opensta} is a static timing analyser, the timing engine used inside the OpenROAD flow. The SkyWater 130\,nm process design kit~\cite{sky130} is an open PDK whose standard-cell library (\code{sky130_fd_sc_hd}) is freely available; it is the same process used for the Chip-Chat tape-out~\cite{chipchat}. SiliconScribe uses these three together, after a PASS, for an early pre-layout timing and area estimate (Section~\ref{sec:timingarch}). It does not place or route the design.
+
+\section{Positioning}
+\begin{table}[H]
+\centering
+\caption{How SiliconScribe relates to prior work (as described in the cited papers).}
+\label{tab:related}
+\footnotesize
+\begin{tabularx}{\textwidth}{@{}p{2.6cm}p{4.6cm}X@{}}
+\toprule
+\textbf{Work} & \textbf{Primary contribution} & \textbf{What SiliconScribe adds or differs in} \\
+\midrule
+VeriGen, ChipNeMo & Better models for Verilog and chip-design tasks & Model-agnostic pipeline: such models plug in through the provider interface (Section~\ref{sec:scale}) \\
+VerilogEval & Benchmark judged against golden references & No golden reference exists for an arbitrary prompt, so the testbench is generated independently from the specification \\
+AutoChip & Compiler/simulator feedback loop for repair & Structured diagnosis, deterministic compiler repairs, anti-cheat, no-op and oscillation guards, honest degraded mode \\
+Chip-Chat & Human-led conversational co-design & Automated generate--simulate--repair loop with the simulator as the only oracle \\
+Mutation testing & Test-suite adequacy & Applied to every passing run (up to 12 mutants) and used to harden the built-in testbenches (27/27 mutants) \\
+Yosys, OpenSTA, SKY130 & Open synthesis, timing analysis and cell library & Used after a PASS for a pre-layout timing and area estimate; the mapped netlist is re-simulated with the same testbench \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+The gap SiliconScribe targets is therefore not a better generator but a trustworthy loop around any generator: an independent oracle, guarded repair, transparent reporting and a measure of how much each PASS is worth.

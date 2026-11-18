@@ -1,0 +1,164 @@
+\chapter{Implementation and Testing}
+\label{sec:impl}
+
+\begin{table}[H]
+\centering
+\caption{Principal implementation modules (all paths under \texttt{backend/} or
+\texttt{frontend/src/}).}
+\label{tab:modules}
+\footnotesize
+\begin{tabularx}{\textwidth}{@{}p{4.0cm}p{6.6cm}X@{}}
+\toprule
+\textbf{Module} & \textbf{Responsibility} & \textbf{Key idea} \\
+\midrule
+\code{main.py} & FastAPI routes, SSE streaming, rate limiting, CORS & one event stream per design \\
+\code{orchestrator.py} & pipeline, repair loop, guards, fallback policy, second opinion & simulator decides; anti-cheat \\
+\code{llm_service.py} & provider config, prompts, fix parser, per-stage model routing & spec-only TB; section protocol \\
+\code{model_catalog.py} & model menu: OpenCode, Cloudflare Workers AI, NVIDIA NIM & catalogues read live; ids validated \\
+\code{simulator.py} & workspace, iverilog/vvp, log parsing, sandbox policy & isolated, timed, policy-screened execution \\
+\code{vcd_parser.py} & VCD $\rightarrow$ JSON waveform; toggle coverage & bounded size; design signals only \\
+\code{mutation.py} & testbench strength by mutation testing & up to 12 one-token bugs per PASS \\
+\code{timing.py} & Yosys mapping to sky130 cells, OpenSTA timing, area & pre-layout estimate; refuses what it cannot time \\
+\code{linter.py} & Verilator $\rightarrow$ Icarus $\rightarrow$ regex & graceful degradation \\
+\code{synthesis.py} & Yosys wrapper (generic cell counts) & optional; honest unavailable state \\
+\code{db.py} & SQLite persistence, project retrieval & zero-dependency storage \\
+\code{uvm_templates.py} & 16-file UVM 1.2 bundle & export-only, CI file-count check \\
+\code{tools/} & mutation sweep, mapping check, preflight, live evaluation & reproducible evidence \\
+\code{App.tsx} & SSE client, project state, export & live timeline, fallback banner \\
+\code{ModelPicker.tsx} and others & model menu, ``Testbench written by'', specification review & per-run choice, remembered \\
+\code{ResultsPanel.tsx} & PASS/FAIL, metrics, strength, coverage, timing, second opinion, tabs & iteration history, expand to full window \\
+\code{TestCasesView.tsx} & per-test-case table & test types, filters, bit-level diff, jump to waveform \\
+\code{WaveformViewer.tsx} & SVG waveform & role groups, value at cursor, two cursors, radix, failed-check flags \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+The backend is Python 3.14 with FastAPI, Pydantic, and the OpenAI Python client
+pointed at an OpenAI-compatible base URL; the OpenCode app is driven through its
+command-line interface. The frontend is React 18, TypeScript, Vite, and CodeMirror.
+Icarus Verilog 12.0 is the simulator. Yosys~\cite{yosys} and OpenSTA~\cite{opensta}
+are used for the timing and area estimate; if either tool or the cell library is
+missing, the API reports the estimate as not available instead of inventing numbers.
+
+\section{Test Strategy}
+The backend suite has 436 tests in 31 files: data models and validation, linter behaviour,
+simulator and VCD parsing, toggle coverage, API edge cases, orchestrator
+repair/fallback/guard paths, LLM response parsing (XML sections, malformed JSON
+salvage, literal newlines), verdict integrity, the sandbox policy, mutation testing,
+the timing and area stage, the model catalogue and model switching, the separate
+testbench model, the specification review and the verification tools themselves. The
+suite runs against a throw-away workspace and never touches the developer's
+database. The frontend suite has 211 Vitest tests in 14 files, including an automated
+accessibility audit with axe-core. The mutation tests are the important ones: they take a
+curated design, inject a semantic bug (wrong increment, missing reset, wrong mux
+select, wrong ALU opcode), and assert that the testbench reports FAIL. A testbench
+that cannot fail is not evidence. The newest components were also checked the other
+way round: each behaviour was broken on purpose and the tests had to fail. Beyond
+the unit and integration tests, scripts check the tool's own measurements
+(Section~\ref{sec:trustimpl}), and live runs against real models validate the whole
+pipeline (Chapter~\ref{sec:results}).
+
+\section{Technology Stack}
+\begin{table}[H]
+\centering
+\caption{Technology stack on the validation machine (Apple M4, macOS).}
+\label{tab:stack}
+\footnotesize
+\begin{tabularx}{\textwidth}{@{}p{2.4cm}X@{}}
+\toprule
+\textbf{Layer} & \textbf{Components} \\
+\midrule
+Backend & Python 3.14.2, FastAPI, Uvicorn, Pydantic 2, OpenAI Python client (pinned in \code{requirements.txt}; the machine ran FastAPI 0.141.1, Pydantic 2.13.5) \\
+Frontend & React 18.3, TypeScript 5.7, Vite 6, CodeMirror 6, Vitest 4 with Testing Library, jsdom and axe-core \\
+EDA & Icarus Verilog 12.0~\cite{icarus}; Yosys 0.71 (YoWASP WebAssembly build); OpenSTA 3.2.0 built from source; SkyWater SKY130 \code{sky130_fd_sc_hd} typical-corner liberty~\cite{sky130}; Verilator optional for lint (not installed on this machine) \\
+Model sources & OpenCode app (v2.3.2 on this machine), Cloudflare Workers AI, NVIDIA NIM; any other OpenAI-compatible endpoint through environment variables \\
+Operations & Docker multi-stage image, Docker Compose, GitHub Actions CI, Vercel (frontend) and Render (backend) free tiers \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{Implementation of the Measurement and Trust Stages}
+\label{sec:trustimpl}
+The design of the newer stages is described in Chapters~\ref{sec:arch}
+and~\ref{sec:method}: model routing (Section~\ref{sec:routing}), timing and area
+(Section~\ref{sec:timingarch}), the separate testbench model and the second opinion
+(Section~\ref{sec:secondarch}), and the evidence measures (Section~\ref{sec:evidence}).
+Table~\ref{tab:trustimpl} records where each one lives in the code and the
+implementation details that matter. Every stage after the verdict follows the same
+rule: a failure inside it never breaks a verified run; it reports ``not available''
+with a reason instead.
+
+\begin{table}[H]
+\centering
+\caption{Where the newer stages are implemented, and the details that matter.}
+\label{tab:trustimpl}
+\footnotesize
+\begin{tabularx}{\textwidth}{@{}p{2.5cm}p{2.9cm}X@{}}
+\toprule
+\textbf{Stage} & \textbf{Code} & \textbf{Implementation details} \\
+\midrule
+Testbench strength & \code{mutation.py} & up to 12 one-token mutants (\code{STRENGTH_MAX_MUTANTS}), each run in the same sandboxed simulator as the design; fewer than half caught (with at least five run) gives a weak-evidence warning \\
+Toggle coverage & \code{vcd_parser.py} & reads the bounded VCD; only nets inside the instantiated design; direct 0$\rightarrow$1 and 1$\rightarrow$0 transitions only; untoggled bits listed \\
+Timing and area & \code{timing.py} & Yosys script \code{proc; tribuf; synth -flatten; dfflibmap; abc} against the sky130 liberty (\code{tribuf} first, so a tri-state survives as an unmappable buffer and is refused); statistics written to a file because the WebAssembly build cuts its console output short; OpenSTA runs \code{report_checks -path_delay max}, \code{report_worst_slack} and \code{report_disabled_edges} (to detect loops); a design with no clock is timed against a virtual clock with zero I/O delays; several clocks are separate asynchronous groups \\
+Separate testbench model, second opinion & \code{orchestrator.py} & \code{testbench_model} routes testbench generation and the second opinion; a \code{SecondOpinion} record (agrees, disagrees, unavailable, with the model name) is stored with the result; not run in offline mode \\
+Specification review & \code{models.py}, \code{SpecReview.tsx} & route \code{/api/spec/parse}; a user spec skips parsing; 1 to 64 ports, at most 16 parameters, behaviour up to 4000 characters, at most 30 constraints, plain identifiers only \\
+Model menu & \code{model_catalog.py}, \code{ModelPicker.tsx} & \code{opencode models} for the OpenCode list (free ones by name first); Cloudflare Workers AI and NVIDIA NIM through their OpenAI-compatible endpoints (NIM ids get a \code{nim/} prefix); catalogues cached; keys only from \code{backend/.env}; every id checked against one strict pattern \\
+CORS & \code{main.py} & fixed \code{localhost}/\code{127.0.0.1} origins plus exact origins from \code{CORS_ALLOW_ORIGINS} (wildcards dropped); credentials off; methods limited to GET, POST, DELETE, OPTIONS \\
+Verification tools & \code{tools/}, \code{evaluation/} & \code{mutation_sweep.py} (27 hand-picked bugs), \code{verify_mapping.py} (gate-level equivalence, area recount, timing sanity), \code{run.py} and \code{strength.py} (hand-written references and their strength), \code{preflight.py} (demo readiness, fallback ladder) \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{Testing and Quality Assurance}
+\label{sec:testing}
+
+\subsection{Test inventory}
+\begin{table}[H]
+\centering
+\caption{Automated tests (436 backend in 31 files, 211 frontend in 14 files), all passing in the final check of 19 November 2026.}
+\label{tab:tests}
+\footnotesize
+\begin{tabularx}{\textwidth}{@{}p{3.2cm}r X@{}}
+\toprule
+\textbf{Area} & \textbf{Tests} & \textbf{Files (tests)} \\
+\midrule
+Verdict and sandbox & 87 & \code{test_check_parser} (38), \code{test_verdict_integrity} (30), \code{test_sandbox} (19) \\
+Repair loop and trust & 98 & \code{test_spec_review} (19), \code{test_mutation} (18), \code{test_verification_quality} (17), \code{test_trust_signals} (16), \code{test_orchestrator} (15), \code{test_independent_testbench} (13) \\
+Timing, area, coverage & 70 & \code{test_timing} (46), \code{test_toggle_coverage} (9), \code{test_verify_mapping} (8), \code{test_synthesis_metrics} (5), \code{test_yosys_warnings} (2) \\
+Models and providers & 107 & \code{test_model_catalog} (38), \code{test_model_switching} (32), \code{test_llm_parsing} (15), \code{test_opencode_provider} (8), \code{test_model_routing} (7), \code{test_error_messages} (7) \\
+Parsing and data & 44 & \code{test_models} (14), \code{test_linter} (13), \code{test_vcd_parser} (6), \code{test_vcd_roles} (6), \code{test_simulator} (5) \\
+API and tooling & 30 & \code{test_evaluate_live} (12), \code{test_edge_cases} (6), \code{test_api} (5), \code{test_preflight} (5), \code{test_stream_persistence} (1), \code{test_disconnect} (1) \\
+\midrule
+Frontend (Vitest) & 211 & App (three files), AgentChat, ModelPicker, PromptPanel, ResultsPanel, SpecReview, SpecSummary, TestbenchModelSelect, TestCasesView, WaveformViewer, waveform helpers, accessibility audit \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{Verdict rules under test}
+The simulator verdict is deterministic and does not trust the first or the loosest match. The summary must occupy whole lines (\code{Passed: N}, \code{Failed: M}) and the last pair wins; a missing or non-numeric count gives ERROR so the loop can react; any \code{Failed: M} with $M>0$ gives FAIL; a \code{FAIL}/\code{ERROR} line contradicting \code{Failed: 0} gives FAIL; a PASS needs \code{Passed: N} with $N>0$ and \code{Failed: 0}, so zero executed checks is never a PASS (ERROR); a testbench whose watchdog fires before its summary gives ERROR; a simulator exit code other than zero (killed by a resource limit) is not a PASS; and a run exceeding its timeout gives TIMEOUT. Compile failures are parsed into file/line errors and returned as ERROR. The design under test may not print the summary lines or end the simulation, so it cannot write its own verdict. The per-check \code{CHK|...} rows are display data, cross-checked against the summary; they do not decide the verdict on their own.
+
+\subsection{Continuous integration}
+Every push runs three jobs: the backend job installs Icarus and Yosys, runs Ruff lint, the test suite, a UVM bundle check and an end-to-end smoke run; the frontend job type-checks, runs Vitest and builds; and a Docker job builds the image. OpenSTA and the sky130 library are not installed in CI, so the timing tests that need them are skipped there and run on the development machine.
+
+\subsection{Pipeline performance}
+\label{sec:perf}
+Table~\ref{tab:perf} gives medians measured on the validation machine (Apple M4) in offline mode on 6 November 2026, so they exclude model latency. The pipeline rows were measured before the strength, coverage and timing stages were added; those stages now add their own time after a PASS. Live runs add the provider's response time for each model call, which dominates end-to-end time (a median of 360~s per run in the live evaluation of Section~\ref{sec:eval}).
+
+\begin{table}[H]
+\centering
+\caption{Measured local performance (median; 7 runs for simulation, 5 for the pipeline; 6 November 2026).}
+\label{tab:perf}
+\small
+\begin{tabular}{@{}l r l r@{}}
+\toprule
+\textbf{Design} & \textbf{Checks} & \textbf{Operation} & \textbf{Median} \\
+\midrule
+full adder & 8 & compile + simulate & 23 ms \\
+4:1 mux & 152 & compile + simulate & 34 ms \\
+counter & 57 & compile + simulate & 24 ms \\
+4-bit / 8-bit ALU & 2122 / 1222 & compile + simulate & 59 / 57 ms \\
+counter / ALU / mux & -- & offline pipeline (before new stages) & 52 / 140 / 69 ms \\
+buggy counter & 57 & pipeline with one repair (before new stages) & 114 ms \\
+\bottomrule
+\end{tabular}
+\end{table}

@@ -1,0 +1,279 @@
+\begin{longtable}{@{}p{2.8cm}>{\raggedright\arraybackslash}p{4.6cm}p{7.9cm}@{}}
+\toprule \textbf{File} & \textbf{Function} & \textbf{What it does} \\ \midrule \endhead
+\bottomrule \endfoot
+{\small \nolinkurl{main.py}} & \texttt{\small \_\allowbreak{}trust\_\allowbreak{}proxy\_\allowbreak{}headers} & True only when the deployment says it runs behind a trusted proxy (TRUST\_PROXY\_HEADERS); decides whether forwarded-for headers are believed for rate limiting. \\
+{\small } & \texttt{\small \_\allowbreak{}get\_\allowbreak{}client\_\allowbreak{}ip} & Find the caller's IP for rate limiting: the socket address, or the last X-Forwarded-For entry only when TRUST\_PROXY\_HEADERS says a trusted proxy is in front. \\
+{\small } & \texttt{\small \_\allowbreak{}check\_\allowbreak{}rate\_\allowbreak{}limit} & Thread-safe wrapper: take the lock and apply the rate limit. \\
+{\small } & \texttt{\small \_\allowbreak{}check\_\allowbreak{}rate\_\allowbreak{}limit\_\allowbreak{}locked} & Sliding-window limiter: at most 20 requests per 60 s per IP, otherwise HTTP 429. \\
+{\small } & \texttt{\small \_\allowbreak{}cors\_\allowbreak{}origins} & Browser origins allowed to call this API: this machine only, unless CORS\_ALLOW\_ORIGINS adds exact origins. \\
+{\small } & \texttt{\small \_\allowbreak{}new\_\allowbreak{}design\_\allowbreak{}id} & Return a fresh full UUID (hex) used as the design and project id. \\
+{\small } & \texttt{\small root} & GET / : name, provider, offline flag and simulator availability. \\
+{\small } & \texttt{\small health} & Health check endpoint for Docker/CI probes. \\
+{\small } & \texttt{\small get\_\allowbreak{}models} & Models the user can choose for generation: the OpenCode app's list and Cloudflare Workers AI. \\
+{\small } & \texttt{\small parse\_\allowbreak{}spec} & Turn a prompt into a specification and stop, so the user can read and edit it before anything is generated. \\
+{\small } & \texttt{\small design\_\allowbreak{}run} & One-shot: generate -\textgreater{} simulate -\textgreater{} self-correct. Returns everything. \\
+{\small } & \texttt{\small design\_\allowbreak{}stream} & Server-Sent Events stream of each pipeline stage (drives the agent panel). \\
+{\small } & \texttt{\small run\_\allowbreak{}simulation} & Simulate a (possibly hand-edited) RTL/testbench pair once. No auto-fix. \\
+{\small } & \texttt{\small run\_\allowbreak{}synthesis} & Synthesize RTL with Yosys (if available) and return gate-level metrics. \\
+{\small } & \texttt{\small list\_\allowbreak{}projects\_\allowbreak{}endpoint} & List persisted projects, newest first. \\
+{\small } & \texttt{\small get\_\allowbreak{}project\_\allowbreak{}endpoint} & Get full RunResponse for a persisted project. \\
+{\small } & \texttt{\small delete\_\allowbreak{}project\_\allowbreak{}endpoint} & Delete a persisted project. \\
+{\small } & \texttt{\small run\_\allowbreak{}timing\_\allowbreak{}route} & Map the RTL to sky130 cells and report pre-layout timing at the target clock. \\
+{\small } & \texttt{\small uvm\_\allowbreak{}export} & Export a UVM testbench bundle (Questa style) for a spec derived from prompt. \\
+{\small } & \texttt{\small admin\_\allowbreak{}cleanup} & Admin: remove workspace dirs older than TTL (default 24h). \\
+{\small \nolinkurl{orchestrator.py}} & \texttt{\small \_\allowbreak{}strip\_\allowbreak{}comments\_\allowbreak{}and\_\allowbreak{}strings} & Blank out comments and string literals so counting checks and finding the design instance cannot be fooled by text inside them. \\
+{\small } & \texttt{\small \_\allowbreak{}tb\_\allowbreak{}check\_\allowbreak{}count} & Count places where a testbench can fail (fail\_count updates, \$error/\$fatal, assert). \\
+{\small } & \texttt{\small \_\allowbreak{}instantiates\_\allowbreak{}dut} & True if the testbench really instantiates ``module\_name`` (not just mentions it). \\
+{\small } & \texttt{\small \_\allowbreak{}tb\_\allowbreak{}problems} & Reasons a testbench cannot be trusted as verification (empty list = acceptable). \\
+{\small } & \texttt{\small weak\_\allowbreak{}verification\_\allowbreak{}note} & Return a warning when a PASS rests on too few executed checks, else None. \\
+{\small } & \texttt{\small \_\allowbreak{}has\_\allowbreak{}complete\_\allowbreak{}module} & True if *code* contains a complete ``module \textless{}name\textgreater{} ... endmodule`` unit. \\
+{\small } & \texttt{\small \_\allowbreak{}repair\_\allowbreak{}compile\_\allowbreak{}errors} & Apply unambiguous compiler-evidenced repairs (currently wire$\rightarrow$reg). \\
+{\small } & \texttt{\small \_\allowbreak{}repair\_\allowbreak{}disable\_\allowbreak{}functions} & Repair Icarus ``Cannot disable functions`` diagnostics. \\
+{\small } & \texttt{\small \_\allowbreak{}compiler\_\allowbreak{}repairs} & Return deterministic, compiler-evidenced repairs with structured diagnoses. \\
+{\small } & \texttt{\small \_\allowbreak{}is\_\allowbreak{}upstream\_\allowbreak{}error} & True only for failures originating at the LLM provider. \\
+{\small } & \texttt{\small \_\allowbreak{}short\_\allowbreak{}reason} & One-line, user-safe reason for a provider failure (shown in the fallback banner). \\
+{\small } & \texttt{\small \_\allowbreak{}lint\_\allowbreak{}payload} & Convert VerilogLinter result (with SimError objects) to JSON-serialisable payload. \\
+{\small } & \texttt{\small pipeline\_\allowbreak{}events} & Yield \{stage, ...\} events as the pipeline runs. \\
+{\small } & \texttt{\small \_\allowbreak{}model\_\allowbreak{}used} & The model that wrote the design, spelled the way the model menu spells it. \\
+{\small } & \texttt{\small \_\allowbreak{}second\_\allowbreak{}opinion\_\allowbreak{}message} & One-line timeline message for the second opinion: agrees, disagrees, or unavailable with the reason. \\
+{\small } & \texttt{\small \_\allowbreak{}chosen\_\allowbreak{}model\_\allowbreak{}problem} & Why the model the user picked did not work, and what to do. Short, plain, no provider internals. \\
+{\small } & \texttt{\small \_\allowbreak{}user\_\allowbreak{}facing\_\allowbreak{}error} & A short, actionable message for the error event. \\
+{\small } & \texttt{\small run\_\allowbreak{}pipeline} & Consume the event stream and return the final RunResponse. \\
+{\small } & \texttt{\small \_\allowbreak{}light} & Result for streamed progress events: counters and groups, but not the check rows. \\
+{\small } & \texttt{\small \_\allowbreak{}sim\_\allowbreak{}message} & Human-readable one-line summary of a simulation result. \\
+{\small } & \texttt{\small \_\allowbreak{}final\_\allowbreak{}message} & Human-readable final verdict (passes first time / after N iterations / could not pass). \\
+{\small \nolinkurl{llm_service.py}} & \texttt{\small \_\allowbreak{}strip\_\allowbreak{}code\_\allowbreak{}fence} & Extract the actual Verilog answer from a model response. \\
+{\small } & \texttt{\small \_\allowbreak{}extract\_\allowbreak{}json} & Pull the JSON object out of a model reply (fenced or surrounded by prose) and parse it, tolerating raw newlines inside strings. \\
+{\small } & \texttt{\small \_\allowbreak{}section} & Return the text between \textless{}tag\textgreater{} and \textless{}/tag\textgreater{} in a model reply, or None. \\
+{\small } & \texttt{\small \_\allowbreak{}parse\_\allowbreak{}diagnosis} & Turn the \textless{}diagnosis\textgreater{} block (symptom / root\_cause / fix\_location / confidence lines) into a dict. \\
+{\small } & \texttt{\small \_\allowbreak{}salvage\_\allowbreak{}fix\_\allowbreak{}json} & Best-effort extraction when a model emits invalid JSON around Verilog. \\
+{\small } & \texttt{\small \_\allowbreak{}parse\_\allowbreak{}fix\_\allowbreak{}response} & Parse the fixer response into rtl/tb/diagnosis/summary. \\
+{\small } & \texttt{\small OpenAIProvider.\allowbreak \_\allowbreak{}\_\allowbreak{}init\_\allowbreak{}\_\allowbreak{}} & Create the OpenAI-compatible client with timeout and token budget from the environment, and read the per-stage model overrides. \\
+{\small } & \texttt{\small OpenAIProvider.\allowbreak \_\allowbreak{}extra\_\allowbreak{}body} & Extra request fields. For opencode models with variants the `:variant` suffix is primary; both \\
+{\small } & \texttt{\small OpenAIProvider.\allowbreak \_\allowbreak{}chat} & Send one chat request: pick the model (request override \textgreater{} stage model \textgreater{} default), disable hidden reasoning unless asked, map provider failures to LLM\_UPSTREAM errors, reject truncated or empty answers. \\
+{\small } & \texttt{\small OpenAIProvider.\allowbreak parse\_\allowbreak{}intent} & Ask the model to turn the prompt into JSON and validate it as an RTLDesignSpec (temperature 0.3). \\
+{\small } & \texttt{\small OpenAIProvider.\allowbreak generate\_\allowbreak{}rtl} & Ask the model for Verilog from the specification (temperature 0.2) and extract the module. \\
+{\small } & \texttt{\small OpenAIProvider.\allowbreak generate\_\allowbreak{}testbench} & Ask the model for a self-checking testbench from the specification only; the RTL body is deliberately withheld. \\
+{\small } & \texttt{\small OpenAIProvider.\allowbreak explain\_\allowbreak{}design} & Ask for a 2-3 sentence explanation of the RTL (cheaper model unless the user chose one). \\
+{\small } & \texttt{\small OpenAIProvider.\allowbreak fix\_\allowbreak{}design} & Send spec, RTL, testbench and the last 4000 characters of the simulator log to the debugger prompt and parse its diagnosis and patch. \\
+{\small } & \texttt{\small OpenCodeAppProvider.\allowbreak \_\allowbreak{}\_\allowbreak{}init\_\allowbreak{}\_\allowbreak{}} & Remember the OpenCode model, agent and timeout; no API key is needed because the local app's own login is used. \\
+{\small } & \texttt{\small OpenCodeAppProvider.\allowbreak \_\allowbreak{}chat} & Run the OpenCode app in an empty temporary folder with a read-only agent and return the model's text, or raise a typed upstream error. \\
+{\small } & \texttt{\small CloudflareProvider.\allowbreak \_\allowbreak{}\_\allowbreak{}init\_\allowbreak{}\_\allowbreak{}} & OpenAI-compatible client for one Cloudflare account (account-scoped base URL, Bearer token); no per-stage routing. \\
+{\small } & \texttt{\small CloudflareProvider.\allowbreak \_\allowbreak{}extra\_\allowbreak{}body} & Send a reasoning effort only to the gpt-oss models; every other Workers AI model gets a plain request. \\
+{\small } & \texttt{\small NimProvider.\allowbreak \_\allowbreak{}\_\allowbreak{}init\_\allowbreak{}\_\allowbreak{}} & OpenAI-compatible client for the NVIDIA NIM hosted API; no per-stage routing. \\
+{\small } & \texttt{\small NimProvider.\allowbreak \_\allowbreak{}extra\_\allowbreak{}body} & No extra request fields: NIM is strict about unknown fields. \\
+{\small } & \texttt{\small NimProvider.\allowbreak \_\allowbreak{}chat} & Remove the nim/ prefix from the model id, then send the chat request like any OpenAI-compatible provider. \\
+{\small } & \texttt{\small OfflineProvider.\allowbreak \_\allowbreak{}\_\allowbreak{}init\_\allowbreak{}\_\allowbreak{}} & Start with no matched design. \\
+{\small } & \texttt{\small OfflineProvider.\allowbreak parse\_\allowbreak{}intent} & Match the prompt to a curated design by keyword and return that design's specification. \\
+{\small } & \texttt{\small OfflineProvider.\allowbreak generate\_\allowbreak{}rtl} & Return the curated RTL (or its buggy variant for the self-correction demo). \\
+{\small } & \texttt{\small OfflineProvider.\allowbreak generate\_\allowbreak{}testbench} & Return the curated testbench for the matched design. \\
+{\small } & \texttt{\small OfflineProvider.\allowbreak explain\_\allowbreak{}design} & Return the curated explanation, prefixed with an [Offline demo] note when the prompt was not an exact match. \\
+{\small } & \texttt{\small OfflineProvider.\allowbreak fix\_\allowbreak{}design} & Scripted fix: swap in the known-correct RTL. Reports fix\_type offline\_scripted and NO diagnosis, because none was produced. \\
+{\small } & \texttt{\small \_\allowbreak{}placeholder} & True if an environment value is empty or a 'your\_...' placeholder. \\
+{\small } & \texttt{\small \_\allowbreak{}is\_\allowbreak{}offline\_\allowbreak{}env} & True if OFFLINE\_MODE is set to 1/true/yes/on. \\
+{\small } & \texttt{\small \_\allowbreak{}make\_\allowbreak{}provider} & Pick a provider from env. Priority: OFFLINE\_MODE -\textgreater{} Opencode Zen -\textgreater{} NVIDIA NIM -\textgreater{} OpenAI -\textgreater{} offline. \\
+{\small } & \texttt{\small \_\allowbreak{}nim\_\allowbreak{}provider} & Return the NIM provider for the current key (rebuilt only if the key or address changes), or raise ModelNotAvailable when NVIDIA\_NIM\_API\_KEY is not set. \\
+{\small } & \texttt{\small \_\allowbreak{}cloudflare\_\allowbreak{}provider} & Return the Cloudflare provider for the current credentials, or raise ModelNotAvailable when they are not set. \\
+{\small } & \texttt{\small get\_\allowbreak{}provider} & The provider that serves *model*: Cloudflare for `@cf/...` ids, NVIDIA NIM for `nim/...` ids, otherwise the configured one. \\
+{\small } & \texttt{\small current\_\allowbreak{}model\_\allowbreak{}id} & The configured model as the model menu spells it (`opencode/\textless{}name\textgreater{}` for the OpenCode app). \\
+{\small } & \texttt{\small is\_\allowbreak{}default\_\allowbreak{}model} & True when *model* is absent or is the configured model (spelled with or without the `opencode/` prefix). \\
+{\small } & \texttt{\small is\_\allowbreak{}offline} & True when the app is running on the offline provider. \\
+{\small } & \texttt{\small current\_\allowbreak{}model} & Name of the configured live model, or None offline. \\
+{\small } & \texttt{\small list\_\allowbreak{}models} & Models the user can choose for generation, grouped by where they run. \\
+{\small } & \texttt{\small parse\_\allowbreak{}intent} & Module-level wrapper: forwards to the active provider. \\
+{\small } & \texttt{\small generate\_\allowbreak{}rtl} & Module-level wrapper: forwards to the active provider. \\
+{\small } & \texttt{\small generate\_\allowbreak{}testbench} & Module-level wrapper: forwards to the active provider. \\
+{\small } & \texttt{\small explain\_\allowbreak{}design} & Module-level wrapper: forwards to the active provider. \\
+{\small } & \texttt{\small fix\_\allowbreak{}design} & Module-level wrapper: forwards to the active provider. \\
+{\small \nolinkurl{simulator.py}} & \texttt{\small sandbox\_\allowbreak{}violations} & Return human-readable policy violations found in the given sources. \\
+{\small } & \texttt{\small rtl\_\allowbreak{}integrity\_\allowbreak{}violations} & Reject RTL that could forge the testbench's verdict or end the run itself. \\
+{\small } & \texttt{\small \_\allowbreak{}policy\_\allowbreak{}violations} & Combine the sandbox policy and the RTL-integrity rules for one design and testbench pair. \\
+{\small } & \texttt{\small clean\_\allowbreak{}env} & Minimal environment for EDA subprocesses: API keys never reach them. \\
+{\small } & \texttt{\small \_\allowbreak{}validate\_\allowbreak{}design\_\allowbreak{}id} & Validate design\_id against strict allow-list; raise ValueError on violation. \\
+{\small } & \texttt{\small ensure\_\allowbreak{}vcd\_\allowbreak{}dump} & Inject \$dumpfile/\$dumpvars into a testbench if it has none, so a VCD is \\
+{\small } & \texttt{\small \_\allowbreak{}parse\_\allowbreak{}compile\_\allowbreak{}errors} & Parse iverilog diagnostics like 'design.sv:12: error: \textless{}msg\textgreater{}'. \\
+{\small } & \texttt{\small \_\allowbreak{}decide\_\allowbreak{}verdict} & Decide PASS/FAIL/ERROR from the transcript. Returns (status, passed, failed, notes). \\
+{\small } & \texttt{\small \_\allowbreak{}finish\_\allowbreak{}time\_\allowbreak{}ns} & Read the final simulation time from the \$finish message and convert it to nanoseconds. \\
+{\small } & \texttt{\small \_\allowbreak{}excerpt} & Head+tail of the transcript, never just the tail. \\
+{\small } & \texttt{\small IcarusSimulator.\allowbreak \_\allowbreak{}\_\allowbreak{}init\_\allowbreak{}\_\allowbreak{}} & Resolve and create the workspace folder. \\
+{\small } & \texttt{\small IcarusSimulator.\allowbreak available} & True if both iverilog and vvp are on PATH. \\
+{\small } & \texttt{\small IcarusSimulator.\allowbreak \_\allowbreak{}design\_\allowbreak{}dir} & Validate the design id and return its folder, refusing any path that escapes the workspace. \\
+{\small } & \texttt{\small IcarusSimulator.\allowbreak write\_\allowbreak{}files} & Size-check and sandbox-check the code, then write design.sv and testbench.sv (adding a VCD dump if missing). \\
+{\small } & \texttt{\small IcarusSimulator.\allowbreak compile} & Run iverilog -g2012 -Wall with a 30 s timeout and a scrubbed environment. \\
+{\small } & \texttt{\small IcarusSimulator.\allowbreak run} & Run vvp with a clamped timeout (1-120 s) and an output-size cap; TIMEOUT on overrun. \\
+{\small } & \texttt{\small IcarusSimulator.\allowbreak parse\_\allowbreak{}results} & Read the transcript and decide PASS / FAIL / ERROR from Passed:/Failed: counts, errors and ALL TESTS PASSED. \\
+{\small } & \texttt{\small IcarusSimulator.\allowbreak simulate} & Full path: validate id, sandbox scan, write, compile, run, parse. \\
+{\small \nolinkurl{models.py}} & \texttt{\small PortSpec.\allowbreak coerce\_\allowbreak{}width} & Accept ints, numeric strings and the width spellings models actually use. \\
+{\small } & \texttt{\small SimulationRequest.\allowbreak validate\_\allowbreak{}design\_\allowbreak{}id} & Reject design ids that are not 1-32 characters of letters, digits, \_ or -. \\
+{\small } & \texttt{\small check\_\allowbreak{}user\_\allowbreak{}spec} & A specification the user confirmed or edited is untrusted input: its names end up in patterns, file names and \\
+{\small } & \texttt{\small RunRequest.\allowbreak \_\allowbreak{}user\_\allowbreak{}spec\_\allowbreak{}is\_\allowbreak{}bounded} & Validate a user-confirmed specification with check\_user\_spec (plain identifiers, bounded sizes). \\
+{\small } & \texttt{\small SynthesisRequest.\allowbreak validate\_\allowbreak{}module\_\allowbreak{}name} & Reject module names that are not legal Verilog identifiers. \\
+{\small } & \texttt{\small UVMExportRequest.\allowbreak validate\_\allowbreak{}module\_\allowbreak{}override} & Reject an override module name that is not a legal identifier. \\
+{\small \nolinkurl{linter.py}} & \texttt{\small \_\allowbreak{}parse\_\allowbreak{}tool\_\allowbreak{}output} & Parse combined stdout+stderr from iverilog/verilator into errors/warnings. \\
+{\small } & \texttt{\small \_\allowbreak{}strip\_\allowbreak{}comments} & Return code with // and /* */ comments removed (for structural counting). \\
+{\small } & \texttt{\small \_\allowbreak{}heuristic\_\allowbreak{}checks} & Pure-python regex heuristics. Returns (errors, warnings). \\
+{\small } & \texttt{\small VerilogLinter.\allowbreak lint} & Lint RTL (+ optional testbench). \\
+{\small \nolinkurl{cov_metrics.py}} & \texttt{\small compute\_\allowbreak{}coverage} & Summarise what the testbench exercised: vectors run, passed, failed, pass rate, any COV: bins and any printed toggle/branch/line coverage figures. \\
+{\small \nolinkurl{checks.py}} & \texttt{\small \_\allowbreak{}category} & Normalise a test-type name to a short slug and fold types beyond the cap into 'other'. \\
+{\small } & \texttt{\small \_\allowbreak{}clip} & Shorten a field to a maximum length so one verbose line cannot bloat the response. \\
+{\small } & \texttt{\small parse\_\allowbreak{}checks} & Return the check-related SimulationResult fields for this transcript. \\
+{\small \nolinkurl{vcd_parser.py}} & \texttt{\small \_\allowbreak{}bin\_\allowbreak{}to\_\allowbreak{}hex} & Convert a binary string (possibly with x/z) to a compact hex string, nibble by nibble. \\
+{\small } & \texttt{\small \_\allowbreak{}role} & Classify a waveform signal (clock, reset, input, output, internal, testbench, task local, parameter) from its name, scope and the design's port list. \\
+{\small } & \texttt{\small \_\allowbreak{}parse\_\allowbreak{}header} & Walk \$scope / \$upscope / \$var in order so every signal knows where it lives. \\
+{\small } & \texttt{\small \_\allowbreak{}pad\_\allowbreak{}bits} & VCD drops leading bits: pad with 0, or with x/z when the value starts with x/z. \\
+{\small } & \texttt{\small toggle\_\allowbreak{}coverage} & Measure toggle coverage of the design under test from a VCD file. \\
+{\small } & \texttt{\small parse\_\allowbreak{}vcd} & Read a VCD file (max 8 MB) and return up to 40 signals with up to 2000 value changes each, buses as hex, with truncation flags. \\
+{\small } & \texttt{\small ports\_\allowbreak{}from\_\allowbreak{}rtl} & Best-effort ``\{port name: direction\}`` from a module header (used when no spec exists). \\
+{\small \nolinkurl{schematic.py}} & \texttt{\small build\_\allowbreak{}schematic} & Group the specification's ports into inputs, outputs and inouts for the port-level diagram. \\
+{\small } & \texttt{\small summarize\_\allowbreak{}netlist} & Count what Yosys produced, from the JSON netlist (stable across Yosys versions). \\
+{\small } & \texttt{\small \_\allowbreak{}yosys\_\allowbreak{}warnings} & Yosys' own `Warning:` lines (multiple drivers, combinational loops, ...), de-duplicated. \\
+{\small } & \texttt{\small synthesize\_\allowbreak{}with\_\allowbreak{}yosys} & Try to synthesize ``rtl\_code`` with Yosys. \\
+{\small \nolinkurl{synthesis.py}} & \texttt{\small YosysSynthesizer.\allowbreak \_\allowbreak{}\_\allowbreak{}init\_\allowbreak{}\_\allowbreak{}} & Remember the workspace used for synthesis work folders. \\
+{\small } & \texttt{\small YosysSynthesizer.\allowbreak available} & Return True iff ``yosys`` is on \$PATH. \\
+{\small } & \texttt{\small YosysSynthesizer.\allowbreak synthesize} & Run Yosys synthesis and return the metrics dict. \\
+{\small } & \texttt{\small YosysSynthesizer.\allowbreak synthesize\_\allowbreak{}and\_\allowbreak{}build} & Return both the port-level schematic and synthesis metrics. \\
+{\small \nolinkurl{db.py}} & \texttt{\small \_\allowbreak{}resolve\_\allowbreak{}workspace} & Resolve workspace Path. \\
+{\small } & \texttt{\small \_\allowbreak{}db\_\allowbreak{}path} & Return the path of projects.db inside the workspace. \\
+{\small } & \texttt{\small \_\allowbreak{}ensure\_\allowbreak{}table} & Create the projects table (and add missing columns to older databases) plus an index on created\_at. \\
+{\small } & \texttt{\small init\_\allowbreak{}db} & Ensure workspace exists and projects table is created. \\
+{\small } & \texttt{\small \_\allowbreak{}extract\_\allowbreak{}fields} & Normalize RunResponse (pydantic model or dict) into DB row dict. \\
+{\small } & \texttt{\small save\_\allowbreak{}project} & Persist a RunResponse (or dict) to SQLite. \\
+{\small } & \texttt{\small get\_\allowbreak{}project} & Retrieve a project by id. Returns full RunResponse dict (as stored) or None if not found. \\
+{\small } & \texttt{\small list\_\allowbreak{}projects} & List projects ordered by newest first. \\
+{\small } & \texttt{\small count\_\allowbreak{}projects} & Return how many projects are stored. \\
+{\small } & \texttt{\small delete\_\allowbreak{}project} & Delete one project by id; True if a row was removed. \\
+{\small \nolinkurl{offline_designs.py}} & \texttt{\small \_\allowbreak{}marker} & Return the '// [offline:key]' comment used to recognise a curated design later. \\
+{\small } & \texttt{\small match\_\allowbreak{}design} & Pick a curated design key from prompt keywords (8-bit ALU, ALU, counter, adder, mux); default counter. \\
+{\small } & \texttt{\small is\_\allowbreak{}exact\_\allowbreak{}match} & Return True if the prompt matched a known design keyword, False on fallback. \\
+{\small } & \texttt{\small is\_\allowbreak{}buggy\_\allowbreak{}request} & True if the prompt asks for a buggy design (drives the self-correction demo). \\
+{\small } & \texttt{\small get\_\allowbreak{}design} & Return the spec, RTL, testbench and explanation for a design key. \\
+{\small } & \texttt{\small design\_\allowbreak{}key\_\allowbreak{}from\_\allowbreak{}rtl} & Read the [offline:key] marker back out of RTL text. \\
+{\small \nolinkurl{cleanup.py}} & \texttt{\small cleanup\_\allowbreak{}old\_\allowbreak{}workspaces} & Delete subdirectories of `workspace` whose mtime is older than `ttl\_hours`. \\
+{\small \nolinkurl{openroad.py}} & \texttt{\small check\_\allowbreak{}openroad\_\allowbreak{}available} & True if the openroad binary is on PATH (the flow itself is a stub). \\
+{\small } & \texttt{\small run\_\allowbreak{}openroad\_\allowbreak{}flow} & Try to run OpenROAD flow. Currently stub: returns available False with note. \\
+{\small \nolinkurl{uvm_templates.py}} & \texttt{\small \_\allowbreak{}is\_\allowbreak{}sequential} & True if the spec has a clock-like port (so the bundle drives a clock). \\
+{\small } & \texttt{\small \_\allowbreak{}detect\_\allowbreak{}clk\_\allowbreak{}rst} & Find the clock and reset port names, if any. \\
+{\small } & \texttt{\small \_\allowbreak{}sanitize\_\allowbreak{}mod} & Make the module name a safe identifier for file and class names. \\
+{\small } & \texttt{\small \_\allowbreak{}inputs} & Input ports of the spec. \\
+{\small } & \texttt{\small \_\allowbreak{}outputs} & Output ports of the spec. \\
+{\small } & \texttt{\small \_\allowbreak{}inouts} & Inout ports of the spec. \\
+{\small } & \texttt{\small \_\allowbreak{}non\_\allowbreak{}clk\_\allowbreak{}rst\_\allowbreak{}inputs} & Inputs other than clock and reset (the ones a sequence randomises). \\
+{\small } & \texttt{\small \_\allowbreak{}width\_\allowbreak{}decl} & SystemVerilog width declaration such as [3:0] (empty for 1 bit). \\
+{\small } & \texttt{\small \_\allowbreak{}width\_\allowbreak{}literal} & For SV literals: width spec like [3:0] already; for declarations use helper. \\
+{\small } & \texttt{\small \_\allowbreak{}is\_\allowbreak{}op\_\allowbreak{}like} & True if a port looks like an opcode/select input. \\
+{\small } & \texttt{\small \_\allowbreak{}find\_\allowbreak{}op\_\allowbreak{}port} & Find the opcode-like input, if any. \\
+{\small } & \texttt{\small \_\allowbreak{}is\_\allowbreak{}alu\_\allowbreak{}like} & True if the design looks like an ALU (so the scoreboard uses an ALU model). \\
+{\small } & \texttt{\small \_\allowbreak{}max\_\allowbreak{}val} & Largest value for a given width. \\
+{\small } & \texttt{\small \_\allowbreak{}port\_\allowbreak{}type\_\allowbreak{}decl} & Declaration type and width for a port in the interface. \\
+{\small } & \texttt{\small \_\allowbreak{}find\_\allowbreak{}port} & First port whose name matches one of a list. \\
+{\small } & \texttt{\small \_\allowbreak{}gen\_\allowbreak{}if} & Interface. Clock/reset handling: \\
+{\small } & \texttt{\small \_\allowbreak{}gen\_\allowbreak{}seq\_\allowbreak{}item} & Generate the sequence item (one transaction). \\
+{\small } & \texttt{\small \_\allowbreak{}gen\_\allowbreak{}sequencer} & Generate the UVM sequencer class. \\
+{\small } & \texttt{\small \_\allowbreak{}gen\_\allowbreak{}sequence} & Sequences: base + random + directed. \\
+{\small } & \texttt{\small \_\allowbreak{}gen\_\allowbreak{}driver} & Generate the UVM driver that applies items to the interface. \\
+{\small } & \texttt{\small \_\allowbreak{}gen\_\allowbreak{}monitor} & Generate the UVM monitor that samples the interface. \\
+{\small } & \texttt{\small \_\allowbreak{}gen\_\allowbreak{}agent} & Generate the agent wrapping sequencer, driver and monitor. \\
+{\small } & \texttt{\small \_\allowbreak{}gen\_\allowbreak{}scoreboard} & Generate the scoreboard that checks DUT outputs. \\
+{\small } & \texttt{\small \_\allowbreak{}gen\_\allowbreak{}coverage} & Generate the functional coverage collector. \\
+{\small } & \texttt{\small \_\allowbreak{}gen\_\allowbreak{}env} & Generate the environment class. \\
+{\small } & \texttt{\small \_\allowbreak{}gen\_\allowbreak{}test} & Generate the UVM test class. \\
+{\small } & \texttt{\small \_\allowbreak{}gen\_\allowbreak{}pkg} & Generate the package that includes all classes. \\
+{\small } & \texttt{\small \_\allowbreak{}gen\_\allowbreak{}tb\_\allowbreak{}top} & Generate the top module that instantiates the DUT and interface. \\
+{\small } & \texttt{\small \_\allowbreak{}gen\_\allowbreak{}makefile} & Generate a Makefile for a commercial simulator (Questa style). \\
+{\small } & \texttt{\small \_\allowbreak{}gen\_\allowbreak{}filelist} & Generate the compile file list. \\
+{\small } & \texttt{\small generate\_\allowbreak{}uvm\_\allowbreak{}bundle} & Generate a complete UVM bundle for `spec`. \\
+{\small } & \texttt{\small bundle\_\allowbreak{}to\_\allowbreak{}zip\_\allowbreak{}base64} & Helper for endpoint wiring: zip the bundle in-memory and return base64 string. \\
+{\small \nolinkurl{model_catalog.py}} & \texttt{\small child\_\allowbreak{}env} & The environment handed to the `opencode` app: everything except the Cloudflare and NIM credentials, which it has no use for. \\
+{\small } & \texttt{\small is\_\allowbreak{}valid\_\allowbreak{}model\_\allowbreak{}id} & True if a model id matches the safe pattern (no leading dash, no spaces or shell characters, at most 100 characters). \\
+{\small } & \texttt{\small is\_\allowbreak{}cloudflare\_\allowbreak{}id} & True for Cloudflare Workers AI ids (@cf/... or @hf/...). \\
+{\small } & \texttt{\small is\_\allowbreak{}nim\_\allowbreak{}id} & True for NVIDIA NIM menu ids (nim/...). \\
+{\small } & \texttt{\small is\_\allowbreak{}routed\_\allowbreak{}id} & True for ids served by a provider of their own (Cloudflare, NVIDIA NIM) instead of the configured one. \\
+{\small } & \texttt{\small normalize\_\allowbreak{}opencode\_\allowbreak{}id} & `deepseek-v4.1-flash-free` (how LLM\_MODEL is usually written) -\textgreater{} `opencode/deepseek-v4.1-flash-free`. \\
+{\small } & \texttt{\small \_\allowbreak{}get\_\allowbreak{}cache} & Return a cached catalogue entry if it has not expired (and refresh was not asked for). \\
+{\small } & \texttt{\small \_\allowbreak{}put\_\allowbreak{}cache} & Store a catalogue entry with its expiry time. \\
+{\small } & \texttt{\small clear\_\allowbreak{}cache} & Forget every cached catalogue (used by tests). \\
+{\small } & \texttt{\small parse\_\allowbreak{}opencode\_\allowbreak{}models} & `provider/model` lines from `opencode models` -\textgreater{} model dicts, free ones first within each provider. \\
+{\small } & \texttt{\small opencode\_\allowbreak{}models} & The models the installed OpenCode app offers (cached). Empty when the app is missing or fails. \\
+{\small } & \texttt{\small \_\allowbreak{}api\_\allowbreak{}base} & Cloudflare API base URL (CLOUDFLARE\_API\_BASE, default the public v4 API). \\
+{\small } & \texttt{\small cloudflare\_\allowbreak{}config} & (account id, token) from the environment, or None when either is missing or malformed. \\
+{\small } & \texttt{\small cloudflare\_\allowbreak{}base\_\allowbreak{}url} & The account-scoped OpenAI-compatible base URL for Workers AI. \\
+{\small } & \texttt{\small \_\allowbreak{}cloudflare\_\allowbreak{}entry} & Build one Model-menu entry for a Workers AI model. \\
+{\small } & \texttt{\small static\_\allowbreak{}cloudflare\_\allowbreak{}models} & Suggested Workers AI models, used only when the live catalogue cannot be read. \\
+{\small } & \texttt{\small parse\_\allowbreak{}cloudflare\_\allowbreak{}search} & Text-generation models out of `GET /accounts/\{id\}/ai/models/search`. An entry without task information is kept. \\
+{\small } & \texttt{\small \_\allowbreak{}ssl\_\allowbreak{}context} & Certificates the rest of the app already relies on (certifi). The python.org builds of Python ship without a \\
+{\small } & \texttt{\small \_\allowbreak{}urlopen} & Open an HTTPS request with the certifi certificate bundle (some Python builds have none). \\
+{\small } & \texttt{\small \_\allowbreak{}search\_\allowbreak{}cloudflare} & Read up to 5 pages of Cloudflare's model search and keep the text-generation models. \\
+{\small } & \texttt{\small cloudflare\_\allowbreak{}status} & \{'available': bool, 'hint': str|None, 'models': [...]\}. Never raises, never returns the token. \\
+{\small } & \texttt{\small nim\_\allowbreak{}config} & (api key, base url) from NVIDIA\_NIM\_API\_KEY only, or None when it is missing or not a plausible `nvapi-` key. \\
+{\small } & \texttt{\small \_\allowbreak{}nim\_\allowbreak{}entry} & Build one Model-menu entry for a NIM model (id prefixed nim/). \\
+{\small } & \texttt{\small static\_\allowbreak{}nim\_\allowbreak{}models} & The NIM models that answered quickly in a live test, used when the live list cannot be read. \\
+{\small } & \texttt{\small parse\_\allowbreak{}nim\_\allowbreak{}models} & Chat-like models out of `GET \{base\}/models`, the ones verified fast first, the rest alphabetical. \\
+{\small } & \texttt{\small \_\allowbreak{}search\_\allowbreak{}nim} & Read NVIDIA's /models list with the key and keep the chat models. \\
+{\small } & \texttt{\small nim\_\allowbreak{}status} & \{'available': bool, 'hint': str|None, 'models': [...]\}. Never raises, never returns the key. \\
+{\small \nolinkurl{mutation.py}} & \texttt{\small \_\allowbreak{}blank} & Replace text by spaces of the SAME length (newlines kept) so offsets stay valid. \\
+{\small } & \texttt{\small mask\_\allowbreak{}code} & Same-length copy of *code* with comments, strings, directives and parameters blanked. \\
+{\small } & \texttt{\small \_\allowbreak{}matching\_\allowbreak{}paren} & Index of the parenthesis that closes the one at a given position, or -1. \\
+{\small } & \texttt{\small \_\allowbreak{}protected\_\allowbreak{}spans} & Regions never mutated: bit-range brackets and loop headers. \\
+{\small } & \texttt{\small \_\allowbreak{}line\_\allowbreak{}of} & Line number (1-based) of a character offset in the code. \\
+{\small } & \texttt{\small \_\allowbreak{}prev\_\allowbreak{}is\_\allowbreak{}operand} & True when the previous non-space character ends an operand, i.e. a binary operator follows. \\
+{\small } & \texttt{\small candidate\_\allowbreak{}mutants} & Every distinct one-edit mutant the operators can produce (unordered by usefulness). \\
+{\small } & \texttt{\small select\_\allowbreak{}mutants} & Pick up to *limit* mutants, spread across operator kinds, deterministically. \\
+{\small } & \texttt{\small apply\_\allowbreak{}mutant} & Return the code with one mutant's replacement applied. \\
+{\small } & \texttt{\small \_\allowbreak{}is\_\allowbreak{}invalid} & A mutant that does not compile (or is refused by the sandbox) says nothing about the testbench. \\
+{\small } & \texttt{\small run\_\allowbreak{}strength} & Run *testbench\_code* against mutants of *rtl\_code* and report how many it catches. \\
+{\small } & \texttt{\small weak\_\allowbreak{}strength\_\allowbreak{}note} & Warning text when the testbench missed too many injected bugs for the PASS to be trusted. \\
+{\small \nolinkurl{timing.py}} & \texttt{\small missing\_\allowbreak{}requirements} & What is needed and absent; empty when timing can run. \\
+{\small } & \texttt{\small \_\allowbreak{}env} & Scrubbed environment for Yosys and OpenSTA, plus HOME (the shims and the WebAssembly cache live there). \\
+{\small } & \texttt{\small \_\allowbreak{}run} & Run a tool in the work folder with a time limit, no input and the scrubbed environment. \\
+{\small } & \texttt{\small \_\allowbreak{}target} & The clock target in MHz; anything missing, non-numeric or outside 1..10000 means the 100 MHz default. \\
+{\small } & \texttt{\small parse\_\allowbreak{}mapped\_\allowbreak{}stats} & Area and cell counts from `stat -liberty` (written to a file by `tee -o`). \\
+{\small } & \texttt{\small analyze\_\allowbreak{}netlist} & What the mapped netlist really contains: which input ports clock the flip-flops, whether \\
+{\small } & \texttt{\small \_\allowbreak{}declared\_\allowbreak{}parameter\_\allowbreak{}names} & Names of the design's own `module \textless{}name\textgreater{} \#( ... )` parameter list, in declaration order. \\
+{\small } & \texttt{\small parameter\_\allowbreak{}overrides} & Integer parameter overrides the testbench gives the design under test, e.g. `mux \#(.WIDTH(16)) dut` \\
+{\small } & \texttt{\small parse\_\allowbreak{}sta} & Worst setup slack and the path it belongs to, from OpenSTA's report. \\
+{\small } & \texttt{\small sta\_\allowbreak{}errors} & OpenSTA's error lines only. Warnings (activity propagation, command abbreviation ...) are noise. \\
+{\small } & \texttt{\small \_\allowbreak{}map\_\allowbreak{}with\_\allowbreak{}yosys} & Run Yosys: read, apply parameter overrides, proc and tribuf, flatten and synthesize, map to sky130 cells, write statistics and the netlist. \\
+{\small } & \texttt{\small \_\allowbreak{}constraints} & OpenSTA constraints: one clock per clock port at the target period (asynchronous groups for several clocks) or a virtual clock for combinational designs, zero I/O delays. \\
+{\small } & \texttt{\small run\_\allowbreak{}timing} & Map *rtl\_code* to sky130 cells and time it at *target\_mhz* (default 100). Never raises. \\
+{\small } & \texttt{\small timing\_\allowbreak{}message} & One-line timeline message: meets or misses the target with slack, fmax and area, or the reason timing is not available. \\
+{\small \nolinkurl{tools/mutation_sweep.py}} & \texttt{\small run\_\allowbreak{}sweep} & Run every mutant; return a list of (design, label, killed, golden, mutant, failed, total). \\
+{\small } & \texttt{\small main} & Inject each of the 27 known bugs into the built-in RTL, simulate with the built-in testbench, and print which were caught. \\
+{\small \nolinkurl{tools/verify_mapping.py}} & \texttt{\small declared\_\allowbreak{}modules} & Names of all modules declared in an RTL file. \\
+{\small } & \texttt{\small top\_\allowbreak{}module} & The module the testbench instantiates (an RTL module name followed by `[\#(...)] instance (`). \\
+{\small } & \texttt{\small strip\_\allowbreak{}parameter\_\allowbreak{}overrides} & Remove `\#( ... )` after the module name: the mapped netlist already has its parameters applied. \\
+{\small } & \texttt{\small liberty\_\allowbreak{}areas} & Read every sky130 cell's area from the liberty file. \\
+{\small } & \texttt{\small netlist\_\allowbreak{}totals} & Recompute area and cell count from the written netlist and the liberty areas. \\
+{\small } & \texttt{\small build\_\allowbreak{}cell\_\allowbreak{}models} & Behavioural Verilog models of every sky130 cell, generated by Yosys from the liberty file. \\
+{\small } & \texttt{\small verdict} & Read the Passed/Failed numbers from a simulation's output. \\
+{\small } & \texttt{\small simulate} & Compile and run a set of Verilog files with Icarus and return the Passed/Failed numbers (or the problem). \\
+{\small } & \texttt{\small check\_\allowbreak{}design} & Run the three checks. Returns \{name, status, detail\}; status is OK, REFUSED or FAIL. \\
+{\small } & \texttt{\small collect} & List the designs to check: every saved evaluation design with its testbench plus the built-in designs. \\
+{\small } & \texttt{\small main} & Run the three checks on every design and print OK, REFUSED (with reason) or FAIL; non-zero exit on any failure. \\
+{\small \nolinkurl{tools/preflight.py}} & \texttt{\small record} & Store and print one OK / WARN / FAIL line. \\
+{\small } & \texttt{\small parse\_\allowbreak{}version} & 'Icarus Verilog version 12.0 (stable)' -\textgreater{} (12, 0). \\
+{\small } & \texttt{\small run} & Run a command with a time limit and return its exit code and output. \\
+{\small } & \texttt{\small http\_\allowbreak{}ok} & True if a local URL answers with HTTP 2xx. \\
+{\small } & \texttt{\small check\_\allowbreak{}simulator} & Check Icarus Verilog is on the PATH and is version 12. \\
+{\small } & \texttt{\small check\_\allowbreak{}yosys} & Check Yosys is installed and report its version. \\
+{\small } & \texttt{\small check\_\allowbreak{}timing} & Check OpenSTA and the sky130 library are present for the timing stage. \\
+{\small } & \texttt{\small check\_\allowbreak{}offline\_\allowbreak{}pipeline} & Run the offline demo pipeline once to prove the offline rung of the fallback ladder works. \\
+{\small } & \texttt{\small check\_\allowbreak{}live\_\allowbreak{}config} & Check the live set-up: LLM\_PROVIDER, the opencode command, and that the chosen model is in the app's list. \\
+{\small } & \texttt{\small check\_\allowbreak{}live\_\allowbreak{}call} & With --live, make one tiny model call and report how long it took. \\
+{\small } & \texttt{\small check\_\allowbreak{}servers} & Check whether the backend (port 8000) and frontend (port 5173) are already running. \\
+{\small } & \texttt{\small check\_\allowbreak{}storage} & Count saved projects in projects.db with a read-only connection. \\
+{\small } & \texttt{\small check\_\allowbreak{}evidence} & Check that recorded live results exist in evaluation/results.jsonl (the saved-results rung). \\
+{\small } & \texttt{\small main} & Run every check and print which rungs of the fallback ladder (live, offline, saved) are ready. \\
+{\small \nolinkurl{tools/evaluate_live.py}} & \texttt{\small load\_\allowbreak{}done} & Read the finished records from results.jsonl (the last record for each prompt id wins). \\
+{\small } & \texttt{\small run\_\allowbreak{}one} & Run one evaluation prompt through the real pipeline in a temporary workspace and build its record. \\
+{\small } & \texttt{\small \_\allowbreak{}timing\_\allowbreak{}fields} & What the record keeps of a timing report. A design with a clock has a minimum clock period; a design \\
+{\small } & \texttt{\small backfill} & Add toggle coverage, timing and area to records saved before those measurements existed. \\
+{\small } & \texttt{\small retime} & Recompute timing and area for every saved PASS design with the CURRENT timing code (no model call). \\
+{\small } & \texttt{\small \_\allowbreak{}timing\_\allowbreak{}cell} & 'min period 0.73 ns' for a clocked design, 'path 0.12 ns' for a combinational one. \\
+{\small } & \texttt{\small \_\allowbreak{}cell} & A table cell: '-' for results recorded before this measurement existed. \\
+{\small } & \texttt{\small summarise} & Build summary.md: first-attempt passes, passes after repair, failures, strength, toggle and timing per prompt. \\
+{\small } & \texttt{\small main} & Command line: run missing prompts (or --only, --redo), rebuild the summary, or backfill/retime saved designs without a model call. \\
+{\small \nolinkurl{evaluation/independent/run.py}} & \texttt{\small main} & Simulate every saved evaluation design against its hand-written reference testbench and report mismatches. \\
+{\small \nolinkurl{evaluation/independent/strength.py}} & \texttt{\small run\_\allowbreak{}mutant} & Simulate one mutant against a reference testbench: killed, survived or invalid. \\
+{\small } & \texttt{\small sweep} & Run every mutant of one saved design against its reference (in parallel) and count the outcomes. \\
+{\small } & \texttt{\small main} & Print, for each reference, how many injected bugs it caught and which survived. \\
+\end{longtable}

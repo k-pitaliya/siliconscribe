@@ -1,0 +1,326 @@
+\chapter{Methodology}
+\label{sec:method}
+
+\section{Specification Parsing}
+The first live call converts the prompt into an \code{RTLDesignSpec}: module name,
+parameters, ports (name, direction, width, description), behavioural rules, and
+constraints. The parser prompt requires the specification to pin down every
+observable behaviour, including reset polarity, opcode tables, priority order, and
+the value of all outputs for all input combinations. This is essential because the
+RTL and testbench generators never see each other's output.
+
+\subsection{Specification Review}
+\label{sec:specreview}
+The specification is itself written by a model, so it can misread the prompt, and a
+testbench derived from a wrong specification would agree with a wrong design. The
+optional ``Review the specification before generating'' setting therefore stops after
+parsing (\code{/api/spec/parse}) and shows the module name, ports, behaviour and
+constraints (Figure~\ref{fig:specreview}). The user can edit the behaviour and the
+constraints, and the run then uses exactly that specification: the parsing step is
+skipped. A user specification is treated as untrusted input: its names end up in file
+names, patterns and prompts, so they must be plain identifiers, and its text is
+bounded in size. The specification that was used is
+shown read-only with the results.
+
+
+\section{Independent, Specification-Derived Testbenches}
+\label{sec:tb}
+The testbench generator receives only the parsed specification; the RTL body is
+withheld. This breaks the circular verification of the earlier progress report, in
+which the same model could write a DUT and a testbench that were consistently wrong
+together. The prompt requires:
+
+\begin{itemize}
+\item a top module named \code{testbench}, with explicit named port connections;
+\item clock/reset generation for sequential DUTs;
+\item directed corner cases \emph{and} at least 100 randomized vectors;
+\item expected values computed from the specification, compared with \code{===};
+\item integer \code{pass_count}/\code{fail_count} and exact summary lines;
+\item \code{\$dumpfile}/\code{\$dumpvars} for the waveform;
+\item Verilog-2001/Icarus compatibility: module-scope declarations only, no
+\code{break}, \code{continue}, or \code{disable} of a function; a first-match
+\code{if/else-if} chain or a \code{found} flag for priority logic; width-correct
+comparisons.
+\end{itemize}
+
+These rules were not written speculatively. Each one corresponds to a real failure
+observed in a live run (Section~\ref{sec:discussion}). The testbench also prints one
+machine-readable \code{CHK|...} line per comparison (result, category, name, time,
+expected and actual value), which the Test cases tab lists. If the user chose a
+separate testbench model, this stage runs on that model (Section~\ref{sec:secondarch}).
+
+\section{Execution}
+The orchestrator writes \code{design.sv} and \code{testbench.sv} into the workspace,
+compiles with \code{iverilog -g2012 -Wall -o testbench.vvp}, and runs
+\code{vvp} under a configurable wall-clock timeout. Compilation diagnostics are
+parsed into structured errors. PASS/FAIL is decided by this execution, never by
+model text, using the rules below.
+
+\section{Verdict Integrity}
+\label{sec:verdict}
+The testbench prints its own summary, so the parser must not trust the first or the
+loosest match. Earlier versions did, and a review reproduced three problems: a
+mid-run phase line could decide the verdict, an uninitialised \code{Failed: x} was
+read as zero, and \code{ALL TESTS PASSED} overrode printed errors. The rules are now:
+
+\begin{itemize}
+\item the \code{Passed:} and \code{Failed:} summary lines must each occupy a whole
+line, the last pair wins, and both counts must be numbers, otherwise the run is
+ERROR;
+\item any \code{FAIL}, \code{ERROR} or \code{FATAL} line contradicts \code{Failed: 0}
+and makes the run FAIL;
+\item at least one check must have executed: \code{Passed: 0} is ERROR, never PASS;
+\item a simulator exit code other than zero (for example killed by a resource limit)
+is ERROR;
+\item the design under test may not print the summary lines or end the simulation
+(\code{$finish}, \code{$stop}, \code{$fatal} are refused in the RTL), so it cannot
+write its own verdict;
+\item a testbench whose watchdog stops the run before the summary is printed has no
+valid summary, so the run is ERROR.
+\end{itemize}
+
+The \code{CHK|...} rows are display data: they are size-capped and cross-checked
+against the summary, but they never decide the verdict. The watchdog rule was seen
+live: a Cloudflare model wrote a correct counter but a testbench whose watchdog was
+shorter than its own test, and the run was reported as ERROR with zero checks
+instead of PASS. A PASS is still evidence, not proof, which is why the measurements
+in Section~\ref{sec:evidence} exist.
+
+\section{Execution Sandbox Policy}
+\label{sec:sandbox}
+Generated or user-edited Verilog is executed by \code{vvp} with the server's privileges, so it is untrusted input. The final-review probe (Section~\ref{sec:review}) showed that Verilog file-I/O system tasks (\code{$fopen}, \code{$fgets}, \code{$fwrite}, \code{$readmemh} and related tasks) could read or write any path the process could reach, and that the contents came back in the API response. Three independent controls now apply to every simulation, and the static policy also runs before lint, synthesis and timing:
+
+\begin{enumerate}[label=\textbf{\arabic*.}]
+\item \textbf{Static policy.} Before anything is compiled, the RTL and testbench are scanned. System tasks are an allow-list: anything not on it, including \code{$system}, file I/O and \code{$readmemh}, is refused, as are the include directive, macro token pasting, and a \code{$dumpfile} argument that is not a plain file name. The scan deliberately does not strip comments: a naive comment stripper can be fooled by a double slash inside a string literal into hiding a forbidden call.
+\item \textbf{Scrubbed environment.} The compiler and simulator run with a minimal environment (path, locale and temporary directory only), so API keys held by the server never reach them.
+\item \textbf{Resource limits.} The simulator runs under file-size, CPU-time and memory limits (the memory limit is enforced on Linux, not on macOS), so a runaway \code{$display} loop cannot fill the disk before the wall-clock timeout; at most two simulations run at once.
+\end{enumerate}
+
+This is defence in depth, not a security boundary: a static scan of a language as flexible as Verilog can never be airtight. For multi-user deployment the simulator must run inside a container or jail (Section~\ref{sec:scale}).
+
+\section{Structured Diagnosis and Repair}
+\label{sec:loop}
+When the result is FAIL or ERROR, the fixer receives the RTL, the testbench, the
+specification, and the simulator log. It must answer in explicit sections:
+
+\begin{lstlisting}[language=,basicstyle=\ttfamily\scriptsize]
+<diagnosis>
+symptom: <what the log shows, with the first failing vector>
+root_cause: <the hardware reason, not a restatement of the symptom>
+fix_location: <file / module / line / signal>
+confidence: high|medium|low
+</diagnosis>
+<rtl> ... complete corrected RTL ... </rtl>
+<testbench> ... complete testbench ... </testbench>
+<summary> ... one sentence ... </summary>
+\end{lstlisting}
+
+The section format replaced a fragile JSON response after a live run produced
+malformed JSON with unescaped Verilog newlines and quotes. A tolerant JSON path and
+a field-salvage path remain for older models, but compliant models use the section
+format.
+
+The fixer is explicitly instructed to check the \emph{testbench oracle} against the
+specification: if the RTL matches the spec but the expected-value logic does not,
+the bug is in the testbench. This is a real failure mode: one generated testbench
+concatenated a 32-bit integer with a 3-bit code, making a 35-bit comparison that
+could never equal the 4-bit DUT output.
+
+Figure~\ref{fig:loop} shows the control flow. A patch is rejected if it removes
+self-checks from a testbench that already compiled and ran. The loop also tracks a
+comment/whitespace-normalised hash of \emph{both} RTL and testbench; an unchanged
+state is a no-op, and a repeated state is oscillation. Both terminate the loop
+instead of burning tokens. The loop runs for at most five iterations by default.
+When a separate model wrote the testbench, the design model may not change a
+testbench that compiled and ran at all; it may only repair one that does not compile
+or hangs. After a repair that changed the testbench, the original testbench is
+re-run on the final design and a second-opinion testbench is requested
+(Section~\ref{sec:secondarch}).
+
+
+\section{Deterministic Compiler Repairs}
+Some failures are not design decisions and should not be delegated to a model:
+
+\begin{itemize}
+\item \textbf{wire$\rightarrow$reg.} Icarus reports
+\code{X is not a valid l-value} when a net is assigned from a procedural block. The
+repair is scoped to the file named in the diagnostic, changes only that declaration,
+and is recorded as \code{fix_type="compiler_repair"} with a real diagnosis.
+\item \textbf{disable$\rightarrow$return.} Icarus rejects \code{disable <function>}
+inside a function but accepts \code{return <function>}. The repair preserves the
+first-match semantics of the oracle.
+\end{itemize}
+
+Neither repair touches the testbench's checks; both are labelled as compiler
+repairs in the UI and in \code{iteration_history}.
+
+\section{Honest Degraded Mode}
+\label{sec:fallback}
+The offline curated designs remain available for demonstrations and for the
+automated suite, but the policy is explicit:
+
+\begin{itemize}
+\item If the provider is unreachable \emph{before any live artifact exists}, the
+pipeline may fall back to a curated design and attaches a visible
+\code{fallback_notice}. The UI shows a degraded-mode banner.
+\item Once a live call has succeeded, a later outage raises an error. The run does
+not silently swap the user's design mid-flight.
+\item Scripted offline fixes return \code{diagnosis=None} and
+\code{fix_type="offline_scripted"}. They never fabricate a root cause.
+\item The offline fallback applies only to the configured default model. A model the
+user picked on purpose (or a separate testbench model) that fails is reported in
+plain words and the user picks another; it is never replaced by the demo.
+\end{itemize}
+
+For demonstrations the fallback ladder is therefore: the live model, then the
+labelled offline scripted demo, then saved results of earlier live runs.
+
+This policy was added after an early live run silently switched to a curated design
+when the provider failed, producing a PASS that did not correspond to the prompt.
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+    font=\footnotesize,
+    start/.style={draw=ink,rounded corners=8pt,fill=softgrey,text width=3.6cm,align=center,inner sep=4pt},
+    proc/.style={draw=ink,rounded corners=2pt,fill=white,text width=4.2cm,align=center,inner sep=4pt},
+    dec/.style={draw=ink,diamond,aspect=2.4,fill=softgrey,text width=3.4cm,align=center,inner sep=1pt},
+    arr/.style={-{Latex[length=2.4mm]},line width=0.7pt},
+    lbl/.style={font=\scriptsize,color=inkdark}
+  ]
+  \node[start] (sim) {Simulate RTL + TB};
+  \node[dec,below=7mm of sim] (ok) {PASS?};
+  \node[proc,below=9mm of ok] (diag) {Compiler repair first;\\else LLM diagnosis\\
+    \scriptsize symptom / root cause / fix};
+  \node[dec,below=9mm of diag,font=\scriptsize] (guard) {Changed?\\Not seen?\\Checks kept?};
+  \node[proc,right=18mm of ok] (done) {Return PASS\\+ waveform};
+  \node[proc,right=18mm of guard] (stop) {Stop: no-op /\\oscillation / cheat};
+  \draw[arr] (sim) -- (ok);
+  \draw[arr] (ok) -- node[lbl,above]{yes} (done);
+  \draw[arr] (ok) -- node[lbl,right]{no} (diag);
+  \draw[arr] (diag) -- (guard);
+  \draw[arr] (guard) -- node[lbl,above]{no} (stop);
+  \draw[arr] (guard.west) -- ++(-2.9,0) |- node[lbl,left,pos=0.25]{yes: retry} (sim.west);
+\end{tikzpicture}
+\caption{Diagnosis and repair loop. Mechanical compiler repairs run before the LLM;
+the simulator is the only oracle. A patch that removes testbench checks, changes
+nothing, or repeats a previous state terminates the loop.}
+\label{fig:loop}
+\end{figure}
+
+
+\section{Orchestration Algorithm}
+\begin{lstlisting}[language=,basicstyle=\ttfamily\scriptsize,caption={Self-correction loop as implemented in orchestrator.py (simplified).},label={lst:algo}]
+spec   = parse_intent(prompt)            # offline fallback only before any live call
+rtl    = generate_rtl(spec)              # must contain a complete module; one retry
+tb     = generate_testbench(spec)        # RTL withheld; must instantiate DUT and self-check
+result = simulate(rtl, tb); seen = {hash(rtl, tb)}
+for i in 1..max_iterations while result in {FAIL, ERROR}:   # default 5
+    if result == ERROR and compiler_repair applies:      # wire->reg, disable->return
+        apply repair; result = simulate(rtl, tb); continue
+    fix = fix_design(rtl, tb, log, spec)                  # diagnosis + full patched files
+    if result != ERROR and checks(fix.tb) < checks(tb):   # anti-cheat
+        fix.tb = tb
+    if separate_tb_model and result != ERROR:             # a failing check is reported,
+        fix.tb = tb                                       # never rewritten away
+    h = hash(fix.rtl, fix.tb)                             # whitespace/comment-insensitive
+    if h == hash(rtl, tb): stop("no-op")
+    if h in seen:          stop("oscillation")
+    seen.add(h); rtl, tb = fix.rtl, fix.tb; result = simulate(rtl, tb)
+if PASS and tb != original_tb:                            # testbench was rewritten
+    rerun(original_tb); second = simulate(rtl, generate_testbench(spec))
+if PASS: strength = mutants(rtl, tb); timing = yosys_opensta(rtl)
+return result, history, waveform, schematic, synthesis, strength, timing, second
+\end{lstlisting}
+
+\section{Measuring the Evidence behind a PASS}
+\label{sec:evidence}
+A PASS only says that the testbench found nothing wrong. The checks in this section
+ask how much that is worth. None of them can change a verdict; they add
+information and warnings to it.
+
+\subsection{Testbench Strength by Mutation}
+\label{sec:strength}
+After a PASS, \code{mutation.py} applies mutation testing~\cite{demillo} to the
+design: it makes up to 12 one-token changes (\code{+} to \code{-}, \code{&} to
+\code{|}, \code{==} to \code{!=}, a flipped constant or case label, a negated
+\code{if}, and similar) and runs the \emph{same} testbench against each changed copy.
+Comments, strings, directives, parameters, bit ranges and loop headers are not mutated. The score
+is bugs caught divided by bugs run; a mutant that does not compile is not counted.
+The whole check has a time budget of 40\,s and each mutant 6\,s, so a hanging mutant
+cannot block the run. When at least five mutants ran and fewer than half were caught,
+the PASS is flagged as weak evidence. A surviving mutant may be \emph{equivalent}
+(the changed design behaves identically), so a survivor means ``not detected'', not
+``proven missed''.
+
+\subsection{Measured Toggle Coverage}
+Toggle coverage is read from the simulator's own VCD file. A bit counts as covered
+only when it is seen going directly from 0 to 1 and from 1 to 0 (a change through
+\code{x} or \code{z} does not count), and only nets inside the instantiated design
+are counted, so testbench bookkeeping cannot raise the number. Signals that never
+toggled are listed bit by bit. Line and branch coverage are \emph{not} measured.
+Verilator~\cite{verilator} was tried for them and rejected: only 3 of 12 designs built
+with its pip-installed release, and the testbenches of two evaluated designs (c3, c4)
+hit an ``unsupported tristate construct'' error. Any other coverage number that a
+testbench prints about itself is shown as self-reported.
+
+\subsection{Gate-Level Check of the Mapped Netlist}
+\label{sec:gatelevel}
+The timing and area numbers of Section~\ref{sec:timingarch} are only useful if the
+mapped netlist is the same circuit as the RTL. The script
+\code{tools/verify_mapping.py} checks this three ways, none of which reads the number
+it checks from the same place:
+
+\begin{enumerate}[label=\textbf{\arabic*.}]
+\item \textbf{Gate-level simulation.} Yosys writes behavioural models of the sky130
+cells from the liberty file; the mapped netlist is simulated in Icarus with the
+\emph{same} testbench as the RTL and must give identical pass and fail counts.
+\item \textbf{Area recount.} Area and cell count are recomputed from the written
+netlist and the liberty file and must equal what Yosys reported.
+\item \textbf{Timing sanity.} The design is timed at a second target clock; the
+implied minimum period (period minus slack) must not change.
+\end{enumerate}
+
+A design that the stage refuses on purpose (latch, tri-state, derived clock) is
+reported as such and is not a failure. The checker was itself tested on sabotaged
+netlists, which it caught. On the final code all 19 checked designs (the built-in
+designs and the saved evaluation designs) were equivalent at gate level. This is a
+simulation-based check with the project's testbenches, not a formal equivalence proof.
+
+\subsection{Independent Reference Testbenches}
+\label{sec:reftb}
+Strength measures the model's testbench, not the design. To check the designs
+themselves, a reference testbench was written by hand (not by a model) for every
+evaluated design (kept in \texttt{evaluation/\allowbreak independent/}). Each one compares the design with
+a reference model and reports a mismatch count; a design is CORRECT only with zero
+mismatches. The references were measured in turn: every one-token mutant that the
+app's generator can make (not just a sample of 12) was run against them, and each
+survivor was reviewed by hand.
+
+\section{Evaluation Protocol}
+\label{sec:evalprotocol}
+The live evaluation uses a fixed set of 15 prompts (Table~\ref{tab:evalprompts}),
+easy to moderate, spread over 7 combinational, 6 sequential and 2 FSM designs. Each
+prompt was run once through the real pipeline by \code{tools/evaluate_live.py}, with
+the free DeepSeek V4.1 Flash model through the OpenCode app writing both the design
+and the testbench. The rules were fixed before the runs:
+
+\begin{itemize}
+\item one JSON record per finished prompt is written immediately, and a re-run
+resumes, so a free-tier cut-off loses nothing;
+\item a provider outage or quota error stops the run and is not recorded as a design
+failure;
+\item a run that fell back to the offline demo is recorded as a fallback and is not
+counted;
+\item a prompt that never completes is reported as ``no result'', never as a pass or
+a failure;
+\item for each completed prompt the record keeps the verdict, the number of repairs,
+the check counts, the strength score, the measured toggle coverage, the timing and
+area estimate and the run time;
+\item every passing design is then checked against its independent reference
+testbench (Section~\ref{sec:reftb}), which answers whether a PASS was a false PASS.
+\end{itemize}
+
+The evaluation calls the pipeline directly, so it does not write to the projects
+database. The results are reported in Section~\ref{sec:eval}.
+

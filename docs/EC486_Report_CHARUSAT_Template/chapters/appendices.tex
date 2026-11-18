@@ -1,0 +1,74 @@
+\chapter{Reproduction}
+\label{app:repro}
+
+\section{Running the system}
+\begin{lstlisting}[language=bash,basicstyle=\ttfamily\scriptsize]
+# Tools: Icarus Verilog 12.0; for timing and area also Yosys, OpenSTA (sta)
+# and the sky130 liberty file (see backend/pdk/README.md)
+cd backend
+export PATH="$HOME/.local/bin:$PATH"
+
+# Offline demo (built-in designs, no model calls)
+OFFLINE_MODE=1 python3 main.py
+
+# Live backend through the OpenCode app; model keys for Cloudflare
+# Workers AI and NVIDIA NIM are read only from backend/.env
+env -u OFFLINE_MODE LLM_PROVIDER=opencode-app \
+  LLM_MODEL=deepseek-v4.1-flash-free python3 main.py
+
+# Any other OpenAI-compatible endpoint (example: OpenRouter)
+env -u LLM_PROVIDER -u OPENCODE_API_KEY -u ZEN_API_KEY -u NVIDIA_API_KEY \
+  OPENAI_API_KEY=... OPENAI_BASE_URL=https://openrouter.ai/api/v1 \
+  LLM_MODEL=nvidia/nemotron-3-ultra-550b-a55b:free python3 main.py
+
+# Frontend dev server
+cd ../frontend && npm run dev -- --host 127.0.0.1
+\end{lstlisting}
+
+\section{Verifying the tool}
+\label{app:verify}
+These commands reproduce Table~\ref{tab:verify}. All except the last make no model
+calls.
+\begin{lstlisting}[language=bash,basicstyle=\ttfamily\scriptsize]
+cd backend
+export PATH="$HOME/.local/bin:$PATH"
+OFFLINE_MODE=1 python3 -m pytest            # 436 passed
+python3 tools/mutation_sweep.py             # 27/27 injected bugs caught
+python3 tools/verify_mapping.py             # 19/19 designs equivalent at gate level
+python3 evaluation/independent/run.py       # 14/14 evaluated designs correct
+python3 evaluation/independent/strength.py  # strength of the reference testbenches
+python3 tools/preflight.py --live           # one small model call; fallback ladder
+
+cd ../frontend
+npx tsc -b && npx vitest run && npm run build   # 211 passed
+\end{lstlisting}
+
+The live evaluation of Section~\ref{sec:eval} is re-run with
+\code{python3 tools/evaluate_live.py} (it resumes and skips prompts that already
+have a record); \code{--summary} only rebuilds \code{evaluation/summary.md} from the
+saved records in \code{evaluation/results.jsonl}.
+
+The live harness used for the earlier priority-encoder and seeded-bug runs calls
+the same event generator as the web API (\code{pipeline_events}). The resulting RTL,
+testbench, simulator transcript, and structured diagnosis are archived under
+the directory \path{docs/evidence/} for audit.
+
+
+\chapter{Complete Prompt Set}
+\label{app:prompts}
+The system prompts below are extracted from \code{backend/llm_service.py} (only the dashes are changed for typesetting). The same testbench prompt is used for a separate testbench model and for the second-opinion testbench.
+\lstset{basicstyle=\ttfamily\tiny,language=,breaklines=true,frame=single}
+\section{Specification parser}
+\lstinputlisting{appendix/prompt_intent.txt}
+\section{RTL generator}
+\lstinputlisting{appendix/prompt_rtl.txt}
+\section{Independent testbench generator}
+\lstinputlisting{appendix/prompt_testbench.txt}
+\section{Debugger (diagnosis and repair)}
+\lstinputlisting{appendix/prompt_fix.txt}
+
+\chapter{Live-Generated Testbench}
+\label{app:tb}
+The specification-derived testbench generated live for the priority encoder of Chapter~\ref{sec:results} (archived as \code{docs/evidence/livepriority08_testbench.sv}), followed by the simulator transcript.
+\lstinputlisting[style=vlog,basicstyle=\ttfamily\tiny]{evidence/livepriority08_testbench.sv}
+\lstinputlisting[language=,basicstyle=\ttfamily\tiny]{evidence/livepriority08_transcript.log}

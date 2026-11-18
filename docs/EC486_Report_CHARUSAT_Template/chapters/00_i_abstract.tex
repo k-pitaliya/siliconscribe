@@ -1,0 +1,34 @@
+\chapter*{\center \Large Abstract}
+
+Large language models can write Verilog, but raw generation is an open loop: the
+model never executes its own code. This report presents \textbf{SiliconScribe}, a
+browser-based EDA playground that closes that loop with a real simulator. A natural
+language prompt is parsed into a structured specification, which the user may review
+and edit; RTL and a self-checking testbench are generated \emph{independently} from
+that specification; Icarus Verilog 12.0 compiles and runs them; and failures are
+sent back to the model, which must return a structured diagnosis and a corrected
+design, for up to five iterations. The simulator decides PASS or FAIL, never the
+model. Around that loop the system measures how much a PASS is worth: testbench
+strength by mutation testing, toggle coverage measured from the simulator's own
+waveform, a second-opinion testbench when a repair rewrote the testbench, and an
+optional separate model for the testbench. After a PASS, Yosys maps the design to the
+SkyWater 130\,nm cell library and OpenSTA reports slack, maximum frequency and area as
+a \emph{pre-layout estimate} (one corner, no wire delay, not sign-off). The model is
+chosen per run from the OpenCode app, Cloudflare Workers AI or NVIDIA NIM, with keys
+read only from the server environment.
+
+In a live evaluation with a free model (DeepSeek V4.1 Flash), \textbf{14 of 15}
+prompts completed with no offline fallback: \textbf{8 passed on the first attempt,
+6 after self-repair and none failed}. Their testbenches caught \textbf{102 of 111}
+injected bugs (92\%), and independent hand-written reference testbenches found all 14
+designs correct, so there was no false PASS. The fifteenth prompt timed out three
+times and is reported as no result. The tool itself is checked by \textbf{436 backend
+tests} and \textbf{211 frontend tests}, a mutation sweep of the built-in designs
+(27 of 27 bugs caught), a gate-level check of the mapped netlist on 19 designs, and
+an automated accessibility audit with zero violations. The architecture, the
+engineering failure modes found during validation and the limitations that remain
+are documented, together with a concrete scaling path (Section~\ref{sec:scale}).
+
+\vspace{0.5cm}
+\noindent
+\textbf{Keywords:} Large Language Models, RTL Generation, Verilog, Functional Verification, Self-Checking Testbench, Icarus Verilog, Mutation Testing, Static Timing Analysis, Electronic Design Automation.
