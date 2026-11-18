@@ -429,14 +429,14 @@ describe('ResultsPanel: timing and mapped area', () => {
   it('words a clockless design as an input-to-output path, not as meeting a clock', () => {
     const { rerender } = render(<ResultsPanel {...base} timing={timing({ clock: 'virtual (combinational design)', slack_ns: 7.51, period_ns: 10, met: true, fmax_mhz: 401.6 })} />)
     const s = screen.getByTestId('timing-summary').textContent ?? ''
-    expect(s).toContain('Longest input-to-output path: 2.49 ns')
-    expect(s).toContain('fits a 10 ns budget (100 MHz) with 7.51 ns to spare')
+    expect(s).toContain('Longest input-to-output path: 2.49 ns.')
+    expect(s).toContain('It fits the 10 ns budget (100 MHz) with 7.51 ns to spare.')
     expect(s).toContain('no clock')
     expect(s).not.toMatch(/Meets|Misses/)
     rerender(<ResultsPanel {...base} timing={timing({ clock: 'virtual (combinational design)', slack_ns: -2.19, period_ns: 0.5, met: false, target_mhz: 2000, fmax_mhz: 371.7 })} />)
     const bad = screen.getByTestId('timing-summary').textContent ?? ''
-    expect(bad).toContain('Longest input-to-output path: 2.69 ns')
-    expect(bad).toContain('2.19 ns over a 0.5 ns budget (2000 MHz)')
+    expect(bad).toContain('Longest input-to-output path: 2.69 ns.')
+    expect(bad).toContain('It is 2.19 ns over the 0.5 ns budget (2000 MHz).')
   })
 
   it('keeps the real area visible when the timing itself was refused', () => {

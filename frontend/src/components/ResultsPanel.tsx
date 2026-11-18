@@ -267,10 +267,10 @@ function ResultsView({
                   timing.clock?.startsWith('virtual') ? (
                     // No clock in the design: the honest question is "how long is the slowest input-to-output path?"
                     <div data-testid="timing-summary" style={timing.met ? undefined : { color: 'var(--fail)' }}>
-                      <strong>Longest input-to-output path: {(timing.period_ns - timing.slack_ns).toFixed(2)} ns</strong>
-                      {' '}({timing.met
-                        ? `fits a ${timing.period_ns} ns budget (${timing.target_mhz} MHz) with ${timing.slack_ns.toFixed(2)} ns to spare`
-                        : `${(-timing.slack_ns).toFixed(2)} ns over a ${timing.period_ns} ns budget (${timing.target_mhz} MHz)`})
+                      <strong>Longest input-to-output path: {(timing.period_ns - timing.slack_ns).toFixed(2)} ns.</strong>
+                      {' '}{timing.met
+                        ? `It fits the ${timing.period_ns} ns budget (${timing.target_mhz} MHz) with ${timing.slack_ns.toFixed(2)} ns to spare.`
+                        : `It is ${(-timing.slack_ns).toFixed(2)} ns over the ${timing.period_ns} ns budget (${timing.target_mhz} MHz).`}
                       <span className="muted"> This design has no clock.</span>
                     </div>
                   ) : (
