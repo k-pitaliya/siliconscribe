@@ -5,6 +5,7 @@ module tb;
   reg [7:0] din = 0;
   wire [7:0] dout;
   reg [7:0] model;
+  reg known = 0;                                   // defined only after the first reset edge
   integer i, bad = 0, n = 0;
   loadable_updown_counter dut(.clk(clk), .rst(rst), .load(load), .up_down(up_down), .din(din), .dout(dout));
   always #5 clk = ~clk;
@@ -12,9 +13,11 @@ module tb;
   // one clock cycle: drive on the falling edge, update the reference model, compare just after the rising edge
   task step(input r, input l, input u, input [7:0] d);
     begin
-      @(negedge clk); rst = r; load = l; up_down = u; din = d;
+      @(negedge clk); rst = r; load = l; up_down = u; din = d; #1;
+      if (known) begin n = n + 1; if (dout !== model) bad = bad + 1; end   // inputs changed between edges: no effect yet
       @(posedge clk); #1;
       if (r) model = 8'd0; else if (l) model = d; else if (u) model = model + 8'd1; else model = model - 8'd1;
+      known = 1;
       n = n + 1;
       if (dout !== model) bad = bad + 1;
     end
