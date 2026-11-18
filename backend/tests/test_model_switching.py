@@ -118,6 +118,24 @@ def test_the_menu_spelling_of_the_default_model_is_the_same_model_so_stage_routi
     assert [c[c.index("-m") + 1] for c in cmds] == ["opencode/big-pickle", "opencode/gpt-5.5"]
 
 
+def test_the_opencode_app_never_receives_the_cloudflare_credentials(monkeypatch):
+    monkeypatch.setenv("CLOUDFLARE_API_TOKEN", TOKEN)
+    monkeypatch.setenv("CLOUDFLARE_ACCOUNT_ID", ACCOUNT)
+    monkeypatch.setenv("SOME_OTHER_SETTING", "kept")
+    seen = []
+    def fake_run(cmd, **kw):
+        seen.append(kw["env"])
+        return subprocess.CompletedProcess(cmd, 0, stdout=json.dumps({"type": "text", "part": {"text": "ok"}}) + "\n", stderr="")
+    monkeypatch.setattr(llm_service.subprocess, "run", fake_run)
+    monkeypatch.setattr(mc.subprocess, "run", fake_run)
+    llm_service.OpenCodeAppProvider(model="deepseek-v4.1-flash-free")._chat(None, "x", 0.0)
+    mc.opencode_models(refresh=True)
+    assert len(seen) == 2
+    for env in seen:
+        assert not any(k.startswith("CLOUDFLARE_") for k in env) and env["SOME_OTHER_SETTING"] == "kept"
+        assert TOKEN not in env.values() and ACCOUNT not in env.values()
+
+
 @pytest.mark.parametrize("bad", ["-x/y", "a b/c", "x;y", "a\nb", "$(id)/x"])
 def test_a_malformed_model_name_never_reaches_the_subprocess(monkeypatch, bad):
     cmds = []

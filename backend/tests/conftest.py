@@ -12,6 +12,21 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import pytest  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def _no_real_credentials_or_network_models(monkeypatch):
+    """No test may depend on the developer's real Cloudflare key (backend/.env is loaded at import) or reach Cloudflare.
+
+    Without this a real key in backend/.env made list_models() append the live Cloudflare catalogue to every
+    result and call the network. Tests that need Cloudflare set fake values themselves, against a local stand-in.
+    """
+    import model_catalog
+    for name in ("CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_API_KEY", "CLOUDFLARE_API_BASE"):
+        monkeypatch.delenv(name, raising=False)
+    model_catalog.clear_cache()
+    yield
+    model_catalog.clear_cache()
+
+
 @pytest.fixture(autouse=True, scope="session")
 def _isolated_workspace(tmp_path_factory):
     """Run the whole suite against a throw-away workspace and projects database.

@@ -21,6 +21,7 @@ import json
 import logging
 import os
 import re
+import ssl
 import subprocess
 import tempfile
 import threading
@@ -58,6 +59,11 @@ STATIC_CLOUDFLARE = [
 
 _lock = threading.Lock()
 _cache: Dict[str, Tuple[float, object]] = {}
+
+
+def child_env() -> Dict[str, str]:
+    """The environment handed to the `opencode` app: everything except the Cloudflare credentials, which it has no use for."""
+    return {k: v for k, v in os.environ.items() if not k.upper().startswith("CLOUDFLARE_")}
 
 
 def is_valid_model_id(value: object) -> bool:
@@ -126,7 +132,7 @@ def opencode_models(refresh: bool = False) -> List[dict]:
     try:
         with tempfile.TemporaryDirectory(prefix="siliconscribe_ocm_") as cwd:
             p = subprocess.run(["opencode", "models"], cwd=cwd, capture_output=True, text=True, timeout=40,
-                               stdin=subprocess.DEVNULL, env=os.environ.copy())
+                               stdin=subprocess.DEVNULL, env=child_env())
         models = parse_opencode_models(p.stdout) if p.returncode == 0 else []
         if models:
             ttl = OPENCODE_TTL
@@ -179,12 +185,27 @@ def parse_cloudflare_search(payload: dict) -> List[dict]:
     return out
 
 
+def _ssl_context() -> ssl.SSLContext:
+    """Certificates the rest of the app already relies on (certifi). The python.org builds of Python ship without a
+    system certificate bundle, so plain urllib cannot verify any HTTPS site there (it failed on a real machine)."""
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        return ssl.create_default_context()
+
+
+def _urlopen(req: urllib.request.Request, timeout: float):
+    context = _ssl_context() if req.full_url.lower().startswith("https://") else None
+    return urllib.request.urlopen(req, timeout=timeout, context=context)      # noqa: S310 - fixed Cloudflare endpoint, ids validated
+
+
 def _search_cloudflare(account: str, token: str, timeout: float = 15.0) -> List[dict]:
     found: List[dict] = []
     for page in range(1, CLOUDFLARE_SEARCH_PAGES + 1):
         url = f"{_api_base()}/accounts/{account}/ai/models/search?" + urllib.parse.urlencode({"per_page": 100, "page": page})
         req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}", "Accept": "application/json"})
-        with urllib.request.urlopen(req, timeout=timeout) as r:      # noqa: S310 - fixed https endpoint, account id validated
+        with _urlopen(req, timeout) as r:
             payload = json.loads(r.read().decode("utf-8"))
         found += parse_cloudflare_search(payload)
         if len(payload.get("result") or []) < 100:

@@ -162,3 +162,19 @@ def test_cloudflare_catalogue_is_cached_until_refreshed(cf):
         assert len(server.requests) == 1
         mc.cloudflare_status(refresh=True)
         assert len(server.requests) == 2
+
+
+def test_https_uses_the_certificate_bundle_the_app_ships_with_not_the_systems(monkeypatch):
+    ctx = mc._ssl_context()
+    assert ctx.verify_mode.name == "CERT_REQUIRED" and ctx.check_hostname                       # verification stays on
+    import certifi
+    assert len(ctx.get_ca_certs()) > 50 and certifi.where()                                       # and has real roots (the default build had none)
+    seen = {}
+    monkeypatch.setattr(mc.urllib.request, "urlopen", lambda req, timeout=None, context=None: seen.update(ctx=context) or (_ for _ in ()).throw(OSError("stop")))
+    with pytest.raises(OSError):
+        mc._urlopen(mc.urllib.request.Request("https://api.cloudflare.com/x"), 5)
+    assert seen["ctx"] is not None                                                                # https gets the context
+    with pytest.raises(OSError):
+        mc._urlopen(mc.urllib.request.Request("http://127.0.0.1:1/x"), 5)
+    assert seen["ctx"] is None                                                                    # the local test stand-in does not
+

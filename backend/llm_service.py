@@ -651,7 +651,7 @@ class OpenCodeAppProvider(OpenAIProvider):
         with tempfile.TemporaryDirectory(prefix="siliconscribe_oc_") as cwd:
             try:
                 proc = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True,
-                                      timeout=self.timeout, env=os.environ.copy())
+                                      timeout=self.timeout, env=model_catalog.child_env())   # no Cloudflare secrets for the OpenCode app
             except subprocess.TimeoutExpired as e:
                 raise LLMUpstreamError(f"LLM_UPSTREAM:Timeout: opencode model={chosen} after {self.timeout:.0f}s") from e
             except FileNotFoundError as e:
