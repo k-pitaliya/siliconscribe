@@ -60,8 +60,11 @@ NIM_KNOWN_BROKEN = {"bigcode/starcoder2-15b"}      # HTTP 404 on 2026-11-18
 # Answered a one-line request in seconds in a live test on 2026-11-18; listed first. Everything else follows alphabetically.
 NIM_PREFERRED = ("poolside/laguna-xs-2.1", "nvidia/nemotron-3-ultra-550b-a55b", "nvidia/nemotron-3.5-lightning-30b-a3b",
                  "minimaxai/minimax-m3.1-flash")
-PROVIDER_LABELS = {"opencode": "OpenCode", "opencode-go": "OpenCode Go", "nvidia": "NVIDIA", "openrouter": "OpenRouter"}
-PROVIDER_ORDER = ("opencode", "opencode-go", "nvidia", "openrouter")
+PROVIDER_LABELS = {"opencode": "OpenCode", "opencode-go": "OpenCode Go", "github-copilot": "GitHub Copilot", "nvidia": "NVIDIA", "openrouter": "OpenRouter"}
+PROVIDER_ORDER = ("opencode", "opencode-go", "github-copilot", "nvidia", "openrouter")
+# Copilot through OpenCode: on the Free and Student plans only "auto" exists, and GitHub does not say which model it picks.
+COPILOT_NOTE = ("GitHub picks the model for each request and does not say which, so a result cannot name its model "
+                "and runs are not reproducible. Uses your Copilot allowance.")
 
 # Suggested Workers AI chat models, used only when the live catalogue cannot be read.
 STATIC_CLOUDFLARE = [
@@ -140,7 +143,7 @@ def parse_opencode_models(text: str) -> List[dict]:
             "id": mid, "label": name, "provider": provider,
             "group": PROVIDER_LABELS.get(provider, provider),
             "free": free,
-            "note": "Marked free by its name" if free else "Not marked free: may use credits or need a key for this provider",
+            "note": COPILOT_NOTE if provider == "github-copilot" else "Marked free by its name" if free else "Not marked free: may use credits or need a key for this provider",
             "tag": "balanced", "thinking_levels": [], "reasoning": False,
         })
     rank = {p: i for i, p in enumerate(PROVIDER_ORDER)}

@@ -263,3 +263,11 @@ def test_the_opencode_app_never_receives_the_nim_key_either(monkeypatch):
     env = mc.child_env()
     assert "NVIDIA_NIM_API_KEY" not in env and NIM_KEY not in env.values() and env["NVIDIA_API_KEY"] == OTHER_KEY
 
+
+def test_copilot_auto_is_labelled_honestly_and_never_called_free():
+    ms = mc.parse_opencode_models("opencode/deepseek-v4.1-flash-free\ngithub-copilot/auto\nnvidia/x/y\n")
+    cp = next(m for m in ms if m["id"] == "github-copilot/auto")
+    assert cp["group"] == "GitHub Copilot" and cp["free"] is None                      # hidden behind "Show other models"
+    assert "does not say which" in cp["note"] and "allowance" in cp["note"]
+    assert [m["provider"] for m in ms] == ["opencode", "github-copilot", "nvidia"]     # shown after OpenCode, before the rest
+
