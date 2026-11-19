@@ -584,6 +584,8 @@ textarea::placeholder, input::placeholder { color: var(--ink-3); }
 .link-btn:hover { color: var(--ink); }
 
 /* specification review: read and edit what the design will be built from before generating */
+/* The review is not inside a tab, so its pane must scroll itself (a long specification hid the Generate button). */
+.spec-pane { overflow-y: auto; }
 .spec-review { max-width: 860px; margin: 0 auto; padding: 20px 24px; display: grid; gap: 10px; align-content: start; }
 .spec-review h2 { margin: 0; font-size: 18px; font-weight: 600; }
 .spec-review p { margin: 0; color: var(--ink-2); font-size: 14px; }

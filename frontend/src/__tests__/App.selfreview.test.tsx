@@ -147,6 +147,14 @@ describe('App: self-review findings (19 Nov)', () => {
     for (const call of vi.mocked(api.reSimulate).mock.calls) expect(call[0]).not.toBe('old1')   // never the old design id + old testbench
   })
 
+  it('the specification review sits in its own scrollable pane', async () => {
+    render(<App />); await ready()
+    fireEvent.click(screen.getByRole('checkbox', { name: /Review the specification/ }))
+    type(); generate()
+    const review = await screen.findByRole('region', { name: 'Review the specification' })
+    expect(review.closest('main')).toHaveClass('spec-pane')     // .spec-pane { overflow-y: auto } (a long spec hid the Generate button)
+  })
+
   it('a disputed PASS from the server is shown as disputed', async () => {
     vi.mocked(api.streamDesign).mockImplementation(async (_p, onEvent) => {
       onEvent({ stage: 'done', message: 'done', status: 'PASS', response: done({ pass_disputed: 'The original testbench still fails the final design.' }) } as never)

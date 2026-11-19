@@ -553,7 +553,7 @@ export default function App() {
         </aside>
 
         {pendingSpec ? (
-          <main className="main-pane results-pane" aria-label="Workspace">
+          <main className="main-pane results-pane spec-pane" aria-label="Workspace">
           <SpecReview
             key={`${pendingSpec.prompt}-${pendingSpec.spec.module_name}`}
             spec={pendingSpec.spec}
