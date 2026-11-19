@@ -512,3 +512,56 @@ describe('ResultsPanel: who wrote what, and the second opinion', () => {
   })
 })
 
+
+
+describe('ResultsPanel: formal equivalence and critical path', () => {
+  const base = { result: passResult, waveform: null, schematic: null, history: [] as IterationRecord[] }
+  const t = (over: Partial<TimingReport> = {}): TimingReport => ({
+    available: true, library: 'sky130_fd_sc_hd', clock: 'clk', target_mhz: 100, period_ns: 10, slack_ns: 9.27, met: true,
+    cells: [], note: 'Not sign-off timing.', ...over,
+  })
+
+  it('says the netlist is formally proven equal to the RTL, and how', () => {
+    render(<ResultsPanel {...base} timing={t({ equivalence: 'proven', equivalence_method: 'SAT proof over every input value' })} />)
+    const e = screen.getByTestId('equivalence')
+    expect(e.textContent).toContain('Netlist formally proven equal to the RTL')
+    expect(e.textContent).toContain('SAT proof over every input value')
+  })
+
+  it('never presents an undecided proof as a pass', () => {
+    render(<ResultsPanel {...base} timing={t({ equivalence: 'not_proven', equivalence_method: 'temporal induction proved 0 of 2 points' })} />)
+    const e = screen.getByTestId('equivalence').textContent ?? ''
+    expect(e).toContain('not formally proven')
+    expect(e).toContain('0 of 2 points')
+    expect(e).toContain('simulation check still applies')
+    expect(e).not.toContain('Netlist formally proven equal')       // the pass wording
+  })
+
+  it('raises an alert and invalidates the numbers when the netlist differs from the RTL', () => {
+    render(<ResultsPanel {...base} timing={t({ equivalence: 'different', equivalence_method: 'SAT found input values where the netlist and the RTL disagree' })} />)
+    const e = screen.getByRole('alert')
+    expect(e.textContent).toContain('does not match the RTL')
+    expect(e.textContent).toContain('treat them as invalid')
+  })
+
+  it('lists the critical path pin by pin with delays', () => {
+    const critical_path = [
+      { point: '_14_/CLK', cell: 'dfrtp_1', edge: 'rise', incr_ns: 0, arrival_ns: 0 },
+      { point: '_14_/Q', cell: 'dfrtp_1', edge: 'rise', incr_ns: 0.3584, arrival_ns: 0.3584 },
+      { point: '_09_/Y', cell: 'nand4_1', edge: 'fall', incr_ns: 0.1163, arrival_ns: 0.4747 },
+      { point: '_17_/D', cell: 'dfrtp_1', edge: 'fall', incr_ns: 0, arrival_ns: 0.4747 },
+    ]
+    render(<ResultsPanel {...base} timing={t({ critical_path })} />)
+    const p = screen.getByTestId('critical-path')
+    expect(p.textContent).toContain('2 delay stages, 0.475 ns')
+    expect(p.textContent).toContain('nand4_1')
+    expect(p.textContent).toContain('0.1163')
+    expect(screen.getAllByRole('row')).toHaveLength(5)          // header + 4 pins
+  })
+
+  it('shows neither when the timing report has no proof or path', () => {
+    render(<ResultsPanel {...base} timing={t()} />)
+    expect(screen.queryByTestId('equivalence')).toBeNull()
+    expect(screen.queryByTestId('critical-path')).toBeNull()
+  })
+})

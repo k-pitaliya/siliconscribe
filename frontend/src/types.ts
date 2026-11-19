@@ -216,12 +216,25 @@ export interface TimingReport {
   critical_start?: string | null
   critical_end?: string | null
   critical_delay_ns?: number | null
+  /** The worst path, pin by pin (OpenSTA). */
+  critical_path?: CriticalPathRow[]
+  /** Formal check that the mapped netlist equals the RTL. */
+  equivalence?: 'proven' | 'different' | 'not_proven' | null
+  equivalence_method?: string
   area_um2?: number | null
   cell_count?: number | null
   flip_flops?: number | null
   cells: [string, number][]
   note: string
   error?: string | null
+}
+
+export interface CriticalPathRow {
+  point: string
+  cell: string
+  edge: 'rise' | 'fall' | string
+  incr_ns: number
+  arrival_ns: number
 }
 
 /** A fresh testbench, written from the same specification, run against the final design after a repair rewrote the first. */

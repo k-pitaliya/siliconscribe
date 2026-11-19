@@ -591,3 +591,15 @@ textarea::placeholder, input::placeholder { color: var(--ink-3); }
 /* Schematics are black-on-white by convention: keep a white sheet in both themes. */
 .netlist-canvas { overflow: auto; max-height: 72vh; background: #ffffff; border: 1px solid var(--line-strong); border-radius: var(--r-control); padding: 12px; }
 .netlist-canvas img { display: block; height: auto; max-width: none; }
+
+/* ---- timing: formal equivalence line and critical path table ---- */
+.equiv { padding: 8px 10px; border-radius: var(--r-control); border: 1px solid var(--line-strong); margin: 6px 0; }
+.equiv.proven { border-color: var(--pass); background: color-mix(in srgb, var(--pass) 8%, transparent); }
+.equiv.different { border-color: var(--fail); background: color-mix(in srgb, var(--fail) 8%, transparent); color: var(--fail); }
+.equiv.undecided { border-style: dashed; }
+.critical-path { margin: 6px 0; }
+.critical-path summary { cursor: pointer; }
+.critical-path .table-wrap { overflow-x: auto; margin-top: 6px; }
+.critical-path table { border-collapse: collapse; width: 100%; font-size: 13px; }
+.critical-path th, .critical-path td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--line); }
+.critical-path td.num, .critical-path th:nth-child(n+4) { text-align: right; font-variant-numeric: tabular-nums; }

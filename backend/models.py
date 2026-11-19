@@ -324,6 +324,11 @@ class TimingReport(BaseModel):
     critical_start: Optional[str] = None
     critical_end: Optional[str] = None
     critical_delay_ns: Optional[float] = None
+    # The worst path, cell by cell: {point, cell, edge (rise/fall), incr_ns, arrival_ns}. See timing.parse_sta.
+    critical_path: List[dict] = Field(default_factory=list)
+    # Formal check that the mapped netlist equals the RTL (equivalence.py): proven | different | not_proven | None.
+    equivalence: Optional[str] = None
+    equivalence_method: str = ""
     area_um2: Optional[float] = None
     sequential_area_um2: Optional[float] = None
     cell_count: Optional[int] = None

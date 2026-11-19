@@ -32,6 +32,7 @@ import time
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+from equivalence import prove_equivalence
 from models import TimingReport
 from simulator import clean_env, sandbox_violations
 
@@ -228,12 +229,29 @@ def parse_sta(text: str, period_ns: float) -> dict:
         a = re.search(r"(-?[0-9.]+)\s+data arrival time", block)
         if not (s and e):
             continue
-        cand = (float(s.group(1)), block.split()[0], e.group(1), float(a.group(1)) if a else None)
+        cand = (float(s.group(1)), block.split()[0], e.group(1), float(a.group(1)) if a else None, block)
         if worst is None or cand[0] < worst[0]:
             worst = cand
     if worst:
         out["critical_start"], out["critical_end"], out["critical_delay_ns"] = worst[1], worst[2], worst[3]
+        out["critical_path"] = critical_path_rows(worst[4])
     return out
+
+
+# "   0.1163    0.4747 v _09_/Y (sky130_fd_sc_hd__nand4_1)": incremental delay, arrival, edge, pin, cell.
+_PATH_ROW_RE = re.compile(r"^\s*(-?[0-9]+\.[0-9]+)\s+(-?[0-9]+\.[0-9]+)\s+([\^v])\s+(\S+)\s+\(([^)]+)\)\s*$")
+
+
+def critical_path_rows(block: str) -> List[dict]:
+    """The data path of one OpenSTA path block, one row per pin, up to the data arrival time."""
+    rows: List[dict] = []
+    for line in block.split("data arrival time")[0].splitlines():
+        m = _PATH_ROW_RE.match(line)
+        if m:
+            cell = m.group(5).replace("sky130_fd_sc_hd__", "")
+            rows.append({"point": m.group(4), "cell": cell, "edge": "rise" if m.group(3) == "^" else "fall",
+                         "incr_ns": round(float(m.group(1)), 4), "arrival_ns": round(float(m.group(2)), 4)})
+    return rows[:60]
 
 
 def sta_errors(text: str) -> List[str]:
@@ -356,6 +374,13 @@ def run_timing(rtl_code: str, module_name: str, work_dir: Path, target_mhz: Opti
         if "slack_ns" not in timing:
             errs = sta_errors(sta_out)
             result.error = "OpenSTA reported no constrained path." + (" " + " ".join(errs) if errs else "")
+        if os.environ.get("EQUIVALENCE_ENABLED", "1") != "0":
+            try:      # the numbers above describe this netlist: prove it is the design that was simulated
+                eq = prove_equivalence(work_dir, module_name, str(LIBERTY), params, env=_env())
+                result.equivalence, result.equivalence_method = eq["status"], eq["method"]
+            except Exception:
+                logger.exception("equivalence check failed")
+                result.equivalence_method = "The equivalence check could not be run on this design."
         return result
     except subprocess.TimeoutExpired:
         return report(available=True, error="Timing analysis timed out.")

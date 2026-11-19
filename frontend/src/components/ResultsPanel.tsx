@@ -4,7 +4,7 @@ import { Activity, ArrowUpDown, Timer, Bug, CircleCheck, CircleX, Cpu, FileCode,
 import WaveformViewer, { type WaveformMarker } from './WaveformViewer'
 import TestCasesView from './TestCasesView'
 import SchematicView from './SchematicView'
-import type { RTLDesignSpec, SecondOpinion, IterationRecord, Schematic, SimulationResult, StrengthReport, TimingReport, UntoggledSignal, Waveform, SynthesisInfo, LintInfo } from '../types'
+import type { CriticalPathRow, RTLDesignSpec, SecondOpinion, IterationRecord, Schematic, SimulationResult, StrengthReport, TimingReport, UntoggledSignal, Waveform, SynthesisInfo, LintInfo } from '../types'
 
 export type Tab = 'design' | 'results' | 'tests' | 'waveform' | 'schematic'
 
@@ -314,6 +314,8 @@ function ResultsView({
                   <div>Slowest path: <span className="mono">{timing.critical_start}</span> to <span className="mono">{timing.critical_end}</span>
                     {timing.critical_delay_ns != null && <>, {timing.critical_delay_ns.toFixed(2)} ns</>}</div>
                 )}
+                {timing.equivalence && <EquivalenceLine status={timing.equivalence} method={timing.equivalence_method ?? ''} />}
+                {timing.critical_path && timing.critical_path.length > 1 && <CriticalPath rows={timing.critical_path} />}
                 {timing.area_um2 != null && (
                   <div data-testid="timing-area">Mapped area: <strong>{timing.area_um2.toFixed(1)} µm²</strong> in {timing.cell_count} cells
                     {timing.flip_flops ? `, ${timing.flip_flops} flip-flops` : ''}</div>
@@ -455,5 +457,38 @@ function Metric({ label, value, tone }: { label: string; value: string; tone?: '
       <div className={`metric-value ${tone ?? ''}`}>{value}</div>
       <div className="metric-label">{label}</div>
     </div>
+  )
+}
+
+/** Formal equivalence of the mapped netlist and the RTL: proven, undecided, or a real mismatch. */
+function EquivalenceLine({ status, method }: { status: string; method: string }) {
+  if (status === 'proven')
+    return <div data-testid="equivalence" className="equiv proven"><strong>Netlist formally proven equal to the RTL</strong> <span className="muted">({method})</span></div>
+  if (status === 'different')
+    return <div data-testid="equivalence" className="equiv different" role="alert"><strong>The mapped netlist does not match the RTL.</strong> {method}. The timing and area above describe a different circuit; treat them as invalid.</div>
+  return <div data-testid="equivalence" className="equiv undecided"><strong>Netlist not formally proven equal to the RTL.</strong> <span className="muted">{method}. The gate-level simulation check still applies.</span></div>
+}
+
+/** The worst path pin by pin, as in an STA report: where the time goes. */
+function CriticalPath({ rows }: { rows: CriticalPathRow[] }) {
+  const total = rows[rows.length - 1].arrival_ns
+  const gates = rows.filter((r) => r.incr_ns > 0).length
+  return (
+    <details className="critical-path" data-testid="critical-path">
+      <summary>Critical path, pin by pin: {gates} delay stages, {total.toFixed(3)} ns</summary>
+      <div className="table-wrap" tabIndex={0} role="region" aria-label="Critical path table">
+        <table>
+          <thead><tr><th scope="col">Pin</th><th scope="col">Cell</th><th scope="col">Edge</th><th scope="col">Delay (ns)</th><th scope="col">Arrival (ns)</th></tr></thead>
+          <tbody>
+            {rows.map((r, i) => (
+              <tr key={i}>
+                <td className="mono">{r.point}</td><td className="mono">{r.cell}</td><td>{r.edge}</td>
+                <td className="num">{r.incr_ns.toFixed(4)}</td><td className="num">{r.arrival_ns.toFixed(4)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </details>
   )
 }
