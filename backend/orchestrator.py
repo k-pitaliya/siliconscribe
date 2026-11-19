@@ -62,6 +62,14 @@ logger = logging.getLogger("siliconscribe.orchestrator")
 _STRING_OR_COMMENT_RE = re.compile(r'"(?:\\.|[^"\\\n])*"|//[^\n]*|/\*[\s\S]*?\*/')
 
 
+
+class MidRunUnavailable(RuntimeError):
+    """The model stopped answering after the run had already produced live artifacts."""
+
+    def __init__(self, message: str, reason: str = ""):
+        super().__init__(message)
+        self.reason = reason
+
 def _strip_comments_and_strings(code: str) -> str:
     return _STRING_OR_COMMENT_RE.sub(" ", code or "")
 
@@ -131,7 +139,9 @@ def weak_verification_note(spec: RTLDesignSpec, result) -> Optional[str]:
 
 def _has_complete_module(code: str, module_name: str) -> bool:
     """True if *code* contains a complete ``module <name> ... endmodule`` unit."""
-    if not code or "endmodule" not in code:
+    # Comments and strings removed first (self-review: "// module counter" next to `module up_counter` passed).
+    code = re.sub(r'"(?:\\.|[^"\\\n])*"|/\*.*?\*/|//[^\n]*', " ", code or "", flags=re.S)
+    if not re.search(r"\bendmodule\b", code):
         return False
     return re.search(rf"\bmodule\s+{re.escape(module_name)}\b", code) is not None
 
@@ -290,7 +300,9 @@ def _short_reason(e: Exception) -> str:
     s = str(e)
     if "err=" in s:
         s = s.split("err=", 1)[1]
-    s = re.sub(r"\s+", " ", s).strip()
+    s = re.sub(r"^\s*(?:RuntimeError:\s*)?LLM_UPSTREAM:\w+:\s*", "", s)   # internal prefix (self-review finding)
+    s = re.sub(r"\{.*\}", "", s, flags=re.S)                             # provider JSON blobs say nothing to the user
+    s = re.sub(r"\s+", " ", s).strip(" :")
     return (s[:140] + "…") if len(s) > 140 else s
 
 
@@ -331,7 +343,9 @@ def pipeline_events(
     """
     model_label = model or llm_service.current_model_id() or "default"
     tb_model = testbench_model or model
-    independent_tb = bool(testbench_model) and testbench_model != (model or llm_service.current_model_id())
+    # Compare normalised ids: "x-free" and "opencode/x-free" are the same model (self-review finding).
+    _norm = llm_service.model_catalog.normalize_opencode_id
+    independent_tb = bool(testbench_model) and _norm(testbench_model) != _norm(model or llm_service.current_model_id() or "")
     try:
         # Only a Cloudflare / NIM id needs the routed lookup; everything else is the configured provider.
         provider_name = (llm_service.get_provider(model) if llm_service.model_catalog.is_routed_id(model)
@@ -355,8 +369,12 @@ def pipeline_events(
     # OFFLINE_MODE configures an OfflineProvider. Route the entire run through a
     # per-run instance instead of the shared singleton so `_buggy`/`_last_key`
     # cannot leak between concurrent requests.
+    # Decide with the provider that serves THIS model: a Cloudflare / NIM model the user picked must not be
+    # replaced by the demo just because the default provider (e.g. the OpenCode app) is unavailable (review finding).
     try:
-        if isinstance(llm_service.get_provider(), llm_service.OfflineProvider):
+        serving = (llm_service.get_provider(model) if llm_service.model_catalog.is_routed_id(model)
+                   else llm_service.get_provider())
+        if isinstance(serving, llm_service.OfflineProvider):
             use_offline = True
     except Exception:
         pass
@@ -421,8 +439,8 @@ def pipeline_events(
                 # RTL, testbench). Swapping to the curated offline provider here
                 # would silently replace the user's design with an unrelated
                 # counter/ALU. Fail honestly instead; the UI shows a real error.
-                raise RuntimeError(
-                    f"LLM became unavailable mid-run at '{fn_name}': {str(e)[:300]}"
+                raise MidRunUnavailable(
+                    f"LLM became unavailable mid-run at '{fn_name}': {str(e)[:300]}", _short_reason(e)
                 ) from e
             if explicit_model:
                 raise RuntimeError(_chosen_model_problem(model, e)) from e
@@ -456,7 +474,8 @@ def pipeline_events(
 
         # Check for offline fallback disclosure (counter fallback)
         # If we are in offline mode, check _last_exact; if Zen live but prompt unmatched, also check
-        provider = offline_provider if use_offline else llm_service.get_provider()
+        provider = offline_provider if use_offline else (
+            llm_service.get_provider(model) if llm_service.model_catalog.is_routed_id(model) else llm_service.get_provider())
         if hasattr(provider, "_last_exact") and not provider._last_exact:
             # Only set if not already set by upstream fallback
             if fallback_notice is None:
@@ -578,6 +597,8 @@ def pipeline_events(
             return _norm_hash(rtl + "\n//--TESTBENCH--\n" + tb)
 
         iteration = 0
+        repair_stopped_note = None
+        tb_rewritten_by_design_model = False     # the separate model's testbench did not compile and was repaired
         seen_states: set[str] = set()
         seen_states.add(_state_hash(rtl_code, tb_code))
 
@@ -630,8 +651,17 @@ def pipeline_events(
             yield {"stage": "fixing", "iteration": iteration,
                    "message": f"Simulation {result.status}. Diagnosing and patching (attempt {iteration})..."}
 
-            fix = _call_llm("fix_design", rtl_code, tb_code, result.log_excerpt,
-                            model=model, reasoning_effort=reasoning_effort, spec=spec)
+            try:
+                fix = _call_llm("fix_design", rtl_code, tb_code, result.log_excerpt,
+                                model=model, reasoning_effort=reasoning_effort, spec=spec)
+            except MidRunUnavailable as e:
+                # Review finding: a quota or timeout at the repair call used to throw away the whole run (RTL,
+                # testbench, failing result, waveform). Keep the evidence and say why the repair stopped.
+                repair_stopped_note = (f"The repair model became unavailable ({e.reason or 'no answer'}), so the loop "
+                                       f"stopped after {iteration - 1} repair(s); this is the last simulated result.")
+                yield {"stage": "fix", "iteration": iteration, "message": repair_stopped_note,
+                       "fix_summary": "model unavailable"}
+                break
             diagnosis = fix.get("diagnosis") if isinstance(fix.get("diagnosis"), dict) else None
             new_rtl, new_tb = fix["rtl_code"], fix["testbench_code"]
             guard_note = ""
@@ -647,26 +677,36 @@ def pipeline_events(
                     new_tb = tb_code
                     guard_note += " Testbench change rejected: " + "; ".join(tb_issues) + "."
             # Anti-cheat: an LLM "fix" must not make a failing DUT pass by deleting
-            # the testbench checks. A compile-error TB may legitimately be rewritten;
-            # a TB that compiled and ran may only keep or strengthen its checks.
-            if (result.status not in ("ERROR", "TIMEOUT") and new_tb != tb_code
+            # the testbench checks. Only a testbench that did not COMPILE may be rewritten freely;
+            # one that ran (even to a runtime ERROR, a $fatal or a TIMEOUT caused by a buggy design)
+            # may only keep or strengthen its checks (review: a $fatal oracle was replaced by 1 check).
+            compile_failed = result.status == "ERROR" and (result.log_excerpt or "").startswith("Compilation failed")
+            # A testbench that ran but printed no readable summary (and no FAIL lines, which would make it a FAIL) has a
+            # broken oracle too: it may be repaired, but without losing checks (self-review verification: an independent
+            # testbench that printed "passed = N" could no longer be repaired at all).
+            no_summary = result.status == "ERROR" and any("No valid summary" in (e.message or "") for e in (result.errors or []))
+            oracle_broken = compile_failed or no_summary
+            if (not compile_failed and new_tb != tb_code
                     and _tb_check_count(new_tb) < _tb_check_count(tb_code)):
                 logger.warning(
                     "Rejecting testbench change at iteration %d: checks dropped %d -> %d",
                     iteration, _tb_check_count(tb_code), _tb_check_count(new_tb))
                 new_tb = tb_code
                 guard_note += " Testbench change rejected: it removed self-checks."
-            if independent_tb and new_tb != tb_code and result.status not in ("ERROR", "TIMEOUT"):
+            if independent_tb and new_tb != tb_code and not oracle_broken:
                 new_tb = tb_code
                 guard_note += (" Testbench change not applied: a separate model wrote it, so a failing check is reported "
                                "and not rewritten away.")
+            elif independent_tb and new_tb != tb_code:
+                tb_rewritten_by_design_model = True
             fix_summary = fix["fix_summary"] + guard_note
             new_state = _state_hash(new_rtl, new_tb)
             cur_state = _state_hash(rtl_code, tb_code)
 
             if new_state == cur_state:
                 yield {"stage": "fix", "iteration": iteration,
-                       "message": "Model returned no change; stopping the loop." + guard_note,
+                       "message": ("The repair reply could not be read, even after one retry; stopping the loop."
+                                   if fix.get("parse_failed") else "Model returned no change; stopping the loop.") + guard_note,
                        "fix_summary": "no-op"}
                 break
 
@@ -776,6 +816,10 @@ def pipeline_events(
                 if problems:
                     return SecondOpinion(status="unavailable", model=who, note="the fresh testbench was unusable (" + "; ".join(problems[:2]) + ").")
                 r = simulator.simulate(design_id[:30] + "_s", rtl_code, fresh, timeout=timeout_seconds)
+                if r.status == "PASS" and r.test_count < MIN_EXECUTED_CHECKS:
+                    # A fresh testbench with a handful of checks is not agreement (self-review finding: "Passed: 1" counted).
+                    return SecondOpinion(status="unavailable", model=who, pass_count=r.pass_count, test_count=r.test_count,
+                                         note=f"the fresh testbench ran only {r.test_count} check(s), too few to count as agreement.")
                 if r.status in ("PASS", "FAIL"):
                     return SecondOpinion(status=r.status, pass_count=r.pass_count, fail_count=r.fail_count, test_count=r.test_count, model=who)
                 return SecondOpinion(status="unavailable", model=who, note=f"the fresh testbench did not run cleanly ({r.status}).")
@@ -825,9 +869,24 @@ def pipeline_events(
             except Exception:  # a failed extra check must not break the run
                 logger.exception("timing check failed")
                 timing = None
+        independent_note = None
+        if independent_tb and tb_rewritten_by_design_model:
+            independent_note = ("The separate model's testbench did not compile and was repaired by the design model, so the "
+                                "final testbench is no longer independent of the design.")
+        wide_note = None
+        if any((p.width or 1) > 256 for p in spec.ports):
+            wide_note = ("A port is wider than 256 bits: the standard check task compares only the lower 256 bits, so "
+                         "errors in the upper bits are not caught.")
         warning_text = " ".join(
-            n for n in (weak_verification_note(spec, result), weak_strength_note(strength), oracle_note, second_note, disagree_note) if n
+            n for n in (repair_stopped_note, wide_note, weak_verification_note(spec, result), weak_strength_note(strength), oracle_note,
+                        second_note, disagree_note, independent_note) if n
         ) or None
+        # A PASS that the run's own evidence contradicts is reported as disputed, not as a plain PASS (review finding:
+        # the headline said PASS while the original testbench and a fresh one both failed the final design).
+        pass_disputed = None
+        if result.status == "PASS" and (oracle_note or second_note):
+            pass_disputed = ("A fresh testbench fails the final design." if second_note else
+                             "The original testbench still fails the final design.")
 
         response = RunResponse(
             design_id=design_id,
@@ -848,11 +907,12 @@ def pipeline_events(
             timing=timing,
             model=("offline demo" if use_offline else _model_used(model)),
             testbench_model=(_model_used(testbench_model) if independent_tb and not use_offline else None),
-            independent_testbench=bool(independent_tb and not use_offline),
+            independent_testbench=bool(independent_tb and not use_offline and not tb_rewritten_by_design_model),
+            pass_disputed=pass_disputed,
             second_opinion=second,
         )
         yield {"stage": "done", "status": result.status,
-               "message": _final_message(result, iteration),
+               "message": _final_message(result, iteration, pass_disputed),
                "fallback_notice": fallback_notice,
                "response": response.model_dump()}
     except Exception as e:
@@ -862,8 +922,27 @@ def pipeline_events(
         yield {"stage": "error", "message": _user_facing_error(e)}
 
 
-_QUOTA_HINTS = ("free usage limit", "free-limit", "freeusagelimit", "rate limit", "quota")
+_QUOTA_HINTS = ("free usage limit", "free-limit", "freeusagelimit", "rate limit", "ratelimit", "quota", "too many requests",
+                "daily free allocation")
 _TIMEOUT_HINTS = ("timeout", "timed out")
+# Word-boundary patterns: plain substrings misfired on "max_tokens" ("token" -> credentials), on an account id containing
+# "404", and missed HTTP 429 / 410 entirely (self-review finding, all reproduced).
+_QUOTA_RE = re.compile(r"\b429\b|" + "|".join(re.escape(h) for h in _QUOTA_HINTS))
+_REASON_PATTERNS = (
+    (_QUOTA_RE, "its usage limit has been reached"),
+    (re.compile(r"timeout|timed out"), "it did not answer in time"),
+    (re.compile(r"emptycontent|finish_reason=length|no answer text|reasoning only"),
+     "it spent its whole answer budget on reasoning and returned no answer"),
+    (re.compile(r"opencodenotinstalled|'opencode' command was not found"), "the OpenCode app is not installed on the server"),
+    (re.compile(r"\b410\b|\bretired\b|\bdeprecated\b|no longer (?:available|supported)"), "the provider has retired this model"),
+    (re.compile(r"\b40[13]\b|unauthori[sz]ed|forbidden|authentication|invalid api key|api key"),
+     "the provider did not accept the credentials or the model is not available to this account"),
+    (re.compile(r"\b404\b|not found|unknown model|does not exist"), "the provider does not know this model"),
+)
+
+
+def _reason(low: str) -> str:
+    return next((why for rx, why in _REASON_PATTERNS if rx.search(low)), "the provider returned an error")
 
 
 def _model_used(model: Optional[str]) -> Optional[str]:
@@ -886,17 +965,7 @@ def _second_opinion_message(s: SecondOpinion) -> str:
 
 def _chosen_model_problem(model: Optional[str], e: Exception, role: str = "model") -> str:
     """Why the model the user picked did not work, and what to do. Short, plain, no provider internals."""
-    low = str(e).lower()
-    if any(h in low for h in _QUOTA_HINTS):
-        why = "its usage limit has been reached"
-    elif any(h in low for h in _TIMEOUT_HINTS):
-        why = "it did not answer in time"
-    elif any(h in low for h in ("401", "403", "unauthor", "forbidden", "authentication", "api key", "token")):
-        why = "the provider did not accept the credentials or the model is not available to this account"
-    elif any(h in low for h in ("404", "not found", "unknown model", "does not exist")):
-        why = "the provider does not know this model"
-    else:
-        why = "the provider returned an error"
+    why = _reason(str(e).lower())
     return f"The {role} you chose ({model}) could not be used: {why}. Pick another model from the Model menu."
 
 
@@ -910,16 +979,22 @@ def _user_facing_error(e: Exception) -> str:
     raw = str(e).strip()
     low = raw.lower()
     if _is_upstream_error(e) or "llm became unavailable" in low:
-        if any(h in low for h in _QUOTA_HINTS):
+        if _QUOTA_RE.search(low):
             return ("The AI provider's free usage limit has been reached. It resets daily: try again after "
                     "the reset, or switch to the offline demo.")
         if any(h in low for h in _TIMEOUT_HINTS):
             return ("The AI model did not answer in time. Free models can take minutes per step: try again, "
                     "pick another model from the Model menu, or raise LLM_TIMEOUT_SECONDS.")
         return "The AI provider became unavailable mid-run. Please try again in a moment."
+    if isinstance(e, OSError):
+        # e.g. "[Errno 28] No space left on device: '/Users/.../workspace/abc/design.sv'" (self-review finding): say what
+        # happened without the server's file paths.
+        return f"The server could not read or write its working files ({e.strerror or 'storage error'})."
     if not raw or len(raw) > 300:
         return "Internal server error"   # never leak stack text or long internal detail to the client
-    return raw
+    # No absolute server paths in short messages either, but a model id such as nim/poolside/x or @cf/openai/y is kept:
+    # a path starts at the beginning, after a space or after a quote, never inside a word.
+    return re.sub(r"(?<![\w@.:-])(?:/[^\s'\"():,]+){2,}", "<path>", raw)
 
 
 def run_pipeline(prompt: str, design_id: str, simulator: IcarusSimulator, **kwargs) -> RunResponse:
@@ -956,7 +1031,9 @@ def _sim_message(iteration: int, result) -> str:
     return "Simulation error (compile or runtime)."
 
 
-def _final_message(result, iterations: int) -> str:
+def _final_message(result, iterations: int, disputed: str | None = None) -> str:
+    if result.status == "PASS" and disputed:
+        return f"PASS, but disputed: {disputed} Do not trust this PASS without reviewing the testbench change."
     if result.status == "PASS":
         if iterations:
             return f"Design passes after {iterations} self-correction iteration(s)."

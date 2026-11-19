@@ -379,3 +379,62 @@ def test_an_override_that_names_a_localparam_is_dropped_by_the_retry_not_an_erro
     r = run_timing(rtl, "inv", tmp_path / "r", 100, testbench_code="inv #(.INV(0)) dut (.a(a));")     # INV exists in the source, but cannot be overridden
     assert r.error is None and r.cell_count == plain.cell_count and r.area_um2 == plain.area_um2
     assert "were not applied" in r.note and "Parameters taken from the testbench" not in r.note
+
+
+# ------------------------------------------------------------------ self-review findings (19 Nov), text-only: run on CI
+def test_cell_lines_with_an_exponent_area_are_counted():
+    stat = ("   Chip area for module '\\regw': 1.7E+03\n"
+            "     64 1.6E+03 sky130_fd_sc_hd__dfrtp_1\n"
+            "      2   7.507 sky130_fd_sc_hd__buf_2\n")
+    s = parse_mapped_stats(stat)
+    assert s["cell_count"] == 66 and s["flip_flops"] == 64 and s["area_um2"] == 1700.0
+
+
+def test_every_clock_gets_its_own_input_and_output_delays():
+    tcl = timing._constraints(["clka", "clkb"], 2.0)
+    for c in ("clka", "clkb"):
+        assert f"set_input_delay 0 -clock {c} -add_delay [all_inputs -no_clocks]" in tcl
+        assert f"set_output_delay 0 -clock {c} -add_delay [all_outputs]" in tcl
+    assert "set_clock_groups -asynchronous" in tcl
+
+
+def test_a_half_cycle_worst_path_gives_no_fmax():
+    block = ("Startpoint: d (input port clocked by clk)\nEndpoint: q (output port clocked by clk)\n"
+             "   5.0000    5.0000   clock clk (fall edge)\n   0.3372    5.3372 v q (out)\n"
+             "             5.3372   data arrival time\n   4.6628   slack (MET)\n")
+    out = parse_sta("worst slack max 4.6628\n" + block, 10.0)
+    assert out["met"] and "fmax_mhz" not in out and out["half_cycle_path"] is True
+
+
+def test_a_combinational_design_is_not_given_a_clock_rate():
+    from models import TimingReport
+    r = TimingReport(available=True, clock="virtual (combinational design)", target_mhz=100, slack_ns=9.67,
+                     met=True, fmax_mhz=3012.0)
+    assert "MHz (slack" in timing_message(r) and "max about" not in timing_message(r)
+
+
+# ------------------------------------------------------------------ the same findings end to end (real tools)
+@needs_tools
+def test_a_64_bit_register_is_timed_not_refused(tmp_path):
+    rtl = ("module regw(input clk, input rst_n, input [63:0] d, output reg [63:0] q);\n"
+           "always @(posedge clk or negedge rst_n) if (!rst_n) q <= 0; else q <= d;\nendmodule\n")
+    r = run_timing(rtl, "regw", tmp_path, 100)
+    assert r.error is None and r.flip_flops == 64 and r.cell_count >= 64
+
+
+@needs_tools
+def test_a_slow_path_on_the_second_clock_is_not_reported_as_met(tmp_path):
+    rtl = ("module two(input clka, input clkb, input [7:0] x, input [7:0] y, input [7:0] d,\n"
+           "           output reg [7:0] qa, output reg [15:0] pb);\n"
+           "always @(posedge clka) qa <= d;\nalways @(posedge clkb) pb <= x * y;\nendmodule\n")
+    r = run_timing(rtl, "two", tmp_path, 500)
+    assert r.met is False and r.slack_ns < 0
+
+
+@needs_tools
+def test_a_defparam_override_is_reported_as_not_applied(tmp_path):
+    rtl = ("module regp #(parameter WIDTH = 4)(input clk, input [WIDTH-1:0] d, output reg [WIDTH-1:0] q);\n"
+           "always @(posedge clk) q <= d;\nendmodule\n")
+    tb = "module testbench; reg clk; reg [15:0] d; wire [15:0] q; regp dut(.clk(clk), .d(d), .q(q)); defparam dut.WIDTH = 16; endmodule"
+    r = run_timing(rtl, "regp", tmp_path, 100, testbench_code=tb)
+    assert "defparam" in r.note and "NOT applied" in r.note

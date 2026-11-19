@@ -253,6 +253,18 @@ describe('ResultsPanel: test cases tab and expand', () => {
     expect(container.querySelectorAll('.wfv-marker')).toHaveLength(1) // the failed check is flagged on the ruler
   })
 
+  it('does not carry a waveform cursor over to the next run', () => {
+    const { rerender } = panel()
+    fireEvent.click(screen.getByRole('tab', { name: /Test cases/ }))
+    fireEvent.click(screen.getAllByTestId('check-row')[1])
+    fireEvent.click(screen.getByRole('button', { name: /Show in waveform/ }))
+    expect(screen.getByTestId('pin-readout').textContent).toContain('A 20 ns')
+    rerender(<ResultsPanel result={{ ...withChecks }} waveform={{ ...wave }} schematic={null} history={[]} />)   // a new run
+    fireEvent.click(screen.getByRole('tab', { name: /Test cases/ }))
+    fireEvent.click(screen.getByRole('tab', { name: /Waveform/ }))
+    expect(screen.queryByTestId('pin-readout')).toBeNull()
+  })
+
   it('arrow keys cycle through all four tabs', () => {
     panel()
     const list = screen.getByRole('tablist')
@@ -461,7 +473,7 @@ describe('ResultsPanel: who wrote what, and the second opinion', () => {
   it('names a separate testbench model next to the design model', () => {
     render(<ResultsPanel {...base} model="opencode/hy4-flash-free" testbenchModel="nim/poolside/laguna-xs-2.1" />)
     const line = screen.getByTestId('model-used').textContent ?? ''
-    expect(line).toContain('Written by opencode/hy4-flash-free')
+    expect(line).toContain('Design written by opencode/hy4-flash-free')
     expect(line).toContain('Testbench written by nim/poolside/laguna-xs-2.1, a separate model')
   })
 
@@ -478,12 +490,21 @@ describe('ResultsPanel: who wrote what, and the second opinion', () => {
   })
 
   it('warns when a fresh testbench disagrees with a PASS that followed a rewrite', () => {
-    render(<ResultsPanel {...base} secondOpinion={{ status: 'FAIL', pass_count: 100, fail_count: 20, test_count: 120, note: '' }} />)
+    render(<ResultsPanel {...base} disputed="A fresh testbench fails the final design."
+      secondOpinion={{ status: 'FAIL', pass_count: 100, fail_count: 20, test_count: 120, note: '' }} />)
     const el = screen.getByTestId('second-opinion')
     expect(el.textContent).toContain('Second opinion disagrees')
     expect(el.textContent).toContain('fails 20 of 120 checks')
-    expect(el.textContent).toContain('do not trust this PASS')
     expect(el.className).toContain('weak-tag')
+    // The headline itself says the PASS is disputed (self-review finding: it used to be a plain green PASS).
+    expect(screen.getByTestId('verdict-badge')).toHaveTextContent('PASS, disputed')
+    expect(screen.getByTestId('disputed-tag')).toHaveTextContent('Do not trust this PASS yet')
+  })
+
+  it('shows a plain PASS when nothing disputes it', () => {
+    render(<ResultsPanel {...base} />)
+    expect(screen.getByTestId('verdict-badge')).toHaveTextContent(/^PASS$/)
+    expect(screen.queryByTestId('disputed-tag')).toBeNull()
   })
 
   it('reports an unobtainable second opinion without alarm', () => {

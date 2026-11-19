@@ -24,8 +24,9 @@ export default defineConfig({
   },
   server: {
     port: 5173,
+    strictPort: true, // fail loudly if 5173 is taken, instead of silently serving on 5174 while 5173 shows an old build
     proxy: {
-      '/api': 'http://localhost:8000',
+      '/api': 'http://127.0.0.1:8000',   // the backend binds 127.0.0.1 only; "localhost" may resolve to ::1 first
     },
   },
   test: {

@@ -59,8 +59,12 @@ export function valueAt(wave: { t: number; v: string }[], t: number): string | u
 export type Radix = 'hex' | 'bin' | 'dec'
 
 /** Format a bus value (hex digits, `x`/`z` allowed per nibble) in the chosen radix. */
-export function formatValue(v: string, width: number, radix: Radix): string {
+export function formatValue(raw: string, width: number, radix: Radix): string {
+  // Never throws (self-review finding: Icarus prints a partly unknown nibble in UPPER case, e.g. `X0`, and anything
+  // that is not hex digits made BigInt throw, which blanked the whole page). Unknown text is shown as it is.
+  const v = (raw ?? '').trim().toLowerCase()
   if (width === 1 || v === 'x' || v === 'z') return v
+  if (!/^[0-9a-fxz]+$/.test(v)) return raw
   if (radix === 'hex') return `0x${v}`
   const bits = v
     .split('')
@@ -69,7 +73,11 @@ export function formatValue(v: string, width: number, radix: Radix): string {
   const sized = bits.length >= width ? bits.slice(bits.length - width) : bits.padStart(width, '0')
   if (radix === 'bin') return `0b${sized}`
   if (/[xz]/.test(sized)) return `0x${v}` // a decimal number would hide the unknown bits
-  return BigInt(`0x${v}`).toString()
+  try {
+    return BigInt(`0x${v}`).toString()
+  } catch {
+    return `0x${v}`
+  }
 }
 
 // ----------------------------------------------------------------------------- grouping

@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import List
 
 from models import SimError
-from simulator import clean_env, sandbox_violations
+from simulator import clean_env, run_tool, sandbox_violations
 
 
 # ---------------------------------------------------------------------------
@@ -255,36 +255,21 @@ def _heuristic_checks(rtl_code: str, tb_code: str = "") -> tuple[List[SimError],
                 warnings.append(
                     SimError(message=f"Possible width mismatch: literal width {max_lit}' vs declared max width {max_decl}")
                 )
-        # Check for obvious decimal overflow: e.g. `count <= 16` for 4-bit [3:0] (max 15).
-        # Scan comment-free text: a note such as "// names <= 24 chars" is not an assignment.
-        # Find assignments of decimal literals without width prefix — runs even when no explicit width literal
-        if decl_widths:
-            for m in re.finditer(r"<=\s*(\d+)\s*;?", stripped_combined):
-                try:
-                    val = int(m.group(1))
-                    # Smallest declared width determines max value; warn if val exceeds its capacity
-                    if val >= (1 << min(decl_widths)):
-                        warnings.append(
-                            SimError(message=f"Possible width mismatch: value {val} exceeds {min(decl_widths)}-bit capacity")
-                        )
-                        break
-                except ValueError:
-                    pass
-            # Also check blocking assignment `= 16`
-            for m in re.finditer(r"=\s*(\d+)\s*;", stripped_combined):
-                try:
-                    # Avoid catching `==` — the regex ensures single `=` followed by digits and `;`
-                    # Filter out comparison contexts already handled; just check value magnitude
-                    val = int(m.group(1))
-                    if val >= (1 << min(decl_widths)):
-                        # Only warn if the value is clearly too large for the smallest width
-                        # and the line is not a parameter declaration (which we already skip)
-                        warnings.append(
-                            SimError(message=f"Possible width mismatch: value {val} exceeds {min(decl_widths)}-bit capacity")
-                        )
-                        break
-                except ValueError:
-                    pass
+        # Decimal overflow: `count <= 16;` where count is [3:0]. Compare each value with the width of the signal it is
+        # ASSIGNED to (self-review finding: the old check compared any number with the smallest vector in the file, so
+        # `if (cnt <= 9)` next to a [1:0] select was reported as an error). Comparisons end in ")" and are skipped.
+        widths = {}
+        for m in re.finditer(r"\b(?:reg|wire|logic|output\s+reg|output|input)\b\s*(?:signed\s*)?(?:\[\s*(\d+)\s*:\s*0\s*\])?\s*"
+                             r"([A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*)", stripped_combined):
+            w = int(m.group(1)) + 1 if m.group(1) else 1
+            for name in re.split(r"\s*,\s*", m.group(2)):
+                widths.setdefault(name, w)
+        for m in re.finditer(r"\b([A-Za-z_]\w*)\s*(?:<=|(?<![=!<>])=(?!=))\s*(\d+)\s*;", stripped_combined):
+            name, val = m.group(1), int(m.group(2))
+            w = widths.get(name)
+            if w is not None and val >= (1 << w):
+                warnings.append(SimError(message=f"Possible width mismatch: {name} is {w} bit(s) but is assigned {val}"))
+                break
     except Exception:
         pass
 
@@ -367,10 +352,7 @@ class VerilogLinter:
                         tb_file.write_text(tb_code)
                         files.append(str(tb_file))
                     cmd = ["verilator", "--lint-only", "-Wall", "-Wno-DECLFILENAME", "-Wno-UNUSED"] + files
-                    result = subprocess.run(
-                        cmd, capture_output=True, text=True, timeout=15,
-                        stdin=subprocess.DEVNULL, cwd=td, env=clean_env(),
-                    )
+                    result = run_tool(cmd, 15, capture_output=True, text=True, cwd=td, env=clean_env())
                     tool_output = (result.stderr or "") + (result.stdout or "")
                     output_parts.append(tool_output)
                     t_errors, t_warnings = _parse_tool_output(tool_output)
@@ -399,10 +381,7 @@ class VerilogLinter:
                         tb_file.write_text(tb_code)
                         files.append(str(tb_file))
                     cmd = ["iverilog", "-o", "/dev/null", "-g2012", "-Wall"] + files
-                    result = subprocess.run(
-                        cmd, capture_output=True, text=True, timeout=15,
-                        stdin=subprocess.DEVNULL, cwd=td, env=clean_env(),
-                    )
+                    result = run_tool(cmd, 15, capture_output=True, text=True, cwd=td, env=clean_env())
                     tool_output = (result.stderr or "") + (result.stdout or "")
                     output_parts.append(tool_output)
                     t_errors, t_warnings = _parse_tool_output(tool_output)

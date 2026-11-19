@@ -124,3 +124,18 @@ def test_lint_refuses_source_the_sandbox_would_refuse_before_any_compiler_runs()
     assert "include" in res["errors"][0].message
     assert res["output"] == "rejected by the sandbox policy before linting"
     assert "root:" not in str(res)
+
+
+# ------------------------------------------------------------------ self-review finding (19 Nov 2026)
+def test_width_warnings_use_the_assigned_signals_own_width():
+    from linter import VerilogLinter
+    lint = VerilogLinter()
+
+    def width_msgs(rtl):
+        r = lint.lint(rtl, "")
+        return [m.message for m in r.get("warnings", []) + r.get("errors", []) if "width" in m.message.lower()]
+    assert width_msgs("module m(input clk, input [1:0] sel, output reg [3:0] cnt); "
+                      "always @(posedge clk) if (cnt <= 9) cnt <= cnt + 1; endmodule") == []
+    assert width_msgs("module m(input clk, input [1:0] sel, output reg [7:0] q); always @(posedge clk) q <= 200; endmodule") == []
+    assert any("count is 4 bit" in m for m in width_msgs(
+        "module m(input clk, output reg [3:0] count); always @(posedge clk) count <= 16; endmodule"))

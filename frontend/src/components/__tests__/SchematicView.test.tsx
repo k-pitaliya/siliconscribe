@@ -97,3 +97,19 @@ describe('SchematicView: review findings', () => {
     expect(screen.getByRole('button', { name: 'Gate level' })).toHaveAttribute('title', expect.stringContaining('syntax error near line 4'))
   })
 })
+
+describe('SchematicView block diagram (self-review findings)', () => {
+  it('draws every inout port and gives long labels room', () => {
+    const s = {
+      module_name: 'bus_if',
+      inputs: [{ name: 'clk', width: 1 }, { name: 'write_data', width: 32 }],
+      outputs: [{ name: 'q', width: 1 }],
+      inouts: [{ name: 'io0', width: 1 }, { name: 'bidir_bus', width: 8 }],
+    } as Schematic
+    const { container } = render(<SchematicView schematic={s} synthesis={{ available: false }} />)
+    const labels = [...container.querySelectorAll('text.sch-port')].map((t) => t.textContent)
+    expect(labels).toEqual(expect.arrayContaining(['clk', 'write_data[31:0]', 'io0 *', 'bidir_bus[7:0] *', 'q']))
+    const longest = [...container.querySelectorAll('text.sch-port')].find((t) => t.textContent === 'write_data[31:0]')!
+    expect(Number(longest.getAttribute('x'))).toBeGreaterThanOrEqual('write_data[31:0]'.length * 7)
+  })
+})

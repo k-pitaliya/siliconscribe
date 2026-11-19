@@ -294,8 +294,9 @@ export default function WaveformViewer({ waveform, markers = [], focusTime = nul
         </div>
       )}
 
+      {/* Announce only a PINNED cursor: rewriting a live region on every mouse move floods a screen reader. */}
       <div className="wfv-sr" aria-live="polite">
-        {readout}
+        {pinA != null && hover == null ? readout : ''}
       </div>
 
       <div className="waveform-scroll wfv-scroll" ref={scrollRef} style={{ overflowX: 'auto', overflowY: 'auto' }}>

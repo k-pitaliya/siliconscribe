@@ -4,6 +4,10 @@ from pathlib import Path
 
 # Force offline mode BEFORE any backend module imports its provider.
 os.environ["OFFLINE_MODE"] = "1"
+# main.py runs the workspace clean-up and opens the projects database AT IMPORT. Point it at a throw-away folder before
+# any test module imports it (self-review finding: collecting the tests deleted old folders of the real workspace).
+import tempfile  # noqa: E402
+os.environ["SILICONSCRIBE_WORKSPACE"] = tempfile.mkdtemp(prefix="ss_test_ws_")
 
 # Make backend importable as top-level modules.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))

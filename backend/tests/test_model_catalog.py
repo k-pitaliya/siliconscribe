@@ -261,9 +261,19 @@ def test_nim_catalogue_is_cached_until_refreshed(nim):
 
 def test_the_opencode_app_never_receives_the_nim_key_either(monkeypatch):
     monkeypatch.setenv("NVIDIA_NIM_API_KEY", NIM_KEY)
-    monkeypatch.setenv("NVIDIA_API_KEY", OTHER_KEY)             # the older variable is left alone: OpenCode may use it itself
     env = mc.child_env()
-    assert "NVIDIA_NIM_API_KEY" not in env and NIM_KEY not in env.values() and env["NVIDIA_API_KEY"] == OTHER_KEY
+    assert "NVIDIA_NIM_API_KEY" not in env and NIM_KEY not in env.values()
+
+
+def test_the_opencode_app_gets_an_allowlisted_environment_only(monkeypatch):
+    """Self-review finding: the old denylist passed every other exported secret to the OpenCode agent. Only system
+    basics and OpenCode's own settings are passed now; a shell key the user never designated is not."""
+    for k in ("NVIDIA_API_KEY", "OPENAI_API_KEY", "ZEN_API_KEY", "MODAL_API_KEY", "CLOUDFLARE_API_TOKEN", "SOME_TOKEN"):
+        monkeypatch.setenv(k, OTHER_KEY)
+    monkeypatch.setenv("OPENCODE_CONFIG", "/tmp/oc.json")
+    env = mc.child_env()
+    assert OTHER_KEY not in env.values()
+    assert env["OPENCODE_CONFIG"] == "/tmp/oc.json" and "PATH" in env and "HOME" in env
 
 
 def test_copilot_auto_is_labelled_honestly_and_never_called_free():

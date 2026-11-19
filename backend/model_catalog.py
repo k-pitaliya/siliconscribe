@@ -81,9 +81,17 @@ _lock = threading.Lock()
 _cache: Dict[str, Tuple[float, object]] = {}
 
 
+# What the `opencode` app may see: system basics, locale, proxies/certificates, and its OWN settings (OPENCODE_*).
+# An allowlist, not a denylist: the old denylist (CLOUDFLARE_*, NVIDIA_NIM_*) still handed NVIDIA_API_KEY, OPENAI_API_KEY,
+# ZEN_API_KEY and any other exported secret to a tool-capable agent that has no use for them (self-review finding).
+_CHILD_ENV_RE = re.compile(r"^(PATH|HOME|USER|LOGNAME|SHELL|TERM|TMPDIR|LANG|LC_\w+|TZ|XDG_\w+|OPENCODE_\w+|HTTPS?_PROXY|"
+                           r"https?_proxy|NO_PROXY|no_proxy|ALL_PROXY|SSL_CERT_FILE|SSL_CERT_DIR|NODE_EXTRA_CA_CERTS|"
+                           r"__CF_USER_TEXT_ENCODING)$")
+
+
 def child_env() -> Dict[str, str]:
-    """The environment handed to the `opencode` app: everything except the Cloudflare and NIM credentials, which it has no use for."""
-    return {k: v for k, v in os.environ.items() if not k.upper().startswith(("CLOUDFLARE_", "NVIDIA_NIM_"))}
+    """The environment handed to the `opencode` app: only the allowlisted variables above."""
+    return {k: v for k, v in os.environ.items() if _CHILD_ENV_RE.match(k)}
 
 
 def is_valid_model_id(value: object) -> bool:
@@ -134,7 +142,7 @@ def parse_opencode_models(text: str) -> List[dict]:
     seen, models = set(), []
     for line in (text or "").splitlines():
         mid = line.strip()
-        if not is_valid_model_id(mid) or "/" not in mid or mid in seen:
+        if not is_valid_model_id(mid) or "/" not in mid or "://" in mid or mid in seen:   # not a stray URL line
             continue
         seen.add(mid)
         provider, _, name = mid.partition("/")

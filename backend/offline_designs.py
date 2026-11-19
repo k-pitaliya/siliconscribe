@@ -28,8 +28,8 @@ CHK_TASK = """    // Standard check task: ONE machine-readable line per comparis
     task chk;
         input [8*24-1:0] cat;     // Verilog keeps the RIGHTMOST characters of an over-long string,
         input [8*64-1:0] name;    // so keep categories <= 24 and names <= 64 chars
-        input [63:0] exp_v;
-        input [63:0] act_v;
+        input [255:0] exp_v;      // 256 bits: a 64-bit task silently ignored the upper bits of wider ports
+        input [255:0] act_v;      // (self-review: a 72-bit design that dropped its top byte PASSED)
         begin
             if (act_v === exp_v) begin
                 pass_count = pass_count + 1;
@@ -570,24 +570,32 @@ _KEYWORDS = [
 ]
 
 
-def match_design(prompt: str) -> str:
-    p = prompt.lower()
-    # Check for 8-bit ALU before generic ALU (width-specific)
-    if "alu" in p and "8" in p:
+def _has_word(p: str, word: str) -> bool:
+    """Whole words only, plurals allowed (self-review finding: "value" matched "alu", "discount" matched "count")."""
+    return re.search(rf"\b{re.escape(word)}(?:e?s)?\b", p) is not None
+
+
+# Prompts the built-in designs do NOT implement, even though a keyword matches (a half adder is not the full adder).
+_NOT_EXACT = ("half adder", "half-adder")
+
+
+def _match(p: str) -> str | None:
+    if _has_word(p, "alu") and re.search(r"\b8\b|\b8-?bit\b", p):
         return "alu8"
     for key, words in _KEYWORDS:
-        if any(w in p for w in words):
+        if any(_has_word(p, w) for w in words):
             return key
-    return "counter"  # sensible default that exercises sequential logic
+    return None
+
+
+def match_design(prompt: str) -> str:
+    return _match(prompt.lower()) or "counter"  # sensible default that exercises sequential logic
 
 
 def is_exact_match(prompt: str) -> bool:
     """Return True if the prompt matched a known design keyword, False on fallback."""
     p = prompt.lower()
-    for _key, words in _KEYWORDS:
-        if any(w in p for w in words):
-            return True
-    return False
+    return _match(p) is not None and not any(w in p for w in _NOT_EXACT)
 
 
 def is_buggy_request(prompt: str) -> bool:

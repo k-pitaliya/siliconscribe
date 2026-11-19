@@ -136,7 +136,61 @@ app.add_middleware(
     allow_headers=["Content-Type", "Authorization"],
 )
 
-WORKSPACE = "./workspace"
+# One absolute workspace, next to this file (self-review: "./workspace" depended on the launch directory, while db.py
+# always used backend/workspace, and the startup clean-up deleted old folders of whatever ./workspace happened to be).
+# Tests point SILICONSCRIBE_WORKSPACE at a temporary folder BEFORE importing this module.
+MAX_BODY_BYTES = 1_000_000      # 2 x 200 KB of code plus a specification fits easily
+
+
+class BodySizeLimit:
+    """Refuse request bodies over MAX_BODY_BYTES, counting the bytes as they arrive, so a chunked upload without a
+    Content-Length is capped too (self-review: a 10 MB spec was accepted; then a chunked 3 MB body bypassed a header check).
+    The body is read here (bounded), then replayed to the app; later receive() calls (disconnect notices for the
+    streaming endpoint) go to the real connection."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+        declared = dict(scope.get("headers") or []).get(b"content-length")
+        if declared is not None and declared.isdigit() and int(declared) > MAX_BODY_BYTES:
+            return await self._reject(send)
+        chunks, size = [], 0
+        while True:
+            message = await receive()
+            if message["type"] != "http.request":           # client went away before sending the body
+                return await self.app(scope, _replay([message], receive), send)
+            body = message.get("body", b"")
+            size += len(body)
+            if size > MAX_BODY_BYTES:
+                return await self._reject(send)
+            chunks.append(body)
+            if not message.get("more_body", False):
+                break
+        await self.app(scope, _replay([{"type": "http.request", "body": b"".join(chunks), "more_body": False}], receive), send)
+
+    @staticmethod
+    async def _reject(send):
+        body = b'{"detail":"Request too large (limit %d bytes)."}' % MAX_BODY_BYTES
+        await send({"type": "http.response.start", "status": 413,
+                    "headers": [(b"content-type", b"application/json"), (b"content-length", str(len(body)).encode())]})
+        await send({"type": "http.response.body", "body": body})
+
+
+def _replay(messages, receive):
+    pending = list(messages)
+
+    async def replay_receive():
+        return pending.pop(0) if pending else await receive()
+    return replay_receive
+
+
+app.add_middleware(BodySizeLimit)
+
+
+WORKSPACE = os.environ.get("SILICONSCRIBE_WORKSPACE") or str(Path(__file__).resolve().parent / "workspace")
 simulator = IcarusSimulator(workspace=WORKSPACE)
 
 # Workspace GC on startup (best-effort; do not fail boot if workspace missing). Done once, at import:
@@ -490,7 +544,8 @@ def admin_cleanup(request: Request, ttl_hours: int = 24):
             detail="Admin cleanup is disabled. Set ADMIN_TOKEN to enable it.",
         )
     supplied = request.headers.get("x-admin-token", "")
-    if not secrets.compare_digest(supplied, expected):
+    # Compare bytes: compare_digest raises TypeError on non-ASCII str, which turned a bad header into a 500 (self-review).
+    if not secrets.compare_digest(supplied.encode("utf-8", "surrogateescape"), expected.encode("utf-8", "surrogateescape")):
         raise HTTPException(status_code=403, detail="Forbidden")
     if cleanup_old_workspaces is None:
         raise HTTPException(status_code=500, detail="Internal server error")
@@ -528,4 +583,4 @@ except Exception:
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host=os.environ.get("HOST", "127.0.0.1"), port=8000)   # no login: local only by default

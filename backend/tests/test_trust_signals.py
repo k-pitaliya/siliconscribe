@@ -5,10 +5,15 @@ looked identical to a PASS backed by 100+, and a single transient 503 from the
 provider ended the run after one retry.
 """
 
+import shutil
 from types import SimpleNamespace
+
+import pytest
 
 from models import PortSpec, RTLDesignSpec
 from orchestrator import MIN_EXECUTED_CHECKS, weak_verification_note
+
+_needs_iverilog_ts = pytest.mark.skipif(shutil.which("iverilog") is None, reason="iverilog not installed")
 
 
 def _spec(*ports):
@@ -63,7 +68,7 @@ def test_provider_retries_transient_errors_with_backoff(monkeypatch):
     prov = OpenAIProvider(api_key="k", base_url="http://127.0.0.1:9/v1", model="m")
     assert prov.client.max_retries == 4
     monkeypatch.delenv("LLM_MAX_RETRIES")
-    assert OpenAIProvider(api_key="k", base_url="http://127.0.0.1:9/v1", model="m").client.max_retries == 3
+    assert OpenAIProvider(api_key="k", base_url="http://127.0.0.1:9/v1", model="m").client.max_retries == 2
 
 
 # ------------------------------------------------------------------ repair-loop guards
@@ -113,6 +118,7 @@ def test_fixer_testbench_that_never_instantiates_the_dut_is_rejected(tmp_path, m
     assert resp["testbench_code"] == od.get_design("counter")["tb"]
 
 
+@_needs_iverilog_ts
 def test_a_relaxed_testbench_that_passes_a_still_wrong_design_is_flagged(tmp_path, monkeypatch):
     """The fixer cannot fix the RTL, so it rewrites every comparison to if (1'b1)."""
     # at least as many check SITES as the original testbench, or the anti-cheat count guard stops it first
@@ -153,6 +159,7 @@ def test_only_this_machine_may_call_the_api_from_a_browser_unless_an_origin_is_a
     assert main._cors_origins()[-1] == "https://demo.example.org" and not any("*" in o or o.startswith("ftp") for o in main._cors_origins())
 
 
+@_needs_iverilog_ts
 def test_rerun_refuses_a_pass_from_a_testbench_with_no_checks(monkeypatch):
     from fastapi.testclient import TestClient
     import main

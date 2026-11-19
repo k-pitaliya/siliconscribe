@@ -11,9 +11,11 @@ SystemVerilog with regex here — that job belongs to the model.
 """
 
 import os
+import signal
 import subprocess
 import re
 import shutil
+import tempfile
 import threading
 from pathlib import Path
 from typing import Tuple, Optional, List
@@ -79,9 +81,22 @@ _SYSTEM_TASK_RE = re.compile(r"\$([A-Za-z_][A-Za-z0-9_$]*)")
 
 # The design under test must not be able to write the verdict the simulator trusts.
 _RTL_FORBIDDEN_TOKENS = ("Passed:", "Failed:", "ALL TESTS PASSED", "$finish", "$stop", "$fatal")
-_RTL_TB_HIERARCHY_RE = re.compile(r"\btestbench\s*\.")
+# Whitespace or comments may sit between tokens (Icarus accepts `testbench/**/.x` and
+# `$dumpfile/**/("..")`), so every check below that spans tokens allows them.
+# Block comments written "unrolled" (no lazy .*? inside a repeated group): the earlier form backtracked exponentially, so a
+# 100-byte input of repeated /**/ took over 30 s (self-review verification finding, reproduced).
+_BLOCK_COMMENT = r"/\*[^*]*\*+(?:[^/*][^*]*\*+)*/"
+# The token-spanning checks below run on COMMENT-STRIPPED text (linear scanner), with bounded arguments: patterns that
+# skipped comments themselves were quadratic on repeated "$dumpfile/*" or "testbench/*" (self-review verification).
+_RTL_TB_HIERARCHY_RE = re.compile(r"\btestbench\s*\.|\$root\b")
+# Real RTL never prints (the RTL prompt forbids it) and has no `final` block; both were
+# used to forge the summary after $finish (review: `final $write("%cassed: 16",80)`).
+_RTL_PRINT_RE = re.compile(r"\$(?:display|write|strobe|monitor)[bho]?\b|\bfinal\b")
+# A macro whose body contains `$` can build a system task name the scanner never sees
+# (review: `define D $ / `define E fopen / `D`E("/abs/path","w") wrote outside the workspace).
+_DIRECTIVE_RE = re.compile(r"`(?!timescale\b)[A-Za-z_]")      # any macro use or directive other than `timescale
 _INCLUDE_RE = re.compile(r"`\s*include\b")
-_DUMPFILE_RE = re.compile(r"\$dumpfile\s*\(\s*(\"[^\"]*\"|[^)]*)\)")
+_DUMPFILE_RE = re.compile(r"\$dumpfile\b(\s*)(\(([^)]{0,512})\))?")
 _SAFE_DUMP_NAME_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}$")
 _SAFE_ENV_KEYS = ("PATH", "LANG", "LC_ALL", "TMPDIR")
 # Cap on any single file the simulator may write (transcript / VCD), in the
@@ -98,6 +113,85 @@ _CPU_SECONDS_SLACK = 5
 _SIM_SLOTS = threading.BoundedSemaphore(max(1, int(os.getenv("SIM_MAX_CONCURRENT", "2"))))
 
 
+# One run at a time per design folder: two concurrent runs of the same design_id (two tabs, a double-clicked
+# Re-run) overwrote each other's files and produced false verdicts in 25 of 25 tries (self-review finding).
+_DIR_LOCKS: dict = {}
+_DIR_LOCKS_GUARD = threading.Lock()
+COMPILE_TIMEOUT = 30
+
+
+def _dir_lock(path: Path) -> threading.Lock:
+    with _DIR_LOCKS_GUARD:
+        return _DIR_LOCKS.setdefault(str(path), threading.Lock())
+
+
+def run_tool(cmd: List[str], timeout: float, **kwargs) -> subprocess.CompletedProcess:
+    """subprocess.run that kills the WHOLE process group on timeout.
+
+    `iverilog` is a driver that starts `ivl` as a grandchild; subprocess.run(timeout=) killed only the driver and
+    left `ivl` spinning at 100% CPU after "Compilation timeout" (self-review finding, reproduced). The same holds
+    for any tool that forks. Raises subprocess.TimeoutExpired like subprocess.run.
+    """
+    kwargs.setdefault("stdin", subprocess.DEVNULL)
+    capture = kwargs.pop("capture_output", False)
+    if capture:
+        kwargs["stdout"] = subprocess.PIPE
+        kwargs["stderr"] = subprocess.PIPE
+    with subprocess.Popen(cmd, start_new_session=True, **kwargs) as proc:
+        try:
+            out, err = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
+            proc.communicate()
+            raise
+        return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
+
+
+def _scan(src: str, found: List[str]) -> None:
+    """The text rules, applied to one piece of source (original or preprocessed)."""
+    for m in _FORBIDDEN_RE.finditer(src):
+        found.append(f"{m.group(0)} is not allowed (file or process access)")
+    if _INCLUDE_RE.search(src):
+        found.append("`include is not allowed")
+    if "``" in src or "$`" in src:
+        found.append("macro token pasting is not allowed")
+    code = _strip_comments(src)
+    for m in _DUMPFILE_RE.finditer(code):
+        if m.group(2) is None:
+            if code[m.end():m.end() + 1] not in ("", ";"):
+                found.append("$dumpfile must be given a string literal")
+            continue
+        arg = (m.group(3) or "").strip()
+        if len(arg) < 2 or arg[0] != '"' or arg[-1] != '"':
+            found.append("$dumpfile must be given a string literal")
+        elif not _SAFE_DUMP_NAME_RE.match(arg[1:-1]):
+            found.append("$dumpfile must be a plain file name (no path separators)")
+    for m in _SYSTEM_TASK_RE.finditer(src):
+        name = m.group(1)
+        if name not in ALLOWED_SYSTEM_TASKS and not _FORBIDDEN_RE.fullmatch("$" + name):
+            found.append(f"${name} is not an allowed system task")
+
+
+def preprocess(*sources: str) -> Optional[str]:
+    """The sources after macro expansion by Icarus' own preprocessor, in compile order (macros defined in an earlier file
+    apply to later ones). None when they cannot be preprocessed. Never reads other files: `include is refused before
+    this is called."""
+    with tempfile.TemporaryDirectory(prefix="ss_pp_") as td:
+        paths = []
+        for i, src in enumerate(sources):
+            p = Path(td) / f"s{i}.sv"
+            p.write_text(src or "")
+            paths.append(str(p))
+        try:
+            r = run_tool(["iverilog", "-E", "-o", "-", *paths], 15, capture_output=True, text=True, cwd=td, env=clean_env())
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            return None
+        return r.stdout if r.returncode == 0 else None
+
+
 def sandbox_violations(*sources: str) -> List[str]:
     """Return human-readable policy violations found in the given sources.
 
@@ -105,26 +199,19 @@ def sandbox_violations(*sources: str) -> List[str]:
     comment stripper can be fooled by `"//"` inside a string literal into
     hiding a forbidden call, so a forbidden token inside a comment is rejected
     too (false positives are cheap, false negatives are not).
+
+    Macros can build any name the text scan never sees (`define ID(a) a / `ID($)fopen, self-review verification finding),
+    so whenever a macro or directive is used the rules are applied AGAIN to the preprocessed text.
     """
     found: List[str] = []
     for src in sources:
-        for m in _FORBIDDEN_RE.finditer(src or ""):
-            found.append(f"{m.group(0)} is not allowed (file or process access)")
-        if _INCLUDE_RE.search(src or ""):
-            found.append("`include is not allowed")
-        if "``" in (src or "") or "$`" in (src or ""):
-            found.append("macro token pasting is not allowed")
-        for m in _DUMPFILE_RE.finditer(src or ""):
-            arg = m.group(1).strip()
-            if len(arg) < 2 or arg[0] != '"' or arg[-1] != '"':
-                found.append("$dumpfile must be given a string literal")
-            elif not _SAFE_DUMP_NAME_RE.match(arg[1:-1]):
-                found.append("$dumpfile must be a plain file name (no path separators)")
-    for src in sources:
-        for m in _SYSTEM_TASK_RE.finditer(src or ""):
-            name = m.group(1)
-            if name not in ALLOWED_SYSTEM_TASKS and not _FORBIDDEN_RE.fullmatch("$" + name):
-                found.append(f"${name} is not an allowed system task")
+        _scan(src or "", found)
+    if not found and any(_DIRECTIVE_RE.search(src or "") for src in sources):
+        expanded = preprocess(*sources)
+        if expanded is None:
+            found.append("the code uses macros but could not be preprocessed, so it cannot be checked safely")
+        else:
+            _scan(expanded, found)
     seen, out = set(), []
     for v in found:
         if v not in seen:
@@ -133,7 +220,71 @@ def sandbox_violations(*sources: str) -> List[str]:
     return out
 
 
-def rtl_integrity_violations(rtl: str) -> List[str]:
+_TOKEN_SCAN_RE = re.compile(r'"(?:\\.|[^"\\\n])*"|' + _BLOCK_COMMENT + r'|//[^\n]*')
+
+
+def _mask_comments(src: str) -> str:
+    """Like _strip_comments, but every comment character becomes a space, so positions in the result match the input."""
+    src = src or ""
+    out = list(src)
+    i, n = 0, len(src)
+    while i < n:
+        c = src[i]
+        if c == '"':
+            j = i + 1
+            while j < n and src[j] != '"' and src[j] != "\n":
+                j += 2 if src[j] == "\\" else 1
+            i = j + 1
+        elif src.startswith("//", i):
+            j = src.find("\n", i)
+            j = n if j == -1 else j
+            out[i:j] = " " * (j - i)
+            i = j
+        elif src.startswith("/*", i):
+            j = src.find("*/", i + 2)
+            j = n if j == -1 else j + 2
+            out[i:j] = [ch if ch == "\n" else " " for ch in src[i:j]]
+            i = j
+        else:
+            i += 1
+    return "".join(out)
+
+
+def _strip_comments(src: str) -> str:
+    """Remove comments but keep string literals (so a "//" inside a string hides nothing).
+
+    One linear pass, not a regex: an unterminated "/*" repeated 60,000 times made the regex form quadratic (52 s,
+    self-review). An unterminated block comment runs to the end of the text, as in Verilog.
+    """
+    src = src or ""
+    out: List[str] = []
+    i, n = 0, len(src)
+    while i < n:
+        c = src[i]
+        if c == '"':
+            j = i + 1
+            while j < n and src[j] != '"' and src[j] != "\n":
+                j += 2 if src[j] == "\\" else 1
+            out.append(src[i:j + 1])
+            i = j + 1
+        elif c == "/" and src.startswith("//", i):
+            j = src.find("\n", i)
+            i = n if j == -1 else j
+            out.append(" ")
+        elif c == "/" and src.startswith("/*", i):
+            j = src.find("*/", i + 2)
+            i = n if j == -1 else j + 2
+            out.append(" ")
+        else:
+            j = i
+            while j < n and src[j] not in '"/':
+                j += 1
+            out.append(src[i:j] if j > i else c)
+            i = j if j > i else i + 1
+    return "".join(out)
+
+
+def _rtl_integrity_text(rtl: str) -> List[str]:
     """Reject RTL that could forge the testbench's verdict or end the run itself.
 
     Review finding (all reproduced): a DUT whose ``initial`` block prints
@@ -143,13 +294,40 @@ def rtl_integrity_violations(rtl: str) -> List[str]:
     """
     found = [f"RTL must not contain {tok!r} (it could forge the test verdict)"
              for tok in _RTL_FORBIDDEN_TOKENS if tok in (rtl or "")]
-    if _RTL_TB_HIERARCHY_RE.search(rtl or ""):
-        found.append("RTL must not reference the testbench hierarchy (testbench.*)")
+    if _RTL_TB_HIERARCHY_RE.search(_strip_comments(rtl)):
+        found.append("RTL must not reference the testbench hierarchy (testbench.* or $root)")
+    if _RTL_PRINT_RE.search(_strip_comments(rtl)):
+        found.append("RTL must not print ($display/$write/$strobe/$monitor) or use a final block "
+                     "(only the testbench reports results)")
+    return found
+
+
+def rtl_integrity_violations(rtl: str) -> List[str]:
+    """Reject RTL that could forge the testbench's verdict or end the run itself (see _rtl_integrity_text). Applied to the
+    macro-expanded RTL too: `define T testbench / `T.fail_count = 0 forged a PASS (self-review verification finding)."""
+    found = _rtl_integrity_text(rtl or "")
+    if not found and _DIRECTIVE_RE.search(rtl or ""):
+        expanded = preprocess(rtl)
+        found = _rtl_integrity_text(expanded) if expanded is not None else [
+            "RTL uses macros but could not be preprocessed, so it cannot be checked safely"]
     return found
 
 
 def _policy_violations(rtl_code: str, testbench_code: str) -> List[str]:
     return sandbox_violations(rtl_code, testbench_code) + rtl_integrity_violations(rtl_code)
+
+
+def dut_instance_names(rtl_code: str, testbench_code: str) -> set:
+    """Instance names, in the testbench, of modules DEFINED IN THE RTL (the design under test). Toggle coverage counts
+    only signals under these instances (self-review finding: a testbench-side stimulus or reference module counted as
+    design and raised coverage from 46% to 77%)."""
+    rtl_modules = set(re.findall(r"\bmodule\s+([A-Za-z_]\w*)", _strip_comments(rtl_code)))
+    tb = _strip_comments(testbench_code)
+    names = set()
+    for mod in rtl_modules:
+        for m in re.finditer(rf"\b{re.escape(mod)}\s*(?:#\s*\((?:[^()]|\([^()]*\))*\))?\s*([A-Za-z_]\w*)\s*\(", tb):
+            names.add(m.group(1))
+    return names
 
 
 def clean_env() -> dict:
@@ -173,7 +351,9 @@ def ensure_vcd_dump(testbench_code: str, top_module: str = "testbench") -> str:
     always produced for the waveform viewer. Best-effort, idempotent."""
     # Idempotent: if either dump primitive exists (any variant), leave untouched
     # to avoid double-injection or breaking a user-supplied dump configuration.
-    if "$dumpfile" in testbench_code or "$dumpvars" in testbench_code or "$dumpall" in testbench_code:
+    # Comments do not count (self-review: the word "$dumpvars" in a comment disabled the waveform).
+    code = _strip_comments(testbench_code)
+    if "$dumpfile" in code or "$dumpvars" in code or "$dumpall" in code:
         return testbench_code
 
     dump_block = (
@@ -184,7 +364,12 @@ def ensure_vcd_dump(testbench_code: str, top_module: str = "testbench") -> str:
     )
 
     # Insert right after the first "module <top> ... ;" header.
-    match = re.search(r'(\bmodule\b\s+\w+\b[^;]*;)', testbench_code)
+    # Anchored at the start of a line, so a comment such as "// testbench for the add4 module under test; ..." is never
+    # taken as the header (self-review finding: the dump block was injected inside that comment and broke compilation).
+    # The first module header that is NOT inside a comment (so "// testbench for the add4 module under test;" is skipped,
+    # while "/* tb */ module testbench;" or "(* keep *) module testbench;" on one line still work: self-review findings).
+    masked = _mask_comments(testbench_code)
+    match = re.search(r'\bmodule\b\s+\w+\b[^;]{0,4000};', masked)
     if match:
         idx = match.end()
         return testbench_code[:idx] + dump_block + testbench_code[idx:]
@@ -210,7 +395,7 @@ def _parse_compile_errors(output: str) -> List[SimError]:
 
 _SUMMARY_PASSED_RE = re.compile(r"^[ \t]*Passed:[ \t]*(\S+)[ \t]*$", re.MULTILINE)
 _SUMMARY_FAILED_RE = re.compile(r"^[ \t]*Failed:[ \t]*(\S+)[ \t]*$", re.MULTILINE)
-_FAILURE_LINE_RE = re.compile(r"^[ \t]*(?:FAIL|FAILED|ERROR|FATAL)\b", re.MULTILINE)
+_FAILURE_LINE_RE = re.compile(r"^[ \t]*(?:FAIL|FAILED|ERROR|FATAL)\b|^[ \t]*CHK\|FAIL\|", re.MULTILINE)
 _FINISH_RE = re.compile(r"\$finish called at (\d+) \((\d+)?(fs|ps|ns|us|ms|s)\)")
 _UNIT_TO_NS = {"fs": 1e-6, "ps": 1e-3, "ns": 1.0, "us": 1e3, "ms": 1e6, "s": 1e9}
 
@@ -223,7 +408,11 @@ def _decide_verdict(log: str, returncode: Optional[int] = None):
     let a mid-run phase line or a design-printed line decide the verdict, a ``Failed: x``
     (uninitialised counter) was read as 0, and ``ALL TESTS PASSED`` overrode printed errors.
     Rules now:
-      * the summary lines must occupy a whole line, and the LAST pair wins;
+      * the summary lines must occupy a whole line, and the LAST pair wins, except that
+        a ``Failed: N`` with N > 0 ANYWHERE makes the run a FAIL (a testbench that resets
+        its counters per phase must not hide an earlier phase's failures);
+      * FAIL/FATAL lines without a summary are a FAIL, not an ERROR (an ERROR lets the
+        repair loop treat the oracle as broken and rewrite it);
       * both counts must be numeric, otherwise the run is an ERROR;
       * any FAIL/ERROR/FATAL line contradicts ``Failed: 0`` and makes the run a FAIL;
       * a run that executed zero checks is not a PASS;
@@ -234,10 +423,22 @@ def _decide_verdict(log: str, returncode: Optional[int] = None):
     failed_raw = _SUMMARY_FAILED_RE.findall(log)
     failure_lines = len(_FAILURE_LINE_RE.findall(log))
 
-    def _num(vals):
-        return int(vals[-1]) if vals and vals[-1].isdigit() else None
-    passed, failed = _num(passed_raw), _num(failed_raw)
+    def _is_num(v):
+        return re.fullmatch(r"[0-9]+", v) is not None
 
+    def _num(vals):
+        return int(vals[-1]) if vals and _is_num(vals[-1]) else None
+    passed, failed = _num(passed_raw), _num(failed_raw)
+    earlier_failed = max((int(v) for v in failed_raw if _is_num(v)), default=0)
+
+    if earlier_failed > 0 and (failed is None or failed == 0):
+        notes.append(f"An earlier summary line reports 'Failed: {earlier_failed}'; a later "
+                     "'Failed: 0' does not cancel it.")
+        return "FAIL", passed or 0, earlier_failed, notes
+    if (passed is None or failed is None) and failure_lines:
+        notes.append(f"No valid summary, but the log contains {failure_lines} FAIL/FATAL line(s); "
+                     "treating the run as FAIL.")
+        return "FAIL", passed or 0, failure_lines, notes
     if passed is None or failed is None:
         notes.append("No valid summary: the testbench must end with whole lines "
                      "'Passed: <number>' and 'Failed: <number>'.")
@@ -344,9 +545,15 @@ class IcarusSimulator:
         cmd = ["iverilog", "-o", str(output_vvp), "-g2012", "-Wall",
                str(shim), str(rtl_file), str(tb_file)]
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30,
-                                    cwd=str(rtl_file.parent), env=clean_env())
+            # Same CPU/memory/file caps as the simulation (self-review: a generate loop of 3 million wires took the
+            # compiler to ~3 GB in 5 s). run_tool kills the whole group on the wall-clock limit.
+            limits = (f'ulimit -t {COMPILE_TIMEOUT + _CPU_SECONDS_SLACK} 2>/dev/null; ulimit -v {_MAX_MEMORY_KB} 2>/dev/null; '
+                      f'ulimit -f {_MAX_OUTPUT_BLOCKS} 2>/dev/null; exec "$@"')
+            result = run_tool(["/bin/sh", "-c", limits, "sh", *cmd], COMPILE_TIMEOUT, capture_output=True, text=True,
+                              cwd=str(rtl_file.parent), env=clean_env())
             output = (result.stderr or "") + (result.stdout or "")
+            if result.returncode == 127 and "not found" in output:     # the shell wrapper could not find iverilog
+                return False, "Icarus Verilog (iverilog) not installed"
             if result.returncode == 0 and _PORT_WIDTH_RE.search(output):
                 # Icarus only WARNS here, but a testbench wire narrower than the DUT
                 # port silently hides the upper bits, so a wrong DUT can pass.
@@ -359,7 +566,7 @@ class IcarusSimulator:
             return False, "Icarus Verilog (iverilog) not installed"
 
     def run(self, design_id: str, top_module: str = "testbench",
-            timeout: Optional[int] = None) -> SimulationResult:
+            timeout: Optional[int] = None, dut_instances: Optional[set] = None) -> SimulationResult:
         design_dir = self._design_dir(design_id)
         vvp_file = design_dir / f"{top_module}.vvp"
         vcd_file = design_dir / VCD_FILENAME
@@ -396,7 +603,7 @@ class IcarusSimulator:
                 tail = ""
             msg = f"Simulation exceeded {timeout}s timeout (no $finish reached)."
             return SimulationResult(status="TIMEOUT", module_name="",
-                                    simulation_time_ns=timeout * 1000,
+                                    simulation_time_ns=0.0,   # unknown: the run was stopped by the wall clock (was seconds*1000)
                                     errors=[SimError(message=msg)],
                                     log_excerpt=msg + (f"\nLast output:\n{tail}" if tail else ""))
         except FileNotFoundError:
@@ -404,10 +611,10 @@ class IcarusSimulator:
                                     errors=[SimError(message="vvp runtime not found")],
                                     log_excerpt="vvp runtime not found")
 
-        return self.parse_results(log_file, vcd_file, returncode=proc.returncode)
+        return self.parse_results(log_file, vcd_file, returncode=proc.returncode, dut_instances=dut_instances)
 
     def parse_results(self, log_file: Path, vcd_file: Path,
-                      returncode: Optional[int] = None) -> SimulationResult:
+                      returncode: Optional[int] = None, dut_instances: Optional[set] = None) -> SimulationResult:
         try:
             log_content = log_file.read_text(errors="replace")
         except FileNotFoundError:
@@ -428,7 +635,7 @@ class IcarusSimulator:
         sim_time = _finish_time_ns(log_content)
         check_fields = parse_checks(log_content, pass_count, fail_count)
         try:
-            measured_toggle = toggle_coverage(vcd_file)
+            measured_toggle = toggle_coverage(vcd_file, dut_instances=dut_instances)
         except Exception:  # a measurement must never break the verdict
             measured_toggle = None
 
@@ -468,7 +675,15 @@ class IcarusSimulator:
                 errors=[SimError(message=v) for v in violations],
                 log_excerpt=msg,
             )
-        with _SIM_SLOTS:
+        with _dir_lock(resolved), _SIM_SLOTS:
+            # Never report a previous run's waveform or transcript as this run's (self-review finding: a testbench
+            # that dumps to its own file name left the OLD design.vcd in place, and it was shown for the new run).
+            if resolved.is_dir():
+                for stale in [*resolved.glob("*.vcd"), resolved / LOG_FILENAME, resolved / "testbench.vvp"]:
+                    try:
+                        stale.unlink()
+                    except (FileNotFoundError, IsADirectoryError):
+                        pass
             rtl_file, tb_file = self.write_files(design_id, rtl_code, testbench_code)
             ok, compile_log = self.compile(rtl_file, tb_file)
             if not ok:
@@ -478,4 +693,4 @@ class IcarusSimulator:
                     errors=_parse_compile_errors(compile_log),
                     log_excerpt=f"Compilation failed:\n{compile_log}"[-2500:],
                 )
-            return self.run(design_id, timeout=timeout)
+            return self.run(design_id, timeout=timeout, dut_instances=dut_instance_names(rtl_code, testbench_code))

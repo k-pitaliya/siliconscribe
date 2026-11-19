@@ -71,3 +71,9 @@ def test_rate_limit_enforced():
         main.RATE_LIMIT_MAX_REQUESTS = old_max
         main.RATE_LIMIT_WINDOW = old_window
         main._rate_log.pop("test_rate_limit_client", None)
+
+
+def test_admin_cleanup_rejects_a_non_ascii_token_with_403_not_500(monkeypatch):
+    monkeypatch.setenv("ADMIN_TOKEN", "secret-token")
+    r = client.post("/api/admin/cleanup", headers={"x-admin-token": "sécret".encode("latin-1")})   # raw header bytes
+    assert r.status_code == 403

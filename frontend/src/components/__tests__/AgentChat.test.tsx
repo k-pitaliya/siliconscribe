@@ -64,3 +64,16 @@ describe('AgentChat finished steps', () => {
     expect(screen.getByText('Parsing requirement (provider: x, model: y)...')).toBeTruthy()
   })
 })
+
+describe('AgentChat diagnosis (self-review UX finding)', () => {
+  it('collapses a long diagnosis and shows `code` from the model as code, not backticks', () => {
+    const { container } = render(<AgentChat running={false} explanation="" messages={[
+      { role: 'ai', text: 'Applied a fix.', stage: 'fix', diagnosis: { root_cause: 'the `wr_en` input is ignored when full', fix_location: 'rtl' } },
+    ]} />)
+    const d = screen.getByTestId('chat-diagnosis')
+    expect(d.tagName).toBe('DETAILS')
+    expect(d.hasAttribute('open')).toBe(false)
+    expect(container.querySelector('.run-diag code')?.textContent).toBe('wr_en')
+    expect(d.textContent).not.toContain('`')
+  })
+})

@@ -12,6 +12,7 @@ live model -> offline demo -> saved results. Nothing here writes to the projects
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import shutil
@@ -133,14 +134,15 @@ def check_live_config() -> bool:
         return False
     rc, out = run(["opencode", "models"], timeout=60)
     listed = {ln.strip() for ln in out.splitlines()}
-    wanted = model if "/" in model else f"opencode/{model}"
+    wanted = (model if "/" in model else f"opencode/{model}") if model else ""
     if rc != 0:
         record("WARN", "OpenCode app", "`opencode models` failed: is the app signed in?")
         return False
     if model and wanted not in listed:
         record("FAIL", "OpenCode model", f"{wanted} is not offered to this account")
         return False
-    record("OK", "OpenCode app", f"signed in; model {wanted or '(default)'} is available")
+    # Listing models does not prove sign-in or quota (free models list without credentials); only --live does.
+    record("OK", "OpenCode app", f"model {wanted or '(default)'} is listed (sign-in and quota are checked only by --live)")
     try:
         timeout = int(os.getenv("LLM_TIMEOUT_SECONDS", "0"))
     except ValueError:
@@ -170,10 +172,27 @@ def check_live_call() -> bool:
 
 
 def check_servers() -> None:
-    record("OK" if http_ok("http://127.0.0.1:8000/health") else "WARN", "Backend :8000",
-           "responding" if http_ok("http://127.0.0.1:8000/health") else "not running (start it before the demo)")
+    """A server that answers is not enough: an old backend left running in offline mode, or one using another provider,
+    also answers (self-review DevOps finding). Read what the running backend says about itself."""
+    if not http_ok("http://127.0.0.1:8000/health"):
+        record("WARN", "Backend :8000", "not running (start it before the demo)")
+    else:
+        try:
+            with urllib.request.urlopen("http://127.0.0.1:8000/", timeout=4.0) as r:  # noqa: S310 - fixed local URL
+                info = json.loads(r.read().decode() or "{}")
+        except Exception:
+            info = {}
+        if info.get("offline"):
+            record("WARN", "Backend :8000", "responding, but in OFFLINE mode (built-in demo only): restart it with the live command")
+        elif info.get("simulator_available") is False:
+            record("FAIL", "Backend :8000", "responding, but it cannot find the simulator (start it with PATH=\"$HOME/.local/bin:$PATH\")")
+        else:
+            record("OK", "Backend :8000", f"responding, live, provider {info.get('provider', '?')}")
     record("OK" if http_ok("http://127.0.0.1:5173/") else "WARN", "Frontend :5173",
            "responding" if http_ok("http://127.0.0.1:5173/") else "not running (cd frontend && npm run dev)")
+    node_ok = bool(shutil.which("node")) and (BACKEND.parent / "frontend" / "node_modules").is_dir()
+    record("OK" if node_ok else "WARN", "Frontend tools", "node and frontend/node_modules present" if node_ok
+           else "node or frontend/node_modules missing (cd frontend && npm ci)")
 
 
 def check_storage() -> None:

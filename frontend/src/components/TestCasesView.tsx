@@ -1,4 +1,4 @@
-import { useMemo, useState, type KeyboardEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import type { CheckResult, SimulationResult } from '../types'
 import { differingBits, formatTime, formatValue, type Radix } from '../waveformUtils'
 
@@ -112,11 +112,39 @@ export default function TestCasesView({ result, timescalePs = null, onShowInWave
   const fmt = (v: string | null) => (v == null ? '—' : formatValue(v, Math.max(2, v.length * 4), radix))
   const when = (t: number | null) => (t == null ? '—' : formatTime(t, timescalePs))
 
+  // One tab stop for the whole list, arrow keys move within it (self-review finding: every rendered row was a tab stop,
+  // and rows outside the rendered window could not be reached from the keyboard at all).
+  const viewportRef = useRef<HTMLDivElement>(null)
+  const focusIdx = useRef<number | null>(null)
+  const activeIdx = selected != null && rows.some((r) => r.idx === selected) ? selected : rows[0]?.idx
+  useEffect(() => {
+    if (focusIdx.current == null) return
+    viewportRef.current?.querySelector<HTMLElement>(`[data-idx="${focusIdx.current}"]`)?.focus()
+    focusIdx.current = null
+  })
   const onRowKey = (e: KeyboardEvent<HTMLDivElement>, c: CheckResult) => {
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault()
       setSelected(c.idx)
+      return
     }
+    const pos = rows.findIndex((r) => r.idx === c.idx)
+    const step = { ArrowDown: 1, ArrowUp: -1, PageDown: 10, PageUp: -10 }[e.key]
+    const target = e.key === 'Home' ? 0 : e.key === 'End' ? rows.length - 1 : step != null ? pos + step : null
+    if (target == null) return
+    e.preventDefault()
+    const next = rows[Math.max(0, Math.min(rows.length - 1, target))]
+    if (!next) return
+    const nextPos = rows.indexOf(next)
+    const vp = viewportRef.current
+    if (vp) {
+      const top = nextPos * ROW_H
+      if (top < vp.scrollTop) vp.scrollTop = top
+      else if (top + ROW_H > vp.scrollTop + vp.clientHeight) vp.scrollTop = top + ROW_H - vp.clientHeight
+      setScrollTop(vp.scrollTop)
+    }
+    focusIdx.current = next.idx
+    setSelected(next.idx)
   }
 
   return (
@@ -214,18 +242,26 @@ export default function TestCasesView({ result, timescalePs = null, onShowInWave
         </div>
         <div
           className="tcv-viewport"
+          ref={viewportRef}
           role="listbox"
           aria-label="Test cases"
           onScroll={(e) => setScrollTop((e.target as HTMLDivElement).scrollTop)}
         >
           <div style={{ height: rows.length * ROW_H, position: 'relative' }}>
-            {rows.length === 0 && <div className="empty-state">No checks match this filter.</div>}
+            {rows.length === 0 && (
+              <div className="empty-state">
+                {checks.length === 0 && groups.length > 0
+                  ? 'The per-check detail was not kept for this run (it ended before the final report), so only the totals above are available.'
+                  : 'No checks match this filter.'}
+              </div>
+            )}
             {visible.map((c, i) => (
               <div
                 key={c.idx}
                 role="option"
                 aria-selected={selected === c.idx}
-                tabIndex={0}
+                tabIndex={c.idx === activeIdx ? 0 : -1}
+                data-idx={c.idx}
                 className={`tcv-row ${c.status === 'FAIL' ? 'fail' : ''}`}
                 style={{ top: (start + i) * ROW_H }}
                 onClick={() => setSelected(c.idx)}

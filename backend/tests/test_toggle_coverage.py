@@ -116,3 +116,40 @@ def test_a_failing_measurement_never_changes_the_verdict(tmp_path, monkeypatch):
     d = od.get_design("counter")
     r = IcarusSimulator(workspace=str(tmp_path)).simulate("tboom", d["rtl"], d["tb"])
     assert r.status == "PASS" and r.measured_toggle is None
+
+
+# ------------------------------------------------------------------ self-review finding (19 Nov 2026)
+@pytest.mark.skipif(shutil.which("iverilog") is None, reason="iverilog not installed")
+def test_a_testbench_side_helper_module_does_not_count_as_design(tmp_path):
+    """A stimulus LFSR instantiated in the testbench raised the adder's toggle coverage from 46% to 77%."""
+    from simulator import IcarusSimulator, dut_instance_names
+    rtl = "module add4(input [3:0] a, b, output [4:0] s); assign s = a + b; endmodule\n"
+    helper = ("module stim_gen(input clk, output reg [15:0] r); initial r = 16'hACE1;\n"
+              "  always @(posedge clk) r <= {r[14:0], r[15] ^ r[13] ^ r[12] ^ r[10]}; endmodule\n")
+    tb = ("module testbench; reg clk = 0; reg [3:0] a = 0, b = 0; wire [4:0] s; wire [15:0] r;\n"
+          "  integer pass_count = 0, fail_count = 0;\n  add4 dut(.a(a), .b(b), .s(s));\n  stim_gen g(.clk(clk), .r(r));\n"
+          "  always #5 clk = ~clk;\n  initial begin #1 a = 1; b = 1; #1 if (s === 2) pass_count = pass_count + 1; else fail_count = fail_count + 1;\n"
+          "    #200 $display(\"Passed: %0d\", pass_count); $display(\"Failed: %0d\", fail_count); $finish; end\nendmodule\n" + helper)
+    assert dut_instance_names(rtl, tb) == {"dut"}
+    res = IcarusSimulator(workspace=str(tmp_path)).simulate("tog1", rtl, tb, timeout=20)
+    assert res.status == "PASS" and res.measured_toggle is not None
+    assert res.measured_toggle.bits_total == 13           # a, b and s of the adder only (4 + 4 + 5), not the LFSR's 17
+
+
+@pytest.mark.skipif(shutil.which("iverilog") is None, reason="iverilog not installed")
+@pytest.mark.parametrize("inst", [
+    "wrap w(.a(a), .b(b), .s(s));",
+    "generate if (1) begin : g\n    add4 dut(.a(a), .b(b), .s(s));\n  end endgenerate",
+], ids=["inside a wrapper", "inside a generate block"])
+def test_a_design_inside_a_wrapper_or_generate_block_is_still_measured(tmp_path, inst):
+    rtl = "module add4(input [3:0] a, b, output [4:0] s); assign s = a + b; endmodule\n"
+    wrap = ("module wrap(input [3:0] a, b, output [4:0] s); add4 dut(.a(a), .b(b), .s(s)); endmodule\n"
+            "module stim_gen(input clk, output reg [15:0] r); initial r = 16'hACE1; always @(posedge clk) r <= {r[14:0], r[15]};"
+            " endmodule\n")
+    tb = ("module testbench; reg clk = 0; reg [3:0] a = 0, b = 0; wire [4:0] s; wire [15:0] r; integer pass_count = 0, fail_count = 0;\n"
+          "  stim_gen helper(.clk(clk), .r(r)); always #5 clk = ~clk;\n  " + inst +
+          "\n  initial begin #1 a = 1; b = 1; #1 if (s === 2) pass_count = pass_count + 1; else fail_count = fail_count + 1;\n"
+          "    $display(\"Passed: %0d\", pass_count); $display(\"Failed: %0d\", fail_count); $finish; end\nendmodule\n" + wrap)
+    res = IcarusSimulator(workspace=str(tmp_path)).simulate("tog2", rtl, tb, timeout=20)
+    assert res.status == "PASS" and res.measured_toggle is not None
+    assert res.measured_toggle.bits_total == 13          # the adder's a, b, s only: not the helper LFSR next to it

@@ -99,7 +99,7 @@ def _role(sig: dict, ports: Optional[Dict[str, str]]) -> str:
 _NON_NET_TYPES = {"parameter", "localparam", "integer", "real", "realtime", "time", "event", "string"}
 
 
-def _parse_header(header: str) -> Dict[str, dict]:
+def _parse_header(header: str, dut_instances: Optional[set] = None) -> Dict[str, dict]:
     """Walk $scope / $upscope / $var in order so every signal knows where it lives."""
     code_to_sig: Dict[str, dict] = {}
     scopes: List[tuple] = []
@@ -118,6 +118,8 @@ def _parse_header(header: str) -> Dict[str, dict]:
             # The simulator gives a DUT port and the testbench wire tied to it the SAME code, so
             # remember design membership even when the code was first seen at testbench level.
             in_design = len(scopes) >= 2 and scope_kind == "module" and m.group(4) not in _NON_NET_TYPES
+            if in_design and dut_instances:          # only under the design's own instance(s), not a testbench helper module
+                in_design = any(name in dut_instances for _, name in scopes[1:])     # also inside a wrapper or generate
             if code in code_to_sig:      # alias of a signal we already have
                 if in_design and not code_to_sig[code]["design_name"]:
                     code_to_sig[code]["design_name"] = name
@@ -147,7 +149,7 @@ def _pad_bits(bits: str, width: int) -> str:
     return fill * (width - len(bits)) + bits
 
 
-def toggle_coverage(vcd_path: str | Path) -> Optional[ToggleCoverage]:
+def toggle_coverage(vcd_path: str | Path, dut_instances: Optional[set] = None) -> Optional[ToggleCoverage]:
     """Measure toggle coverage of the design under test from a VCD file.
 
     A bit is covered when the simulator recorded it going 0 -> 1 AND 1 -> 0 (direct transitions;
@@ -164,7 +166,9 @@ def toggle_coverage(vcd_path: str | Path) -> Optional[ToggleCoverage]:
     body_start = text.find("$enddefinitions")
     if body_start == -1:
         return None
-    sigs = _parse_header(text[:body_start])
+    sigs = _parse_header(text[:body_start], dut_instances)
+    if dut_instances and not any(s["design_name"] for s in sigs.values()):
+        sigs = _parse_header(text[:body_start])     # the instance names were not found in the VCD: measure as before
     # Design signals: nets with a declaration inside an instantiated module (see _parse_header).
     design = {code: s for code, s in sigs.items() if s["design_name"] and 0 < s["width"] <= 4096}
     if not design:

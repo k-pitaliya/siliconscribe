@@ -535,14 +535,22 @@ def list_projects(limit: int = 50, offset: int = 0, workspace=None):
         except Exception:
             pass
         _ensure_table(conn)
-        cur = conn.execute(
-            "SELECT id, prompt, module_name, status, created_at, iterations FROM projects ORDER BY created_at DESC LIMIT ? OFFSET ?",
-            (limit, offset),
-        )
+        # The model and whether it was a demo run, so the Projects menu can tell a saved demo from a live run
+        # (self-review UX finding: four identical "alu_4bit PASS" rows, and a scripted run reopened looking live).
+        try:
+            cur = conn.execute(
+                "SELECT id, prompt, module_name, status, created_at, iterations, json_extract(data, '$.model'), "
+                "json_extract(data, '$.fallback_notice') FROM projects ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                (limit, offset),
+            )
+        except sqlite3.OperationalError:          # SQLite without JSON functions: same list, without the extra fields
+            cur = conn.execute(
+                "SELECT id, prompt, module_name, status, created_at, iterations, NULL, NULL FROM projects "
+                "ORDER BY created_at DESC LIMIT ? OFFSET ?", (limit, offset))
         rows = cur.fetchall()
         result: List[Dict[str, Any]] = []
         for r in rows:
-            rid, prompt, module_name, status, created_at, iterations = r
+            rid, prompt, module_name, status, created_at, iterations, model, notice = r
             result.append(
                 {
                     "design_id": rid,
@@ -551,6 +559,8 @@ def list_projects(limit: int = 50, offset: int = 0, workspace=None):
                     "status": status or "",
                     "created_at": created_at or 0,
                     "iterations": iterations or 0,
+                    "model": model or None,
+                    "demo": bool(notice) or model == "offline demo",
                 }
             )
         return result

@@ -13,6 +13,20 @@ class PortSpec(BaseModel):
     width: int = Field(1, ge=1, le=1024, description="Bit width of the port")
     description: str = Field("", description="Brief description of the port")
 
+    @field_validator("direction", mode="before")
+    @classmethod
+    def normalise_direction(cls, v):
+        """Models write "Output", "out", "in" (self-review finding: valid specs were rejected)."""
+        if isinstance(v, str):
+            t = v.strip().lower()
+            return {"in": "input", "out": "output", "io": "inout", "bidir": "inout", "bidirectional": "inout"}.get(t, t)
+        return v
+
+    @field_validator("description", mode="before")
+    @classmethod
+    def null_description(cls, v):
+        return "" if v is None else v
+
     @field_validator("width", mode="before")
     @classmethod
     def coerce_width(cls, v):
@@ -48,9 +62,22 @@ class PortSpec(BaseModel):
 
 
 class ParameterSpec(BaseModel):
-    name: str
-    type: str = Field("integer", description="Parameter type")
+    name: str = Field(..., max_length=64)
+    type: str = Field("integer", max_length=32, description="Parameter type")
     default: int | str = Field(..., description="Default value")
+
+    @field_validator("type", mode="before")
+    @classmethod
+    def null_type(cls, v):
+        return "integer" if v is None else v
+
+    @field_validator("default")
+    @classmethod
+    def short_default(cls, v):
+        # Bounded (self-review: a 10 MB default was accepted and went into every prompt).
+        if isinstance(v, str) and len(v) > 64:
+            raise ValueError("parameter default must be at most 64 characters")
+        return v
 
 
 class RTLDesignSpec(BaseModel):
@@ -59,6 +86,20 @@ class RTLDesignSpec(BaseModel):
     ports: List[PortSpec] = Field(..., description="List of ports")
     behavior: str = Field(..., description="Behavioral description of the module")
     constraints: List[str] = Field(default_factory=list, description="Design constraints")
+
+    @field_validator("behavior", mode="before")
+    @classmethod
+    def behavior_text(cls, v):
+        if v is None:
+            return ""
+        return "\n".join(str(x) for x in v) if isinstance(v, list) else v
+
+    @field_validator("constraints", mode="before")
+    @classmethod
+    def constraints_list(cls, v):
+        if v is None:
+            return []
+        return [v] if isinstance(v, str) else v
 
 
 class GenerateRequest(BaseModel):
@@ -306,6 +347,7 @@ class StrengthReport(BaseModel):
     total: int = 0                      # mutants that compiled and were run
     killed: int = 0                     # of those, how many the testbench caught
     invalid: int = 0                    # injected changes that did not compile (not counted)
+    inconclusive: int = 0               # ran but neither PASS nor a reported failure (crash, slow-testbench timeout)
     survivors: List[MutantInfo] = Field(default_factory=list)
     note: str = ""
     seconds: float = 0.0
@@ -327,6 +369,7 @@ class TimingReport(BaseModel):
     # The worst path, cell by cell: {point, cell, edge (rise/fall), incr_ns, arrival_ns}. See timing.parse_sta.
     critical_path: List[dict] = Field(default_factory=list)
     critical_path_truncated: bool = False   # middle pins of a very long path omitted; endpoint always kept
+    half_cycle_path: bool = False           # worst path is half-cycle (falling edge): no fmax is given
     # Formal check that the mapped netlist equals the RTL (equivalence.py): proven | different | not_proven | None.
     equivalence: Optional[str] = None
     equivalence_method: str = ""
@@ -368,6 +411,8 @@ class RunResponse(BaseModel):
     testbench_model: Optional[str] = None   # the model that wrote the testbench, when it was not the same one
     independent_testbench: bool = False     # a separate model wrote the testbench and a failing check was never rewritten away
     second_opinion: Optional[SecondOpinion] = None
+    # Set when the status is PASS but the run's own evidence contradicts it (original or fresh testbench fails).
+    pass_disputed: Optional[str] = None
     model: Optional[str] = None             # the model that wrote the design (`provider/name`), so a switched model is visible
 
 

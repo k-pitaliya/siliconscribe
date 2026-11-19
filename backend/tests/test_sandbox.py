@@ -116,7 +116,7 @@ def test_simultaneous_simulations_are_capped_and_the_slot_is_always_released(tmp
     def fake_compile(self, rtl_file, tb_file):
         return True, ""
 
-    def fake_run(self, design_id, top_module="testbench", timeout=60):
+    def fake_run(self, design_id, top_module="testbench", timeout=60, dut_instances=None):
         nonlocal running, peak
         with lock:
             running += 1

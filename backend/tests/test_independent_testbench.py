@@ -1,5 +1,6 @@
 """A separate model for the testbench, and a second opinion when a repair rewrote the first one. A scripted stand-in
 plays the live model so every scenario is deterministic."""
+import shutil
 from types import SimpleNamespace
 
 import pytest
@@ -8,6 +9,9 @@ import llm_service
 import offline_designs as od
 import orchestrator
 from simulator import IcarusSimulator
+
+# Every scenario here runs the real simulator (self-review QA: these failed instead of skipping without Icarus).
+pytestmark = pytest.mark.skipif(shutil.which("iverilog") is None, reason="iverilog not installed")
 
 DEFAULT = "opencode/default-m"
 GOOD_TB = od.get_design("counter")["tb"]
@@ -173,5 +177,124 @@ def test_a_separate_testbench_that_does_not_even_compile_may_still_be_repaired(s
     fix = next(e for e in events if e["stage"] == "fix")
     assert "Testbench change not applied" not in fix["message"]                          # a broken oracle is not a disagreement
     assert r["status"] == "PASS" and r["testbench_code"] != broken
-    assert r["independent_testbench"] is True and r["second_opinion"] is not None         # it WAS rewritten, so a fresh one is asked for
+    assert r["second_opinion"] is not None                                               # it WAS rewritten, so a fresh one is asked for
+    assert r["independent_testbench"] is False                                           # the design model repaired it: no longer independent
+    assert "no longer independent" in (r["verification_warning"] or "")
 
+
+
+# ------------------------------------------------------------------ self-review findings (19 Nov 2026)
+FATAL_TB = GOOD_TB.replace("fail_count = fail_count + 1;", 'fail_count = fail_count + 1; $fatal(1, "mismatch");', 1)
+assert FATAL_TB != GOOD_TB
+TRIVIAL_TB = ("`timescale 1ns/1ps\nmodule testbench;\n  integer pass_count = 0, fail_count = 0;\n  reg clk = 0, rst_n = 0, enable = 0;\n"
+              "  wire [3:0] count;\n  counter dut(.clk(clk), .rst_n(rst_n), .enable(enable), .count(count));\n" + od.CHK_TASK +
+              '  initial begin #1; chk("directed", "t1", 1, 1);\n'
+              '    $display("Passed: %0d", pass_count); $display("Failed: %0d", fail_count); $finish; end\nendmodule\n')
+
+
+def test_a_testbench_that_stops_on_its_first_failure_cannot_be_rewritten_away(script, monkeypatch, tmp_path):
+    """Review: an independent testbench whose check calls $fatal gave ERROR, which unlocked an oracle rewrite; the design
+    model swapped in a 1-check testbench, kept the bug, and the result was PASS labelled independent."""
+    script.tbs = [FATAL_TB]
+    monkeypatch.setattr(llm_service, "fix_design", lambda rtl, tb, log, model=None, **k: {
+        "rtl_code": BAD_RTL, "testbench_code": TRIVIAL_TB, "fix_summary": "simplified the testbench", "fix_type": "testbench_logic",
+        "diagnosis": None})
+    r = done(run(tmp_path, model="m-design", testbench_model="m-tb", max_iterations=2))
+    assert r["status"] == "FAIL" and r["testbench_code"] == FATAL_TB
+
+
+def test_the_same_model_cannot_replace_a_failing_oracle_with_fewer_checks_after_a_runtime_stop(script, monkeypatch, tmp_path):
+    script.tbs = [FATAL_TB]
+    monkeypatch.setattr(llm_service, "fix_design", lambda rtl, tb, log, model=None, **k: {
+        "rtl_code": BAD_RTL, "testbench_code": TRIVIAL_TB, "fix_summary": "simplified", "fix_type": "testbench_logic", "diagnosis": None})
+    r = done(run(tmp_path, model="m-design", max_iterations=2))
+    assert r["status"] != "PASS"
+
+
+def test_a_quota_error_during_repair_keeps_the_run_and_says_why(script, monkeypatch, tmp_path):
+    """Review: the repair call hitting a quota threw away the RTL, testbench, failing result and waveform."""
+    def quota(*a, **k):
+        raise llm_service.LLMUpstreamError("LLM_UPSTREAM:FreeUsageLimitError: daily free allocation used")
+    monkeypatch.setattr(llm_service, "fix_design", quota)
+    events = run(tmp_path, model="m-design")
+    r = done(events)
+    assert r["status"] == "FAIL" and r["rtl_code"] == BAD_RTL and r["result"]["fail_count"] > 0
+    assert "repair model became unavailable" in (r["verification_warning"] or "")
+    assert not any(e["stage"] == "error" for e in events)
+
+
+def test_a_chosen_cloudflare_model_is_not_replaced_by_the_demo_when_the_default_provider_is_offline(script, monkeypatch, tmp_path):
+    """Review: with the OpenCode app missing, a Cloudflare model the user picked was silently served by the offline demo."""
+    monkeypatch.setattr(llm_service, "get_provider", lambda model=None: SimpleNamespace(name="cloudflare") if model
+                        else llm_service.OfflineProvider())
+    r = done(run(tmp_path, model="@cf/openai/gpt-oss-120b"))
+    assert r["model"] != "offline demo" and r["fallback_notice"] is None
+    assert ("generate_rtl", "@cf/openai/gpt-oss-120b") in script.calls
+
+
+def test_a_pass_that_a_fresh_testbench_contradicts_is_reported_as_disputed(script, tmp_path):
+    script.tbs = [GOOD_TB, DISAGREEING_TB]
+    events = run(tmp_path, model="m-design")
+    r = done(events)
+    assert r["status"] == "PASS" and r["second_opinion"]["status"] == "FAIL"
+    assert r["pass_disputed"] and "fresh testbench" in r["pass_disputed"]
+    assert "disputed" in next(e for e in events if e["stage"] == "done")["message"]
+
+
+def test_an_uncontested_pass_is_not_disputed(script, tmp_path):
+    assert done(run(tmp_path, model="m-design"))["pass_disputed"] is None
+
+
+HANG_TB = GOOD_TB.replace("fail_count = fail_count + 1;", "fail_count = fail_count + 1; forever #1;", 1)   # hangs on a mismatch
+
+
+def test_a_testbench_that_hangs_on_a_mismatch_cannot_be_replaced_by_a_weaker_one(script, monkeypatch, tmp_path):
+    """Only a testbench that did not COMPILE may be rewritten freely. A buggy design that makes the testbench hang (TIMEOUT)
+    must not unlock replacing the oracle with a 1-check testbench."""
+    script.tbs = [HANG_TB]
+    monkeypatch.setattr(llm_service, "fix_design", lambda rtl, tb, log, model=None, **k: {
+        "rtl_code": BAD_RTL, "testbench_code": TRIVIAL_TB, "fix_summary": "simplified", "fix_type": "testbench_logic", "diagnosis": None})
+    r = done(run(tmp_path, model="m-design", max_iterations=1, timeout_seconds=2))
+    assert r["status"] != "PASS" and r["testbench_code"] == HANG_TB
+
+
+def test_the_same_model_spelled_with_and_without_its_provider_is_not_independence(script, tmp_path):
+    r = done(run(tmp_path, model="opencode/m-design", testbench_model="m-design"))
+    assert r["independent_testbench"] is False
+
+
+NO_SUMMARY_TB = GOOD_TB.replace('"Passed: %0d"', '"passed = %0d"').replace('"Failed: %0d"', '"failed = %0d"')
+
+
+def test_an_independent_testbench_with_a_summary_typo_can_still_be_repaired_without_losing_checks(script, monkeypatch, tmp_path):
+    """Verification finding B5: after the oracle guard was tightened, a separate testbench that printed 'passed = N' (no
+    valid summary, no FAIL lines) could not be repaired at all. It may be repaired, and is then no longer independent."""
+    assert NO_SUMMARY_TB != GOOD_TB
+    script.tbs = [NO_SUMMARY_TB]
+    monkeypatch.setattr(llm_service, "generate_rtl", lambda spec, freq=None, model=None, **k: GOOD_RTL)
+    monkeypatch.setattr(llm_service, "fix_design", lambda rtl, tb, log, model=None, **k: {
+        "rtl_code": rtl, "testbench_code": GOOD_TB, "fix_summary": "fixed the summary lines", "fix_type": "testbench_logic",
+        "diagnosis": None})
+    r = done(run(tmp_path, model="m-design", testbench_model="m-tb", max_iterations=2))
+    assert r["status"] == "PASS" and r["independent_testbench"] is False
+
+
+def test_a_summary_typo_does_not_let_a_repair_drop_checks(script, monkeypatch, tmp_path):
+    """A correct design + a testbench with no valid summary (ERROR, no failure lines): the repair may fix the summary,
+    but replacing the testbench with a 1-check one must be refused."""
+    script.tbs = [NO_SUMMARY_TB]
+    monkeypatch.setattr(llm_service, "generate_rtl", lambda spec, freq=None, model=None, **k: GOOD_RTL)
+    monkeypatch.setattr(llm_service, "fix_design", lambda rtl, tb, log, model=None, **k: {
+        "rtl_code": rtl, "testbench_code": TRIVIAL_TB, "fix_summary": "simplified", "fix_type": "testbench_logic", "diagnosis": None})
+    events = run(tmp_path, model="m-design", max_iterations=1)
+    assert any("removed self-checks" in e.get("message", "") for e in events if e["stage"] == "fix")
+    assert done(events)["status"] != "PASS"
+
+
+
+def test_a_fresh_testbench_with_too_few_checks_is_not_agreement(script, tmp_path):
+    """Verification finding: a second opinion backed by a single check counted as agreement."""
+    one_check = TRIVIAL_TB
+    script.tbs = [GOOD_TB, one_check]
+    r = done(run(tmp_path, model="m-design"))
+    assert r["second_opinion"]["status"] == "unavailable" and "too few" in r["second_opinion"]["note"]

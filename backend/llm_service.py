@@ -88,6 +88,8 @@ TARGET: Icarus Verilog with -g2012. Prefer plain Verilog-2001 style (the most po
   active-low); only if it is silent use an asynchronous active-low reset named rst_n.
 - Ports exactly as specified (names, directions, widths). No unintended latches; 4-space indent; header comment.
 - Synthesizable RTL only: no # delays, no $display/$finish/$stop or any other system task, no initial blocks.
+- Reset every register explicitly; never give a reg a declaration value (no `reg q = 0;`): hardware does not keep it.
+- Non-blocking (<=) in clocked always blocks, blocking (=) in combinational always @(*) blocks.
 - For priority encoders, multiplexers, decoders, and FSMs, prefer an explicit
   `casez`/`case` or `if/else if` priority chain over hand-minimized Boolean
   equations. Correctness and readability beat gate-count golf.
@@ -226,6 +228,7 @@ def _strip_code_fence(text: str) -> str:
     Prefer the longest complete ``module ... endmodule`` unit found anywhere;
     otherwise fall back to the longest fenced block.
     """
+    text = _strip_think(text)
     fenced = re.findall(r"```(?:verilog|systemverilog|json)?\s*([\s\S]*?)```", text)
     candidates = fenced + [text]
     complete = []
@@ -236,7 +239,12 @@ def _strip_code_fence(text: str) -> str:
         units = [u.strip() for u in re.findall(
             r"(?:^|\n)[ \t]*(?:`timescale[^\n]*\n[ \t]*)?module\b[\s\S]*?\bendmodule\b", candidate)]
         if units:
-            complete.append("\n\n".join(units))
+            joined = "\n\n".join(_last_definition_of_each(units))
+            if candidate is text:
+                # The whole reply sees every fence in order, so "last definition wins" picks a corrected copy over its
+                # draft; a single fence cannot (self-review finding: equal-length draft and fix chose the draft).
+                return joined
+            complete.append(joined)
             continue
         m = re.search(
             r"(?:^|\n)\s*(?:`timescale[^\n]*\n\s*)?"
@@ -252,23 +260,77 @@ def _strip_code_fence(text: str) -> str:
     return text.strip()
 
 
+_THINK_BLOCK_RE = re.compile(r"<think(?:ing)?>[\s\S]*?</think(?:ing)?>", re.IGNORECASE)
+_MODULE_NAME_RE = re.compile(r"\bmodule\s+(\\?\S+?)[\s#(;]")
+
+
+def _strip_think(text: str) -> str:
+    """Drop reasoning before parsing (self-review finding: a <think> draft added a duplicate module, or its mention of
+    the reply format was taken as the answer). R1-style output may carry only a closing </think>."""
+    text = _THINK_BLOCK_RE.sub("", text or "")
+    if re.search(r"</think(?:ing)?>", text, re.IGNORECASE):
+        text = re.split(r"</think(?:ing)?>", text, flags=re.IGNORECASE)[-1]
+    return text
+
+
+def _last_definition_of_each(units: list) -> list:
+    """Keep one definition per module name: the LAST one (a draft followed by a corrected copy declared the module twice,
+    so Icarus failed with "already declared"). Order follows each module's last appearance."""
+    by_name: dict = {}
+    for u in units:
+        m = _MODULE_NAME_RE.search(u)
+        name = m.group(1) if m else u
+        by_name.pop(name, None)
+        by_name[name] = u
+    return list(by_name.values())
+
+
 def _extract_json(text: str) -> dict:
-    fenced = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', text)
-    raw = fenced.group(1) if fenced else text
-    # Grab the outermost {...} if there is surrounding prose.
-    brace = re.search(r'\{[\s\S]*\}', raw)
-    raw = brace.group(0) if brace else raw
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        # Models frequently paste Verilog with literal newlines inside a JSON
-        # string. strict=False accepts those control characters.
-        return json.loads(raw, strict=False)
+    """The LAST JSON object in the reply that parses (self-review finding: prose with braces before the JSON, a think
+    block, or a draft followed by the final object all broke the old first-brace-to-last-brace slice)."""
+    text = _strip_think(text)
+    fenced = re.findall(r'```(?:json)?\s*([\s\S]*?)\s*```', text)
+    for raw in reversed(fenced + [text]):
+        found = None
+        for strict in (True, False):           # strict=False accepts literal newlines inside strings (pasted Verilog)
+            dec = json.JSONDecoder(strict=strict)
+            pos = 0
+            while (i := raw.find("{", pos)) != -1:          # top-level objects only: skip past each decoded one
+                try:
+                    obj, end = dec.raw_decode(raw, i)
+                except json.JSONDecodeError:
+                    pos = i + 1
+                    continue
+                if isinstance(obj, dict):
+                    found = obj                # keep scanning: the last complete object wins
+                pos = end
+            if found is not None:
+                return found
+    raise json.JSONDecodeError("no JSON object found", text, 0)
+
+
+def model_module_name(v: str) -> str:
+    """Turn a module name WRITTEN BY THE MODEL into a plain Verilog identifier (self-review: "Up/Down Counter" or
+    "testbench" reached later stages, which each had to re-check it). A name the user typed is validated, not rewritten."""
+    name = re.sub(r"[^A-Za-z0-9_]+", "_", (v or "").strip()).strip("_") or "dut"
+    if name[0].isdigit():
+        name = "m_" + name
+    if name.lower() in ("testbench", "module", "input", "output", "wire", "reg", "begin", "end"):
+        name = name + "_dut"
+    return name[:64]
+
+
+def _spec_from_model(content: str) -> RTLDesignSpec:
+    data = _extract_json(content)
+    if isinstance(data, dict) and isinstance(data.get("module_name"), str):
+        data["module_name"] = model_module_name(data["module_name"])
+    return RTLDesignSpec(**data)
 
 
 def _section(text: str, tag: str) -> Optional[str]:
-    m = re.search(rf"<{tag}>\s*([\s\S]*?)\s*</{tag}>", text or "", re.IGNORECASE)
-    return m.group(1).strip() if m else None
+    """The LAST <tag>...</tag> section outside any reasoning block (a model restating the format first gave the wrong one)."""
+    found = re.findall(rf"<{tag}>\s*([\s\S]*?)\s*</{tag}>", _strip_think(text), re.IGNORECASE)
+    return found[-1].strip() if found else None
 
 
 def _parse_diagnosis(block: Optional[str]) -> Optional[dict]:
@@ -349,7 +411,13 @@ def _parse_fix_response(text: str, rtl_fallback: str, tb_fallback: str) -> dict:
     try:
         data = _extract_json(text)
     except json.JSONDecodeError:
-        data = _salvage_fix_json(text)
+        data = {}
+    if not any(k in data for k in ("rtl_code", "testbench_code")):
+        data = _salvage_fix_json(text)         # invalid JSON around Verilog (unescaped quotes/newlines)
+    if not any(k in data for k in ("rtl_code", "testbench_code")):
+        # Nothing usable (a refusal, a reply cut off inside <rtl>, untagged fences): say so instead of "no change".
+        return {"rtl_code": rtl_fallback, "testbench_code": tb_fallback, "diagnosis": None, "parse_failed": True,
+                "fix_summary": "The model's repair reply could not be read (no <rtl> or <testbench> section)."}
     return {
         "rtl_code": _strip_code_fence(data.get("rtl_code", rtl_fallback)),
         "testbench_code": _strip_code_fence(data.get("testbench_code", tb_fallback)),
@@ -376,7 +444,10 @@ class OpenAIProvider:
         # Transient provider errors (HTTP 429/5xx such as "high demand", and
         # timeouts) are retried by the OpenAI client with exponential backoff and
         # jitter before the orchestrator treats the provider as down.
-        self.max_retries = max(0, int(os.getenv("LLM_MAX_RETRIES", "3")))
+        # Two retries, not three: the client also retries TIMEOUTS, so 3 retries x 120 s made one call wait up to 8 minutes
+        # and spent quota on each resend (self-review finding). Not one either: a single transient 503 then ended live
+        # runs (the earlier live-testing finding this retry count was raised for).
+        self.max_retries = max(0, int(os.getenv("LLM_MAX_RETRIES", "2")))
         # Reasoning tokens are deducted from this budget. 8192 is enough for a
         # normal RTL/TB answer, but a reasoning model can spend all of it before
         # emitting a single answer token. Callers can raise it via env.
@@ -528,7 +599,7 @@ class OpenAIProvider:
         for _attempt in range(2):
             content = self._chat(INTENT_PARSER_PROMPT, prompt, 0.3, model=model, reasoning_effort=reasoning_effort, stage="intent")
             try:
-                return RTLDesignSpec(**_extract_json(content))
+                return _spec_from_model(content)
             except (ValueError, TypeError) as e:  # bad JSON, wrong shape or failed validation
                 last = e
         raise RuntimeError(
@@ -597,7 +668,13 @@ class OpenAIProvider:
         raw = self._chat(FIX_PROMPT, user, 0.2, model=model,
                          reasoning_effort=reasoning_effort, stage="fix")
         parsed = _parse_fix_response(raw, rtl_code, tb_code)
+        if parsed.get("parse_failed"):        # one retry with the format spelled out, then report it as unreadable
+            raw = self._chat(FIX_PROMPT, user + "\n\nYour previous reply could not be read. Answer ONLY with the "
+                             "<diagnosis>, <rtl>, <testbench> and <summary> sections.", 0.2, model=model,
+                             reasoning_effort=reasoning_effort, stage="fix")
+            parsed = _parse_fix_response(raw, rtl_code, tb_code)
         return {
+            "parse_failed": bool(parsed.get("parse_failed")),
             "rtl_code": parsed["rtl_code"],
             "testbench_code": parsed["testbench_code"],
             "fix_summary": parsed["fix_summary"],
@@ -650,8 +727,8 @@ class OpenCodeAppProvider(OpenAIProvider):
                "--archived", "--format", "json", message]
         with tempfile.TemporaryDirectory(prefix="siliconscribe_oc_") as cwd:
             try:
-                proc = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True,
-                                      timeout=self.timeout, env=model_catalog.child_env())   # no Cloudflare secrets for the OpenCode app
+                proc = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, stdin=subprocess.DEVNULL,
+                                      timeout=self.timeout, env=model_catalog.child_env())   # allowlisted env: no other secrets
             except subprocess.TimeoutExpired as e:
                 raise LLMUpstreamError(f"LLM_UPSTREAM:Timeout: opencode model={chosen} after {self.timeout:.0f}s") from e
             except FileNotFoundError as e:

@@ -73,7 +73,7 @@ def run_sweep(verbose: bool = False):
             continue
         good = sim.simulate(f"g{i}", d["rtl"], d["tb"], timeout=60)
         bad = sim.simulate(f"m{i}", d["rtl"].replace(old, new, 1), d["tb"], timeout=60)
-        ok = good.status == "PASS" and bad.status in ("FAIL", "ERROR")
+        ok = good.status == "PASS" and bad.status == "FAIL"     # only a reported failure counts (a crash is not a catch)
         rows.append((key, label, ok, good.status, bad.status, bad.fail_count, bad.test_count))
         if verbose:
             print(f"{key:8s} {label:40s} {'KILLED  ' if ok else 'SURVIVED'} "

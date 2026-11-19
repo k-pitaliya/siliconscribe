@@ -61,50 +61,47 @@ def _clip(s: str, n: int) -> str:
 
 def parse_checks(log: str, pass_count: int, fail_count: int) -> dict:
     """Return the check-related SimulationResult fields for this transcript."""
-    structured: List[tuple] = []
+    # One pass that keeps only counters and the rows that can be shown (self-review finding: every CHK line of a
+    # runaway testbench became a tuple before the cap, about 1.4 GB for a 134 MB transcript).
     seen: dict = {}
-    for line in log.splitlines():
-        if not line.startswith(CHECK_PREFIX):
-            continue
-        parts = line.split("|", 7)
+    groups: dict = {}
+    total_logged = 0
+    fails: List[tuple] = []
+    passes: List[tuple] = []
+    for mline in re.finditer(r"^CHK\|[^\n]*", log, re.M):
+        parts = mline.group(0).split("|", 7)
         if len(parts) < 5 or parts[1] not in ("PASS", "FAIL"):
             continue  # malformed or forged: ignored, never an error
-        t = int(parts[4]) if parts[4].strip().isdigit() else None
-        structured.append((
-            parts[1], _category(parts[2], seen), _clip(parts[3], 60), t,
-            _clip(parts[5], 40) if len(parts) > 5 else None,
-            _clip(parts[6], 40) if len(parts) > 6 else None,
-            _clip(parts[7], 120) if len(parts) > 7 else "",
-        ))
+        total_logged += 1
+        status = parts[1]
+        cat = _category(parts[2], seen)
+        g = groups.setdefault(cat, [0, 0])
+        g[0 if status == "PASS" else 1] += 1
+        bucket, cap = (fails, MAX_FAIL_ROWS) if status == "FAIL" else (passes, MAX_ROWS)
+        if len(bucket) < cap:
+            tf = parts[4].strip()
+            t = int(tf) if re.fullmatch(r"[0-9]{1,18}", tf) else None      # ASCII digits only ("²" crashed int())
+            bucket.append((total_logged, status, cat, _clip(parts[3], 60), t,
+                           _clip(parts[5], 66) if len(parts) > 5 else None,      # 256-bit value = 64 hex digits
+                           _clip(parts[6], 66) if len(parts) > 6 else None,
+                           _clip(parts[7], 120) if len(parts) > 7 else ""))
 
-    if structured:
-        groups: dict = {}
-        for status, cat, *_ in structured:
-            g = groups.setdefault(cat, [0, 0])
-            g[0 if status == "PASS" else 1] += 1
+    if total_logged:
         logged_pass = sum(g[0] for g in groups.values())
         logged_fail = sum(g[1] for g in groups.values())
-        fail_rows_budget = MAX_FAIL_ROWS
         pass_rows_budget = MAX_ROWS - min(logged_fail, MAX_FAIL_ROWS)
-        rows: List[CheckResult] = []
-        for idx, (status, cat, name, t, exp, act, detail) in enumerate(structured, start=1):
-            if status == "FAIL":
-                if fail_rows_budget <= 0:
-                    continue
-                fail_rows_budget -= 1
-            else:
-                if pass_rows_budget <= 0:
-                    continue
-                pass_rows_budget -= 1
-            rows.append(CheckResult(idx=idx, status=status, category=cat, name=name, t=t,
-                                    expected=exp, actual=act, detail=detail, source="chk"))
+        chosen = sorted(fails + passes[:max(0, pass_rows_budget)])
+        rows: List[CheckResult] = [
+            CheckResult(idx=idx, status=status, category=cat, name=name, t=t, expected=exp, actual=act, detail=detail,
+                        source="chk")
+            for idx, status, cat, name, t, exp, act, detail in chosen]
         return {
             "checks": rows,
             "check_groups": [CheckGroup(category=c, total=p + f, passed=p, failed=f)
                              for c, (p, f) in groups.items()],
             "checks_source": "structured",
-            "checks_total_logged": len(structured),
-            "checks_truncated": len(rows) < len(structured),
+            "checks_total_logged": total_logged,
+            "checks_truncated": len(rows) < total_logged,
             "checks_consistent": logged_pass == pass_count and logged_fail == fail_count,
         }
 

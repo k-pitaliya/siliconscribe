@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Download, FolderOpen, Monitor, Moon, RotateCw, Square, Sun, TriangleExclamationPoint, X } from 'lucide-react'
 import PromptPanel from './components/PromptPanel'
 import CodeEditor from './components/CodeEditor'
+import ErrorBoundary from './ErrorBoundary'
 import ResultsPanel, { type Tab } from './components/ResultsPanel'
 import AgentChat, { type ChatMessage } from './components/AgentChat'
 import { useTheme } from './theme'
@@ -63,6 +64,10 @@ export default function App() {
   const [history, setHistory] = useState<IterationRecord[]>([])
   const [iterations, setIterations] = useState<number>(0)
   const [designId, setDesignId] = useState<string>('')
+  const [passDisputed, setPassDisputed] = useState('')
+  const [serverUnreachable, setServerUnreachable] = useState(false)
+  const exportingRef = useRef(false)
+  const loadSeq = useRef(0) // only the LATEST project load may write state (self-review: a slow older load overwrote a newer one)
   const [synthesis, setSynthesis] = useState<SynthesisInfo | null>(null)
   const [strength, setStrength] = useState<StrengthReport | null>(null)
   const [timing, setTiming] = useState<TimingReport | null>(null)
@@ -91,6 +96,7 @@ export default function App() {
     // fetch the same endpoint a second time and could overwrite a newer result.
     return getModels({ includePaid, refresh })
       .then((m) => {
+        setServerUnreachable(false)
         setModels(m.models)
         setProviders(m.providers ?? [])
         setTestbenchModel((prev) => (prev && m.models.some((x) => x.id === prev) ? prev : ''))
@@ -110,9 +116,11 @@ export default function App() {
       })
       .catch(() => {
         // Backend unreachable (e.g., Vercel frontend without Render backend) → show offline demo fallback
-        setModels([{ id: 'offline', label: 'Offline Demo', note: 'Backend unavailable — offline demo', tag: 'fast' }])
-        setSelectedModel('offline')
-        setProvider({ provider: 'offline', offline: true })
+        // The server could not be reached. Say so (it is not a mode), and offer a retry instead of a dead "offline" UI.
+        setServerUnreachable(true)
+        setModels([])
+        setSelectedModel('')
+        setProvider(null)
       })
       .finally(() => setRefreshingModels(false))
   }
@@ -181,7 +189,14 @@ export default function App() {
 
   async function startRun(prompt: string, freq: number, confirmedSpec?: RTLDesignSpec) {
     if (running) return
+    loadSeq.current += 1 // a project load still in flight must not overwrite this run
+    setPendingSpec(null)
     setRunning(true)
+    setRtl('') // the previous run's code, explanation and id must not mix with this run (self-review finding)
+    setTb('')
+    setExplanation('')
+    setDesignId('')
+    setPassDisputed('')
     setResult(null)
     setWaveform(null)
     setSchematic(null)
@@ -239,6 +254,7 @@ export default function App() {
           if (e.synthesis) setSynthesis(e.synthesis)
           if (e.strength) setStrength(e.strength)
           if (e.timing) setTiming(e.timing)
+          if (e.stage === 'fix' && (e.rtl_code || e.testbench_code)) setLintInfo(null) // the old lint described the old code
           if (e.lint) setLintInfo(e.lint as LintInfo)
           if (e.stage === 'done' && e.response) {
             const r: RunResponse = e.response
@@ -261,6 +277,7 @@ export default function App() {
             setUsedSpec(r.rtl_spec)
             if (r.fallback_notice) setFallbackNotice(r.fallback_notice)
             setVerificationWarning(r.verification_warning ?? '')
+            setPassDisputed(r.pass_disputed ?? '')
             refreshProjects()
             showTab('results')
           }
@@ -271,10 +288,10 @@ export default function App() {
       const e = err as Error
       if (e.name === 'AbortError') {
         pushMsg({ role: 'ai', text: 'Run cancelled.', stage: 'error' })
-      } else if (e.message.includes('waking up') || e.message.includes('504') || e.message.includes('502')) {
-        pushMsg({ role: 'ai', text: `Render free tier is waking up (sleeps after 15m idle). Please wait 30s and click Generate again.`, stage: 'error' })
+      } else if (/\b50[24]\b/.test(e.message.slice(0, 40)) || e.message.includes('waking up')) {
+        pushMsg({ role: 'ai', text: 'The server did not answer in time (a hosted server may be starting up). This run is lost; press Generate again in a moment.', stage: 'error' })
       } else if (e.message.includes('Failed to fetch') || e.message.includes('NetworkError')) {
-        pushMsg({ role: 'ai', text: `Network error: backend may be waking up. Wait 30s and retry.`, stage: 'error' })
+        pushMsg({ role: 'ai', text: 'Cannot reach the SiliconScribe server, so this run is lost. Check that the server is running, then press Generate again.', stage: 'error' })
       } else {
         pushMsg({ role: 'ai', text: `Error: ${e.message}`, stage: 'error' })
       }
@@ -291,9 +308,11 @@ export default function App() {
   async function handleReRun() {
     if (!rtl || !tb || running) return
     setRunning(true)
+    const ctrl = new AbortController() // so Stop works during a re-run too (self-review finding)
+    abortRef.current = ctrl
     pushMsg({ role: 'user', text: 'Re-running edited code…' })
     try {
-      const { waveform: freshWaveform, ...res } = await reSimulate(designId || 'edit', rtl, tb)
+      const { waveform: freshWaveform, ...res } = await reSimulate(designId || 'edit', rtl, tb, ctrl.signal)
       // The verdict, the waveform and the test cases all come from THIS run. Leaving the old
       // waveform, repair timeline or warning on screen would show them next to a new PASS/FAIL.
       setResult(res)
@@ -305,7 +324,10 @@ export default function App() {
       setUsedModel(null) // the edited code is not what the model wrote
       setUsedTbModel(null)
       setSecondOpinion(null) // it judged the previous code
-      setVerificationWarning('')
+      setSynthesis(null) // synthesised the previous code
+      setLintInfo(null)
+      setPassDisputed('')
+      setVerificationWarning('Re-run of edited code: only the simulation was repeated. Strength, synthesis, timing and the second opinion were not recomputed for this code.')
       // From the editor, show the new verdict; anywhere else (waveform, test cases) stay where the user is looking.
       if (currentTab.current === 'design') showTab('results')
       pushMsg({
@@ -314,18 +336,21 @@ export default function App() {
         status: res.status,
         text:
           res.status === 'PASS'
-            ? `Simulation passed: ${res.pass_count}/${res.test_count} tests.`
-            : `Simulation ${res.status}: ${res.fail_count}/${res.test_count} failed.`,
+            ? `Simulation passed: ${res.pass_count} of ${res.test_count} checks.`
+            : `Simulation ${res.status}: ${res.fail_count} of ${res.test_count} checks failed.`,
       })
     } catch (err) {
-      pushMsg({ role: 'ai', text: `Error: ${(err as Error).message}`, stage: 'error' })
+      const e = err as Error
+      pushMsg({ role: 'ai', text: e.name === 'AbortError' ? 'Re-run cancelled.' : `Error: ${e.message}`, stage: 'error' })
     } finally {
       setRunning(false)
+      if (abortRef.current === ctrl) abortRef.current = null
     }
   }
 
   async function handleUVMExport() {
-    if (running || !moduleName) return
+    if (running || !moduleName || exportingRef.current) return // one export at a time (a double click made two model calls)
+    exportingRef.current = true
     const prompt = `Design a UVM testbench for ${moduleName}`
     pushMsg({ role: 'user', text: `Exporting UVM bundle for ${moduleName}…` })
     try {
@@ -349,13 +374,17 @@ export default function App() {
       }
     } catch (err) {
       pushMsg({ role: 'ai', text: `UVM export failed: ${(err as Error).message}`, stage: 'error' })
+    } finally {
+      exportingRef.current = false
     }
   }
 
   async function handleLoadProject(id: string) {
     if (running) return // loading mid-run would be overwritten by the next streamed event
+    const seq = ++loadSeq.current
     try {
       const proj = await getProject(id)
+      if (seq !== loadSeq.current) return // a newer load (or a new run) started meanwhile
       setRtl(proj.rtl_code)
       setTb(proj.testbench_code)
       setModuleName(proj.rtl_spec.module_name)
@@ -363,6 +392,9 @@ export default function App() {
       setWaveform(proj.waveform)
       setSchematic(proj.schematic)
       setHistory(proj.iteration_history)
+      setIterations(proj.iterations ?? (proj.iteration_history.length > 0 ? Math.max(...proj.iteration_history.map((h) => h.iteration)) : 0))
+      setLintInfo(null) // lint is not saved with a project; the previous run's lint must not show next to it
+      setPassDisputed(proj.pass_disputed ?? '')
       setDesignId(proj.design_id)
       setExplanation(proj.explanation)
       setSynthesis(proj.synthesis ?? null)
@@ -378,6 +410,7 @@ export default function App() {
       setShowProjects(false)
       showTab('results')
     } catch (err) {
+      if (seq !== loadSeq.current) return
       pushMsg({ role: 'ai', text: `Load failed: ${(err as Error).message}`, stage: 'error' })
     }
   }
@@ -413,6 +446,13 @@ export default function App() {
           </svg>
           <span>SiliconScribe</span>
         </h1>
+        {serverUnreachable && (
+          <span className="status unreachable" data-testid="provider-badge" role="status">
+            <span className="dot" aria-hidden="true" />
+            Server not reachable
+            <button type="button" className="btn btn-ghost" onClick={() => loadModels(true)}>Retry</button>
+          </span>
+        )}
         {provider && (
           <span className={`status ${statusKind}`} data-testid="provider-badge" role="status">
             <span className="dot" aria-hidden="true" />
@@ -442,8 +482,15 @@ export default function App() {
                     {projects.map((p) => (
                       <li key={p.design_id} className="project-row">
                         <div className="project-main">
-                          <div className="project-name">{p.module_name} <span className={`pill ${p.status.toLowerCase()}`}>{p.status}</span></div>
+                          <div className="project-name">
+                            {p.module_name} <span className={`pill ${p.status.toLowerCase()}`}>{p.status}</span>
+                            {p.demo && <span className="pill demo" title="Built-in demo result, not generated by an AI model">demo</span>}
+                          </div>
                           <div className="project-sub" title={p.prompt}>{p.prompt}</div>
+                          <div className="project-meta muted">
+                            {p.created_at ? new Date(p.created_at * 1000).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : ''}
+                            {p.model && !p.demo ? ` · ${p.model}` : ''}
+                          </div>
                         </div>
                         <button className="btn" onClick={() => handleLoadProject(p.design_id)}>Open</button>
                         <button className="btn btn-danger" onClick={() => handleDeleteProject(p.design_id)} aria-label={`Delete ${p.module_name}`}>Delete</button>
@@ -516,6 +563,7 @@ export default function App() {
           />
           </main>
         ) : (
+          <ErrorBoundary key={designId || 'none'} label="The results panel">
           <ResultsPanel
             design={design}
             tabRequest={tabRequest}
@@ -535,7 +583,9 @@ export default function App() {
             lint={lintInfo}
             degraded={!!fallbackNotice}
             warning={verificationWarning}
+            disputed={passDisputed}
           />
+          </ErrorBoundary>
         )}
       </div>
     </div>
@@ -547,13 +597,14 @@ function Welcome({ projects, onLoad }: { projects: ProjectSummary[]; onLoad: (id
   return (
     <div className="welcome">
       <div className="welcome-inner">
-        <h2>Describe a block, get verified RTL</h2>
-        <p>Write what the hardware should do in plain English. SiliconScribe writes the Verilog and an independent testbench, runs both in a real simulator, and repairs what fails.</p>
+        <h2>Describe a block. Get Verilog and the evidence to judge it.</h2>
+        <p>Write what the hardware should do in plain English. SiliconScribe writes the Verilog and a self-checking testbench, runs both in a real simulator, tries to repair failures, and shows how far the result can be trusted.</p>
         <ol className="flow">
           <li><span><b>Specification.</b> Your description becomes ports, widths and behaviour.</span></li>
           <li><span><b>RTL and testbench.</b> The testbench is written from the specification, never from the RTL.</span></li>
-          <li><span><b>Simulate and report.</b> Every check is listed, failures are repaired, and the testbench is tested by injecting bugs.</span></li>
+          <li><span><b>Simulate and report.</b> Every check is counted and every failing check is listed. The testbench itself is tested by injecting bugs.</span></li>
         </ol>
+        <p className="muted welcome-time">A live run takes about 3 to 13 minutes: model calls for the specification, RTL and testbench, then simulation, synthesis and timing. Stop cancels it.</p>
         {projects.length > 0 && (
           <div className="type-chips" aria-label="Recent projects">
             <span className="muted" style={{ fontSize: 13, marginRight: 4 }}>Recent:</span>

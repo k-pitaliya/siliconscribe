@@ -129,7 +129,7 @@ describe('App: which model wrote the result', () => {
     const first = render(<App />)
     await picker()
     await generate()
-    expect(await screen.findByTestId('model-used')).toHaveTextContent('Written by opencode/deepseek-v4.1-flash-free')
+    expect(await screen.findByTestId('model-used')).toHaveTextContent('Design written by opencode/deepseek-v4.1-flash-free')
     first.unmount()
     vi.mocked(api.streamDesign).mockImplementation(async (_p, onEvent) => {
       onEvent({ stage: 'done', message: 'done', status: 'PASS', response: run('offline demo') } as never)

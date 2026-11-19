@@ -115,6 +115,7 @@ export default function PromptPanel({
           >
             {running ? (<><LoaderCircle size={16} className="spin" aria-hidden="true" /> <span>Generating…</span></>) : <span>Generate RTL</span>}
           </button>
+          {!offline && <span className="muted generate-hint">A live run takes about 3 to 13 minutes.</span>}
         </div>
       </div>
 

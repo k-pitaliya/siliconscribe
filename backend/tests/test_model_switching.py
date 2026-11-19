@@ -124,7 +124,7 @@ def test_the_menu_spelling_of_the_default_model_is_the_same_model_so_stage_routi
 def test_the_opencode_app_never_receives_the_cloudflare_credentials(monkeypatch):
     monkeypatch.setenv("CLOUDFLARE_API_TOKEN", TOKEN)
     monkeypatch.setenv("CLOUDFLARE_ACCOUNT_ID", ACCOUNT)
-    monkeypatch.setenv("SOME_OTHER_SETTING", "kept")
+    monkeypatch.setenv("OPENCODE_SOME_SETTING", "kept")
     seen = []
     def fake_run(cmd, **kw):
         seen.append(kw["env"])
@@ -135,7 +135,7 @@ def test_the_opencode_app_never_receives_the_cloudflare_credentials(monkeypatch)
     mc.opencode_models(refresh=True)
     assert len(seen) == 2
     for env in seen:
-        assert not any(k.startswith("CLOUDFLARE_") for k in env) and env["SOME_OTHER_SETTING"] == "kept"
+        assert not any(k.startswith("CLOUDFLARE_") for k in env) and env["OPENCODE_SOME_SETTING"] == "kept"
         assert TOKEN not in env.values() and ACCOUNT not in env.values()
 
 

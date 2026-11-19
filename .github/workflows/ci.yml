@@ -2,13 +2,13 @@ name: CI
 
 on:
   push:
-    branches: [main, production-readiness]
+    branches: [main, production-readiness, review-hardening]
   pull_request:
     branches: [main]
 
 jobs:
   backend:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -31,12 +31,12 @@ jobs:
       - name: Test
         run: |
           cd backend
-          OFFLINE_MODE=1 venv/bin/python -m pytest tests/ -v
+          OFFLINE_MODE=1 venv/bin/python -m pytest tests/ -v -rs
           OFFLINE_MODE=1 venv/bin/python -c "from uvm_templates import generate_uvm_bundle; from models import RTLDesignSpec, PortSpec; s=RTLDesignSpec(module_name='alu_4bit', ports=[PortSpec(name='a',direction='input',width=4),PortSpec(name='b',direction='input',width=4),PortSpec(name='opcode',direction='input',width=3),PortSpec(name='result',direction='output',width=4)], behavior='alu', constraints=['Combinational']); b=generate_uvm_bundle(s); assert len(b)==16; print(f'UVM bundle {len(b)} files OK')"
           OFFLINE_MODE=1 venv/bin/python -c "from fastapi.testclient import TestClient; import main; c=TestClient(main.app); r=c.post('/api/design/run', json={'prompt':'Design a 4-bit counter','max_iterations':1}); assert r.status_code==200 and r.json()['status']=='PASS'; print('E2E design/run PASS'); r=c.get('/api/projects'); assert r.status_code==200; print(f\"Projects {r.json()['total']}\")"
 
   frontend:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -54,7 +54,7 @@ jobs:
         run: cd frontend && npm run build
 
   docker:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: [backend, frontend]
     steps:
       - uses: actions/checkout@v4

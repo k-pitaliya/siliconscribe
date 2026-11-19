@@ -14,12 +14,15 @@ function BlockDiagram({ schematic }: { schematic: Schematic }) {
   const ROW = 34
   const PAD = 30
   const BOX_W = 220
-  const BOX_X = 200
+  const portLabel = (p: SchematicPort) => `${p.name}${p.width > 1 ? `[${p.width - 1}:0]` : ''}`
+  // Room for the longest left-hand label (self-review finding: `write_data[31:0]` was clipped to `a[31:0]`).
+  const leftChars = Math.max(0, ...[...inputs, ...inouts].map((p) => portLabel(p).length + 2))
+  const rightChars = Math.max(0, ...outputs.map((p) => portLabel(p).length))
+  const PIN_X = Math.max(60, Math.ceil(leftChars * 7.6) + 14)
+  const BOX_X = PIN_X + 140
   const height = PAD * 2 + rows * ROW
   const boxH = rows * ROW
-  const width = 640
-
-  const portLabel = (p: SchematicPort) => `${p.name}${p.width > 1 ? `[${p.width - 1}:0]` : ''}`
+  const width = Math.max(640, BOX_X + BOX_W + 66 + Math.ceil(rightChars * 7.6) + 14)
 
   return (
     <div className="schematic-view">
@@ -44,9 +47,9 @@ function BlockDiagram({ schematic }: { schematic: Schematic }) {
             const y = PAD + i * ROW + ROW / 2
             return (
               <g key={`in-${p.name}`}>
-                <line x1={60} y1={y} x2={BOX_X} y2={y} className="sch-wire" />
-                <circle cx={60} cy={y} r={4} className="sch-pin in" />
-                <text x={54} y={y + 4} className="sch-port" textAnchor="end">
+                <line x1={PIN_X} y1={y} x2={BOX_X} y2={y} className="sch-wire" />
+                <circle cx={PIN_X} cy={y} r={4} className="sch-pin in" />
+                <text x={PIN_X - 6} y={y + 4} className="sch-port" textAnchor="end">
                   {portLabel(p)}
                 </text>
               </g>
@@ -55,16 +58,14 @@ function BlockDiagram({ schematic }: { schematic: Schematic }) {
 
           {/* inouts in middle left (draw as bidirectional) */}
           {inouts.map((p, i) => {
-            const y = PAD + i * ROW + ROW / 2
-            // offset slightly to avoid overlapping inputs if both exist
-            const offset = inputs.length ? inputs.length * ROW + 6 : 0
-            const yy = y + offset
-            if (yy > PAD + boxH - ROW / 2) return null
+            // Below the inputs, one row each; `rows` already counts them, so none is ever skipped (self-review finding:
+            // the last inout was always dropped).
+            const yy = PAD + (inputs.length + i) * ROW + ROW / 2
             return (
               <g key={`io-${p.name}`}>
-                <line x1={60} y1={yy} x2={BOX_X} y2={yy} className="sch-wire" strokeDasharray="4 2" />
-                <circle cx={60} cy={yy} r={4} className="sch-pin in" fill="var(--warn-amber)" />
-                <text x={54} y={yy + 4} className="sch-port" textAnchor="end">
+                <line x1={PIN_X} y1={yy} x2={BOX_X} y2={yy} className="sch-wire" strokeDasharray="4 2" />
+                <circle cx={PIN_X} cy={yy} r={4} className="sch-pin in" fill="var(--warn-amber)" />
+                <text x={PIN_X - 6} y={yy + 4} className="sch-port" textAnchor="end">
                   {portLabel(p)} *
                 </text>
               </g>

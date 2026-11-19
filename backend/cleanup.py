@@ -8,6 +8,7 @@ is_relative_to to avoid traversing symlinks outside.
 """
 
 import logging
+import re
 import shutil
 import time
 from pathlib import Path
@@ -15,6 +16,8 @@ from typing import Union
 
 logger = logging.getLogger("siliconscribe.cleanup")
 
+
+_OWNED_NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,40}$")
 
 def cleanup_old_workspaces(
     workspace: Union[str, Path] = "./workspace",
@@ -55,7 +58,13 @@ def cleanup_old_workspaces(
                     logger.warning("cleanup: skipping %s outside workspace", child)
                     continue
 
-            mtime = child.stat().st_mtime
+            # Only folders this app creates (design ids and their _o/_s/_ti/_mu/synth_/ti_ scratch folders). Anything
+            # else in the workspace is left alone (self-review: any old sub-folder was deleted).
+            if not _OWNED_NAME_RE.match(child.name):
+                continue
+            # Age = the NEWEST file inside: overwriting a file in place does not touch the folder's own mtime, so a
+            # folder in active use looked 25 h old and was deleted (self-review finding, reproduced).
+            mtime = max([child.stat().st_mtime] + [p.stat().st_mtime for p in child.rglob("*") if p.is_file()])
             age_hours = (now - mtime) / 3600
             if (now - mtime) > ttl_seconds:
                 logger.info("cleanup: removing %s (age %.1fh > %dh)", child, age_hours, ttl_hours)

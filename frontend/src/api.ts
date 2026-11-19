@@ -74,9 +74,11 @@ export async function reSimulate(
   design_id: string,
   rtl_code: string,
   testbench_code: string,
+  signal?: AbortSignal,
 ): Promise<SimulationRerun> {
   const r = await fetch(`${BASE}/api/simulation/run`, {
     method: 'POST',
+    signal,
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ design_id, rtl_code, testbench_code, timeout_seconds: 30 }),
   })
@@ -131,7 +133,7 @@ export async function streamDesign(
     // Render free spin-down: first request after 15m idle takes 30-50s, Vercel Hobby timeout 10s → 504
     // Status only: matching text in the body also matched the field name `timeout_seconds` in a 422.
     if (resp.status === 504 || resp.status === 502) {
-      throw new Error(`Render is waking up (free tier sleeps after 15m). Please wait 30s and retry. (504)`)
+      throw new Error(`The server did not answer in time (${resp.status}); a hosted server may be starting up.`)
     }
     // Surface backend detail if the body is JSON. Parse first, then throw
     // OUTSIDE the try — otherwise the throw is caught by our own catch.
@@ -139,6 +141,8 @@ export async function streamDesign(
     try {
       const j = JSON.parse(body)
       if (j && typeof j.detail === 'string') detail = j.detail
+      // FastAPI validation errors are a list: show their messages, not raw JSON (self-review finding).
+      else if (j && Array.isArray(j.detail)) detail = j.detail.map((d: { msg?: string }) => d?.msg).filter(Boolean).join('; ')
     } catch {
       /* body is not JSON */
     }
@@ -151,14 +155,18 @@ export async function streamDesign(
   let buffer = ''
   let sawFinal = false
 
+  try {
   for (;;) {
     const { done, value } = await reader.read()
     if (done) break
-    buffer += decoder.decode(value, { stream: true })
+    // Normalise on the whole buffer: a CRLF pair can be split across two chunks (self-review verification finding).
+    buffer = (buffer + decoder.decode(value, { stream: true })).replace(/\r\n/g, '\n')
 
     // SSE frames are separated by a blank line.
     let sep
     while ((sep = buffer.indexOf('\n\n')) !== -1) {
+      // After Stop, frames already in this chunk must not be applied (self-review: a cancelled run applied its `done`).
+      if (signal?.aborted) return
       const frame = buffer.slice(0, sep)
       buffer = buffer.slice(sep + 2)
       const line = frame.split('\n').find((l) => l.startsWith('data:'))
@@ -173,6 +181,9 @@ export async function streamDesign(
       // Outside the try, so an exception in the consumer is not swallowed as a "bad frame".
       onEvent(event)
     }
+  }
+  } finally {
+    reader.cancel().catch(() => {}) // also when onEvent throws: never leave the stream open
   }
   if (!sawFinal && !signal?.aborted) {
     throw new Error('The connection closed before the run finished. Please try again.')

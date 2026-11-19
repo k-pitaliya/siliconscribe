@@ -22,10 +22,17 @@ VERDICT_CASES = [
     ("honest fail", FAILS * 23 + "Passed: 177\nFailed: 23\n", "FAIL"),
     ("design prints a fake PASS early; the real summary at the end wins",
      "Passed: 200\nFailed: 0\nALL TESTS PASSED\n" + FAILS * 23 + "Passed: 177\nFailed: 23\n", "FAIL"),
-    ("uninitialised fail_count prints 'Failed: x'", FAILS * 23 + "Passed: 177\nFailed: x\n", "ERROR"),
+    ("uninitialised fail_count prints 'Failed: x'", FAILS * 23 + "Passed: 177\nFailed: x\n", "FAIL"),   # FAIL lines seen
+    ("an unreadable summary with no failure lines is an ERROR", "Passed: 177\nFailed: x\n", "ERROR"),
     ("a mid-run phase line must not be read as the summary",
      "Phase1 Passed: 5 Failed: 0\n" + FAILS * 20 + "Passed: 5\nFailed: 20\n", "FAIL"),
-    ("'FAILED: NOT ALL TESTS PASSED' is not a pass", "FAILED: NOT ALL TESTS PASSED\nPassed: 3\n", "ERROR"),
+    ("'FAILED: NOT ALL TESTS PASSED' is not a pass", "FAILED: NOT ALL TESTS PASSED\nPassed: 3\n", "FAIL"),
+    # review findings (self-review, 19 Nov)
+    ("one failure and no FAIL line is a FAIL", "Passed: 9\nFailed: 1\n", "FAIL"),
+    ("a later 'Failed: 0' does not cancel an earlier phase's failures", "Passed: 10\nFailed: 4\nPassed: 30\nFailed: 0\n", "FAIL"),
+    ("a CHK|FAIL row contradicts 'Failed: 0'", "CHK|FAIL|directed|t1|5|1|2|\nPassed: 3\nFailed: 0\n", "FAIL"),
+    ("FATAL without a summary is a FAIL (so the oracle may not be rewritten)", "FATAL: tb.sv:9: mismatch\n", "FAIL"),
+    ("a non-ASCII digit in the summary is an ERROR, not a crash", "Passed: \u00b2\nFailed: 0\n", "ERROR"),
     ("$error lines contradict 'Failed: 0'", "ERROR: mismatch\nPassed: 10\nFailed: 0\nALL TESTS PASSED\n", "FAIL"),
     ("FAIL lines contradict 'Failed: 0'", FAILS + "Passed: 10\nFailed: 0\nALL TESTS PASSED\n", "FAIL"),
     ("no summary at all", "hello\n", "ERROR"),
@@ -95,6 +102,13 @@ def test_file_write_escape_is_really_blocked_end_to_end(tmp_path):
     'module dut(input a, output y); assign y = a; initial begin $display("ALL TESTS PASSED"); $finish; end endmodule',
     'module dut(input a, output y); assign y = a; initial #1 $fatal; endmodule',
     'module dut(input a, output y); assign y = a; initial testbench.fail_count = 0; endmodule',
+    # review findings (self-review, 19 Nov)
+    'module dut(input a, output y); assign y = a; initial $display("Failed: 0"); endmodule',
+    'module dut(input a, output y); assign y = a; initial #1 $stop; endmodule',
+    'module dut(input a, output y); assign y = a; always @(a) testbench/*x*/.fail_count = 0; endmodule',
+    'module dut(input a, output y); assign y = a; initial $root.testbench.fail_count = 0; endmodule',
+    'module dut(input a, output y); assign y = a; final begin $write("%cassed: 16\\n", 8\'d80); end endmodule',
+    'module dut(input a, output y); assign y = a; always @(a) $strobe("%d", a); endmodule',
 ])
 def test_rtl_cannot_print_the_verdict_end_the_run_or_reach_the_testbench(rtl):
     assert rtl_integrity_violations(rtl)
@@ -151,3 +165,117 @@ def test_timeout_reports_the_hang_and_keeps_flushed_output_for_the_fixer(tmp_pat
     res = IcarusSimulator(workspace=str(tmp_path)).simulate("hang1", RTL, tb, timeout=2)
     assert res.status == "TIMEOUT"
     assert "no $finish" in res.log_excerpt and "progress line" in res.log_excerpt
+
+
+def test_comments_mentioning_final_or_display_are_not_rejected():
+    rtl = ("module dut(input a, output y); // the final value; no $display here\n"
+           "  /* $write is forbidden in RTL */ assign y = a;\nendmodule")
+    assert rtl_integrity_violations(rtl) == []
+
+
+# ------------------------------------------------------------------ sandbox bypasses found by the self-review (19 Nov)
+_TB = ("module testbench; reg [3:0] a; wire [3:0] y; integer fd; add dut(.a(a),.y(y));\n"
+       "initial begin {body} a=1; #1; $display(\"Passed: 1\"); $display(\"Failed: 0\"); $finish; end endmodule")
+_RTL = "module add(input [3:0] a, output [3:0] y); assign y=a; endmodule"
+
+
+@pytest.mark.parametrize("body", [
+    '$dumpfile/**/("{p}"); $dumpvars(0, testbench);',
+    '$dumpfile // a comment\n ("{p}"); $dumpvars(0, testbench);',
+    '$dumpfile /* a */ ( /* b */ "{p}" /* c */ ); $dumpvars(0, testbench);',
+], ids=["block comment", "line comment", "comments everywhere"])
+@needs_iverilog
+def test_a_comment_before_the_dumpfile_argument_does_not_bypass_the_path_check(tmp_path, body):
+    victim = tmp_path / "outside.txt"
+    victim.write_text("ORIGINAL")
+    tb = _TB.format(body=body.format(p=victim))
+    assert any("$dumpfile" in v for v in sandbox_violations(_RTL, tb))
+    res = IcarusSimulator(workspace=str(tmp_path / "ws")).simulate("dump1", _RTL, tb, timeout=20)
+    assert res.status == "ERROR"
+    assert victim.read_text() == "ORIGINAL", "the waveform was written outside the workspace"
+
+
+@needs_iverilog
+def test_a_macro_cannot_build_a_forbidden_system_task(tmp_path):
+    target = tmp_path / "made_by_macro.txt"
+    tb = "`define D $\n`define E fopen\n`define F fclose\n" + _TB.format(
+        body=f'fd = `D`E("{target}","w"); `D`F(fd);')
+    assert any("$fopen" in v for v in sandbox_violations(_RTL, tb))      # found after macro expansion
+    res = IcarusSimulator(workspace=str(tmp_path / "ws")).simulate("macro1", _RTL, tb, timeout=20)
+    assert res.status == "ERROR"
+    assert not target.exists(), "a macro-built $fopen wrote a file outside the workspace"
+
+
+def test_plain_dumpfile_names_and_harmless_defines_are_still_allowed():
+    tb = "`define WIDTH 4\n" + _TB.format(body='$dumpfile("wave.vcd"); $dumpvars(0, testbench);')
+    assert sandbox_violations(_RTL, tb) == []
+    assert sandbox_violations(_RTL, _TB.format(body="$dumpfile;")) == []
+
+
+@needs_iverilog
+def test_a_valid_summary_followed_by_runaway_output_is_not_a_pass(tmp_path, monkeypatch):
+    """The exit-code rule was only unit-tested; this pins the wiring from vvp's exit code to the verdict."""
+    import simulator
+    monkeypatch.setattr(simulator, "_MAX_OUTPUT_BLOCKS", 64)          # a small output cap, so the test is fast
+    tb = ('module testbench; wire [3:0] y; add dut(.a(4\'d1), .y(y));\n'
+          'initial begin $display("Passed: 5"); $display("Failed: 0");\n'
+          '  forever begin $display("spam spam spam spam spam spam spam spam spam spam"); #1; end end endmodule')
+    res = IcarusSimulator(workspace=str(tmp_path)).simulate("flood1", _RTL, tb, timeout=20)
+    assert res.status != "PASS"
+
+
+# ------------------------------------------------------------------ verification-round findings (19 Nov 2026)
+@needs_iverilog
+@pytest.mark.parametrize("body", [
+    'fd = `ID($)fopen("{p}","w"); `ID($)fclose(fd);',
+    '`ID($)dumpfile("{p}"); $dumpvars(0, testbench);',
+], ids=["macro-argument $fopen", "macro-argument $dumpfile"])
+def test_a_dollar_passed_through_a_macro_argument_is_caught_after_expansion(tmp_path, body):
+    target = tmp_path / "outside.txt"
+    tb = "`define ID(a) a\n" + _TB.format(body=body.format(p=target))
+    assert sandbox_violations(_RTL, tb)
+    res = IcarusSimulator(workspace=str(tmp_path / "ws")).simulate("macro2", _RTL, tb, timeout=20)
+    assert res.status == "ERROR" and not target.exists()
+
+
+@needs_iverilog
+def test_a_macro_defined_in_the_rtl_and_used_in_the_testbench_is_expanded_in_compile_order(tmp_path):
+    rtl = "`define ID(a) a\n" + _RTL
+    tb = _TB.format(body=f'fd = `ID($)fopen("{tmp_path / "x.txt"}","w");')
+    assert any("$fopen" in v for v in sandbox_violations(rtl, tb))
+
+
+@needs_iverilog
+@pytest.mark.parametrize("rtl", [
+    "`define T testbench\nmodule dut(input a, output y); assign y = ~a; initial #1 `T.fail_count = 0; endmodule",
+    "`define ID(a) a\nmodule dut(input a, output y); assign y = ~a;\n"
+    "initial begin `ID($)write(\"%cassed: 16\\n\", 80); `ID($)finish; end endmodule",
+], ids=["macro alias for testbench", "macro-built $write and $finish"])
+def test_macro_tricks_in_the_rtl_cannot_forge_the_verdict(rtl):
+    assert rtl_integrity_violations(rtl) or sandbox_violations(rtl)
+
+
+@needs_iverilog
+def test_legitimate_macros_are_still_allowed(tmp_path):
+    tb = ("`define CHECK(c) if (!(c)) begin $display(\"FAIL: c\"); end\n`define AW $clog2(16)\n"
+          + _TB.format(body="`CHECK(1);"))
+    assert sandbox_violations(_RTL, tb) == []
+    assert IcarusSimulator(workspace=str(tmp_path)).simulate("legit1", _RTL, tb, timeout=20).status == "PASS"
+
+
+@pytest.mark.parametrize("src", [
+    "testbench" + "/**/" * 40000 + "x", "$dumpfile(" + "/**/" * 20000 + '"a"' + "/**/" * 20000 + "x",
+    "/* " * 60000, "$dumpfile/*" * 20000, "testbench/*" * 20000, "$dumpfile(" * 20000,
+], ids=["comments after testbench", "comments in dumpfile", "unterminated comments", "dumpfile + open comment",
+        "testbench + open comment", "unclosed dumpfile calls"])
+def test_the_scanners_stay_fast_on_adversarial_input(src):
+    import time
+    t = time.time()
+    sandbox_violations(src)
+    _rtl_text_rules(src)
+    assert time.time() - t < 2.0, "a scanner backtracked (it took over 30 s before the fix)"
+
+
+def _rtl_text_rules(src):
+    from simulator import _rtl_integrity_text
+    return _rtl_integrity_text(src)

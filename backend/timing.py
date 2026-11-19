@@ -48,9 +48,12 @@ _CELL_PREFIX = "sky130_fd_sc_hd__"
 MAX_CELL_TYPES = 8
 MAX_PARAMETER_VALUE = 1024                   # a testbench value larger than this is ignored, not synthesized
 
-_AREA_RE = re.compile(r"Chip area for (?:top )?module '[^']*':\s*([0-9.]+)")
-_SEQ_AREA_RE = re.compile(r"used for sequential elements:\s*([0-9.]+)")
-_CELL_LINE_RE = re.compile(r"^\s*(\d+)\s+([0-9.]+)\s+(sky130_\w+)\s*$", re.M)
+# Yosys prints large areas in exponent form ("64 1.6E+03 sky130_fd_sc_hd__dfrtp_1"); a plain [0-9.]+ dropped
+# that line, so a 64-bit register was refused as "no logic cells" (self-review finding, reproduced).
+_NUM = r"[0-9.]+(?:[eE][+-]?[0-9]+)?"
+_AREA_RE = re.compile(r"Chip area for (?:top )?module '[^']*':\s*(" + _NUM + r")")
+_SEQ_AREA_RE = re.compile(r"used for sequential elements:\s*(" + _NUM + r")")
+_CELL_LINE_RE = re.compile(r"^\s*(\d+)\s+(" + _NUM + r")\s+(sky130_\w+)\s*$", re.M)
 _SLACK_RE = re.compile(r"^worst slack max\s+(-?[0-9.]+)", re.M)
 _LOOP_RE = re.compile(r"^\S+\s+\S+\s+\S+\s+loop\s*$", re.M)      # `report_disabled_edges`: "_0_ B X loop"
 
@@ -83,8 +86,8 @@ def _env() -> dict:
 
 
 def _run(cmd: List[str], cwd: Path, timeout: int) -> subprocess.CompletedProcess:
-    return subprocess.run(cmd, cwd=str(cwd), capture_output=True, text=True, timeout=timeout,
-                          stdin=subprocess.DEVNULL, env=_env())
+    from simulator import run_tool          # kills the whole process group on timeout
+    return run_tool(cmd, timeout, cwd=str(cwd), capture_output=True, text=True, env=_env())
 
 
 def _target(value) -> float:
@@ -232,6 +235,11 @@ def parse_sta(text: str, period_ns: float) -> dict:
         cand = (float(s.group(1)), block.split()[0], e.group(1), float(a.group(1)) if a else None, block)
         if worst is None or cand[0] < worst[0]:
             worst = cand
+    if worst and "fall edge" in worst[4]:
+        # A half-cycle path (falling-edge flop, or mixed edges): 1000/(period - slack) is not a clock limit there and
+        # changed with the target clock (self-review finding). Report the slack, not a made-up maximum frequency.
+        out.pop("fmax_mhz", None)
+        out["half_cycle_path"] = True
     if worst:
         out["critical_start"], out["critical_end"], out["critical_delay_ns"] = worst[1], worst[2], worst[3]
         full = critical_path_rows(worst[4], limit=None)
@@ -290,8 +298,11 @@ def _constraints(clocks: List[str], period: float) -> str:
     lines = [f"create_clock -name {c} -period {period} [get_ports {{{c}}}]" for c in clocks]
     if len(clocks) > 1:     # separate domains: a crossing is not a single-clock path, so it is not timed
         lines.append("set_clock_groups -asynchronous " + " ".join(f"-group [get_clocks {{{c}}}]" for c in clocks))
-    lines += [f"set_input_delay 0 -clock {clocks[0]} [all_inputs -no_clocks]",
-              f"set_output_delay 0 -clock {clocks[0]} [all_outputs]"]
+    # I/O delays against EVERY clock (self-review finding: with only clocks[0], the input->flop and flop->output
+    # paths of the other clocks were untimed, and a failing multiplier on the second clock reported "met").
+    for c in clocks:
+        lines += [f"set_input_delay 0 -clock {c} -add_delay [all_inputs -no_clocks]",
+                  f"set_output_delay 0 -clock {c} -add_delay [all_outputs]"]
     return "\n".join(lines) + "\n"
 
 
@@ -343,6 +354,10 @@ def run_timing(rtl_code: str, module_name: str, work_dir: Path, target_mhz: Opti
             note += " Parameters taken from the testbench: " + ", ".join(f"{k}={v}" for k, v in params.items()) + "."
         if skipped:
             note += " Testbench parameter values that are not plain numbers, or that name no parameter of the design, were not applied."
+        if testbench_code and re.search(r"\bdefparam\b", re.sub(r"//[^\n]*|/\*.*?\*/", " ", testbench_code, flags=re.S)):
+            # Self-review finding: a defparam override was ignored silently, so a 16-bit DUT was timed as 4-bit.
+            note += (" The testbench sets parameters with defparam, which is NOT applied here: these numbers are for "
+                     "the design's default parameter values.")
         base["note"] = note
 
         stats = parse_mapped_stats((work_dir / "stat.txt").read_text())
@@ -364,8 +379,8 @@ def run_timing(rtl_code: str, module_name: str, work_dir: Path, target_mhz: Opti
             return report(available=True, error=f"The design is clocked by a derived or gated signal ({names}), not directly "
                           "by an input port; only designs clocked by input ports are timed.", **stats)
         if len(clocks) > 1:
-            base["note"] += (f" {len(clocks)} clocks ({', '.join(clocks)}): each is timed at the target; "
-                             "paths between clocks are not timed.")
+            base["note"] += (f" {len(clocks)} clocks ({', '.join(clocks)}): each clock's own paths, including its "
+                             "inputs and outputs, are timed at the target; paths between clocks are not timed.")
 
         (work_dir / "timing.tcl").write_text(
             f"read_liberty {{{LIBERTY}}}\nread_verilog netlist.v\nlink_design {module_name}\n" + _constraints(clocks, period) +
@@ -410,6 +425,7 @@ def timing_message(r: TimingReport) -> str:
     if r.equivalence == "different":
         return "Timing: the mapped netlist does NOT match the RTL, so its timing and area are invalid."
     verdict = "meets" if r.met else "misses"
-    fmax = f", max about {r.fmax_mhz:g} MHz" if r.fmax_mhz else ""
+    combinational = (r.clock or "").startswith("virtual")      # no clock: 1/path delay is not a clock rate
+    fmax = f", max about {r.fmax_mhz:g} MHz" if r.fmax_mhz and not combinational else ""
     area = f"; {r.area_um2:g} um^2 in {r.cell_count} cells" if r.area_um2 else ""
     return f"Timing: {verdict} {r.target_mhz:g} MHz (slack {r.slack_ns:+.2f} ns{fmax}){area}."

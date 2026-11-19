@@ -100,11 +100,14 @@ export default function AgentChat({ messages, running, explanation }: Props) {
               <span className="txt">{i < messages.length - 1 || !running ? m.text.replace(/(\.\.\.|…)$/, '.') : m.text}</span>
               <span className="when">{took != null && took > 0 ? formatElapsed(took) : ''}</span>
               {m.diagnosis && (
-                <div className="run-diag" data-testid="chat-diagnosis">
-                  {m.diagnosis.root_cause && <div><strong>Root cause:</strong> {m.diagnosis.root_cause}</div>}
-                  {m.diagnosis.fix_location && <div><strong>Fix location:</strong> {m.diagnosis.fix_location}</div>}
+                <details className="run-diag" data-testid="chat-diagnosis">
+                  {/* Collapsed by default: the full text is also under "Self-correction loop" on the Results tab
+                      (self-review UX finding: 20+ lines of model prose filled the 320 px sidebar). */}
+                  <summary><strong>Diagnosis</strong> <span className="muted">(click to expand)</span></summary>
+                  {m.diagnosis.root_cause && <div><strong>Root cause:</strong> <InlineCode text={m.diagnosis.root_cause} /></div>}
+                  {m.diagnosis.fix_location && <div><strong>Fix location:</strong> <InlineCode text={m.diagnosis.fix_location} /></div>}
                   {m.diagnosis.confidence && <div className="muted">Confidence: {m.diagnosis.confidence}</div>}
-                </div>
+                </details>
               )}
             </li>
           )
@@ -124,4 +127,10 @@ export default function AgentChat({ messages, running, explanation }: Props) {
       )}
     </section>
   )
+}
+
+/** `code` spans from model text shown as code, not as literal backticks. Plain text only: nothing is parsed as HTML. */
+function InlineCode({ text }: { text: string }) {
+  const parts = text.split(/(`[^`]+`)/g)
+  return <>{parts.map((p, i) => (p.length > 2 && p.startsWith('`') && p.endsWith('`') ? <code key={i}>{p.slice(1, -1)}</code> : p))}</>
 }

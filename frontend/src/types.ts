@@ -222,6 +222,8 @@ export interface TimingReport {
   equivalence?: 'proven' | 'different' | 'not_proven' | null
   equivalence_method?: string
   critical_path_truncated?: boolean
+  /** The worst path is half-cycle (falling edge), so no fmax is given. */
+  half_cycle_path?: boolean
   area_um2?: number | null
   cell_count?: number | null
   flip_flops?: number | null
@@ -260,6 +262,8 @@ export interface StrengthReport {
   total: number
   killed: number
   invalid: number
+  /** Ran but neither passed nor reported a failure (crash, slow-testbench timeout). */
+  inconclusive?: number
   survivors: MutantInfo[]
   note: string
   seconds: number
@@ -295,6 +299,8 @@ export interface RunResponse {
   testbench_model?: string | null
   independent_testbench?: boolean
   second_opinion?: SecondOpinion | null
+  /** Set when the status is PASS but the run's own evidence contradicts it. */
+  pass_disputed?: string | null
 }
 
 export interface ProjectSummary {
@@ -304,6 +310,9 @@ export interface ProjectSummary {
   status: string
   created_at: number
   iterations: number
+  /** The model that wrote it, and whether it was a built-in demo run (older rows may lack both). */
+  model?: string | null
+  demo?: boolean
 }
 
 export interface UVMExportResponse {

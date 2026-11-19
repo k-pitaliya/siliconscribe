@@ -40,7 +40,8 @@ def test_stage_models_route_each_stage(monkeypatch):
     prov.generate_rtl(SPEC, None)
     prov.generate_testbench("module m; endmodule", SPEC)
     prov.fix_design("module m; endmodule", "module testbench; endmodule", "log")
-    assert seen == ["rtl-model", "strong-tb-model", "strong-fix-model"]
+    # The stand-in's repair reply is unreadable, so the fixer asks once more: both calls go to the fix model.
+    assert seen[:3] == ["rtl-model", "strong-tb-model", "strong-fix-model"] and set(seen[2:]) == {"strong-fix-model"}
 
 
 def test_explicit_per_request_model_beats_stage_model(monkeypatch):
@@ -93,3 +94,10 @@ def test_no_stage_note_when_every_stage_uses_the_default_model(monkeypatch):
     info = llm_service.list_models()
     assert info["stage_models"] == {}
     assert "testbench written by" not in info["models"][0]["note"]
+
+
+
+def test_an_unreadable_repair_reply_is_asked_for_once_more(monkeypatch):
+    prov, seen = _provider(monkeypatch, fix="fix-model")          # the stand-in always answers "module m; endmodule"
+    out = prov.fix_design("module m; endmodule", "module testbench; endmodule", "log")
+    assert seen == ["fix-model", "fix-model"] and out["parse_failed"] is True

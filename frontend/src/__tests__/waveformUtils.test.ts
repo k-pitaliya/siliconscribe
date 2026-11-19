@@ -161,3 +161,18 @@ describe('differingBits', () => {
     expect(differingBits('4', 'x')).toEqual([3, 2, 1, 0])
   })
 })
+
+describe('formatValue never throws (self-review: an upper-case X0 from Icarus blanked the page in "dec")', () => {
+  it.each([['X0', 8], ['Zf', 8], ['-3', 8], ["8'hFF", 8], ['0x1F', 8], ['1.5', 8], ['N/A', 8], ['r3.14', 64], ['', 8]])(
+    '%s', (v, w) => {
+      for (const radix of ['hex', 'bin', 'dec'] as const) expect(() => formatValue(v, w, radix)).not.toThrow()
+    })
+  it('reads upper-case hex and keeps unknown bits visible', () => {
+    expect(formatValue('FF', 8, 'dec')).toBe('255')
+    expect(formatValue('X0', 8, 'dec')).toBe('0xx0')
+  })
+  it('shows text that is not a hex value unchanged (not as a fake 0x number)', () => {
+    expect(formatValue('N/A', 8, 'hex')).toBe('N/A')
+    expect(formatValue("8'hFF", 8, 'dec')).toBe("8'hFF")
+  })
+})

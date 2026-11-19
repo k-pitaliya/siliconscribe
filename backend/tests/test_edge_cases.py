@@ -67,3 +67,22 @@ def test_buggy_counter_passes_after_fix(tmp_path):
     resp = run_pipeline("Design a buggy 4-bit counter", "ec6", sim, max_iterations=3)
     assert resp.status == "PASS"
     assert resp.iterations >= 1
+
+
+# ------------------------------------------------------------------ self-review finding (19 Nov 2026)
+import pytest  # noqa: E402
+
+import offline_designs as _od  # noqa: E402
+
+
+@pytest.mark.parametrize("prompt,key,exact", [
+    ("8-bit up counter with a load value", "counter", True),       # "value" contains "alu"
+    ("discount calculator", "counter", False),                       # "discount" contains "count"
+    ("FIFO that tracks the stored value", "counter", False),
+    ("half adder", "adder", False),                                  # the built-in adder is a FULL adder
+    ("Design an 8-bit ALU", "alu8", True),
+    ("Design a 4-bit ALU with add, sub", "alu", True),
+    ("two counters", "counter", True),
+])
+def test_built_in_designs_match_whole_words_only(prompt, key, exact):
+    assert (_od.match_design(prompt), _od.is_exact_match(prompt)) == (key, exact)

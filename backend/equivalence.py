@@ -61,6 +61,35 @@ def interpret(output: str, sequential: bool) -> dict:
     return {"status": None, "method": "The equivalence check could not be run on this design."}
 
 
+_CLK_PIN_RE = re.compile(r"\.(CLK_N|CLK)\(\s*\\?([A-Za-z_][\w$]*)")
+# Any reg/logic/bit declaration with an initialiser (also "reg [3:0] a, s = 5;" and "logic s = 5;"), and initial blocks
+# (self-review verification: those forms were still "proven"). Bounded so the scan stays linear.
+_DECL_INIT_RE = re.compile(r"\b(?:reg|logic|bit)\b[^;=()]{0,200}=(?!=)|\binitial\b")
+
+
+def _sequential_limits(rtl: str, netlist: str) -> Optional[str]:
+    """Reasons the sequential proof must not say "proven" (self-review findings, both reproduced):
+
+    * equiv_induct treats every flip-flop as ticking on the same step, so a netlist whose flip-flop used the OTHER clock
+      edge was "proven". Each flip-flop's edge in the netlist is checked against the RTL's `posedge`/`negedge` uses.
+    * A register given a declaration value (`reg [3:0] s = 5;`) starts at that value in simulation but not in the
+      netlist (x at power-up), yet the proof passed. Such designs depend on power-up values: not proven.
+    """
+    code = re.sub(r"//[^\n]*|/\*.*?\*/", " ", rtl, flags=re.S)
+    if _DECL_INIT_RE.search(code):
+        return ("not proven: a register gets a starting value from its declaration or an initial block (for example "
+                "reg q = 0), which simulation uses but the netlist does not keep at power-up; reset it explicitly instead")
+    for pin, net in set(_CLK_PIN_RE.findall(netlist)):
+        edge = "negedge" if pin == "CLK_N" else "posedge"
+        if not re.search(rf"\b{edge}\s+{re.escape(net)}\b", code):
+            return (f"not proven: a netlist flip-flop is clocked on the {edge.replace('edge', ' edge')} of {net}, which "
+                    "the RTL does not use; the proof treats all flip-flops as ticking together, so it cannot decide this")
+    if len({net for _, net in _CLK_PIN_RE.findall(netlist)}) > 1:
+        return ("not proven: more than one clock; the proof treats all flip-flops as ticking together, which only holds "
+                "for a single clock")
+    return None
+
+
 def prove_equivalence(work_dir: Path, module: str, liberty: str, params: Optional[Dict[str, int]] = None,
                       env: Optional[dict] = None, timeout: int = 20) -> dict:
     """Run the proof in `work_dir` (which holds design.sv and netlist.v from the timing stage)."""
@@ -68,10 +97,20 @@ def prove_equivalence(work_dir: Path, module: str, liberty: str, params: Optiona
     netlist = (work_dir / "netlist.v").read_text()
     sequential = bool(_SEQ_CELL_RE.search(netlist))
     try:
-        p = subprocess.run(["yosys", "-p", _script(module, liberty, params or {}, sequential)], cwd=str(work_dir),
-                           capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL, env=env)
+        from simulator import run_tool      # kills the whole process group on timeout
+        p = run_tool(["yosys", "-p", _script(module, liberty, params or {}, sequential)], timeout, cwd=str(work_dir),
+                     capture_output=True, text=True, env=env)
     except subprocess.TimeoutExpired:
         return {"status": None, "method": f"The proof did not finish within {timeout} s, so it was stopped", "sequential": sequential}
+    except FileNotFoundError:
+        return {"status": None, "method": "Yosys is not installed, so the proof could not run", "sequential": sequential}
     out = interpret((p.stdout or "") + (p.stderr or ""), sequential)
     out["sequential"] = sequential
+    if sequential and out["status"] == "proven":
+        try:
+            limit = _sequential_limits((work_dir / "design.sv").read_text(), netlist)
+        except OSError:
+            limit = None
+        if limit:
+            out["status"], out["method"] = "not_proven", limit
     return out

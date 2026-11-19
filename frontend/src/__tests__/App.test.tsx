@@ -125,7 +125,7 @@ describe('App: layout behaviour', () => {
 
   it('first visit explains the flow instead of an empty editor', () => {
     render(<App />)
-    expect(screen.getByText('Describe a block, get verified RTL')).toBeInTheDocument()
+    expect(screen.getByText('Describe a block. Get Verilog and the evidence to judge it.')).toBeInTheDocument()
   })
 
   it('the theme switch cycles system, light, dark and is remembered', () => {

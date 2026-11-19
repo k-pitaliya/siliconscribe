@@ -11,12 +11,15 @@ if [ ! -x "$PYTHON" ]; then
   PYTHON="python3"
 fi
 
-echo "Starting backend on http://localhost:8000 ..."
-( cd "$ROOT/backend" && "$PYTHON" -m uvicorn main:app --host 0.0.0.0 --port 8000 ) &
+# 127.0.0.1, not 0.0.0.0: the backend has no login, so it must not be reachable from the venue Wi-Fi.
+# ~/.local/bin holds iverilog / yosys / sta on the demo machine.
+export PATH="$HOME/.local/bin:$PATH"
+echo "Starting backend on http://127.0.0.1:8000 ..."
+( cd "$ROOT/backend" && "$PYTHON" -m uvicorn main:app --host 127.0.0.1 --port 8000 ) &
 BACKEND_PID=$!
 
-echo "Starting frontend on http://localhost:5173 ..."
-( cd "$ROOT/frontend" && npm run dev ) &
+echo "Starting frontend on http://127.0.0.1:5173 ..."
+( cd "$ROOT/frontend" && npm run dev -- --host 127.0.0.1 ) &
 FRONTEND_PID=$!
 
 cleanup() {

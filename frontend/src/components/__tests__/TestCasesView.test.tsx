@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, within } from '@testing-library/react'
+import { render, screen, fireEvent, within, waitFor } from '@testing-library/react'
 import { describe, it, expect, vi } from 'vitest'
 import TestCasesView from '../TestCasesView'
 import type { CheckResult, SimulationResult } from '../../types'
@@ -110,5 +110,18 @@ describe('TestCasesView', () => {
   it('says when the list is truncated, while the totals stay exact', () => {
     render(<TestCasesView result={result({ checks_truncated: true, checks_total_logged: 2122, test_count: 2122, pass_count: 2118 })} />)
     expect(screen.getByTestId('truncated-note').textContent).toContain('Showing 4 of 2122')
+  })
+})
+
+describe('TestCasesView keyboard (self-review finding)', () => {
+  it('has one tab stop and moves with the arrow keys, also beyond the rendered window', async () => {
+    const checks = Array.from({ length: 300 }, (_, i) => row(i + 1, { category: 'random' }))
+    render(<TestCasesView result={result({ checks, check_groups: [{ category: 'random', total: 300, passed: 300, failed: 0 }],
+      test_count: 300, pass_count: 300, fail_count: 0, status: 'PASS' })} />)
+    const rows = screen.getAllByTestId('check-row')
+    expect(rows.filter((r) => r.getAttribute('tabindex') === '0')).toHaveLength(1)
+    rows[0].focus()
+    fireEvent.keyDown(rows[0], { key: 'End' })
+    await waitFor(() => expect(document.activeElement?.getAttribute('data-idx')).toBe('300'))
   })
 })

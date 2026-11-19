@@ -239,6 +239,7 @@ def test_repair_compile_errors_ignores_unrelated_failures():
     assert _repair_compile_errors(rtl, tb, log) == (rtl, tb, [])
 
 
+@needs_iverilog
 def test_compiler_repair_runs_without_calling_llm(monkeypatch, tmp_path):
     """A wire→reg compile failure is repaired deterministically with a diagnosis."""
     import models
@@ -298,6 +299,7 @@ def test_compiler_repair_runs_without_calling_llm(monkeypatch, tmp_path):
     assert status == "PASS"
 
 
+@needs_iverilog
 def test_testbench_only_fix_is_applied(monkeypatch, tmp_path):
     """A corrected TB oracle with unchanged RTL must not be discarded as a no-op."""
     import models
@@ -396,3 +398,37 @@ def test_midrun_upstream_failure_does_not_swap_design(monkeypatch, tmp_path):
     assert not any(e["stage"] == "done" for e in events)
     # And no silent switch to the curated offline designs.
     assert not any(e.get("fallback_notice") for e in events)
+
+
+# ------------------------------------------------------------------ self-review QA findings (19 Nov 2026)
+@needs_iverilog
+def test_a_fix_that_keeps_one_real_check_is_still_rejected_for_dropping_checks(tmp_path, monkeypatch):
+    """The older test above is caught by the 'no checks / no DUT' guard first, so the check-COUNT guard had no test."""
+    import offline_designs as od
+    from tests.test_independent_testbench import TRIVIAL_TB
+
+    def _trimming_fix(self, rtl_code, tb_code, log_excerpt, model=None, reasoning_effort=None, spec=None):
+        return {"rtl_code": rtl_code, "testbench_code": TRIVIAL_TB, "fix_summary": "trimmed", "fix_type": "test"}
+
+    monkeypatch.setattr(llm_service.OfflineProvider, "fix_design", _trimming_fix)
+    events = list(pipeline_events("Design a buggy 4-bit counter", "d9", IcarusSimulator(workspace=str(tmp_path)), max_iterations=2))
+    assert any("removed self-checks" in e.get("message", "") for e in events if e["stage"] == "fix")
+    done = next(e for e in events if e["stage"] == "done")["response"]
+    assert done["status"] != "PASS" and done["testbench_code"] == od.get_design("counter")["tb"]
+
+
+@needs_iverilog
+def test_a_strict_a_b_a_b_fixer_is_stopped_as_an_oscillation(tmp_path, monkeypatch):
+    calls = {"n": 0}
+
+    def _ab(self, rtl_code, tb_code, log_excerpt, model=None, reasoning_effort=None, spec=None):
+        calls["n"] += 1
+        tag = "a" if calls["n"] % 2 else "b"
+        base = rtl_code.split("\nwire _osc_")[0].replace("\nendmodule", "")
+        return {"rtl_code": base + f"\nwire _osc_{tag} = 1'b0;\nendmodule\n", "testbench_code": tb_code, "fix_summary": tag,
+                "fix_type": "rtl"}
+
+    monkeypatch.setattr(llm_service.OfflineProvider, "fix_design", _ab)
+    events = list(pipeline_events("Design a buggy 4-bit counter", "d10", IcarusSimulator(workspace=str(tmp_path)), max_iterations=6))
+    assert any(e.get("fix_summary") == "oscillation" for e in events if e["stage"] == "fix")
+    assert calls["n"] < 6

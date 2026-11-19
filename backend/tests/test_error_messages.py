@@ -56,3 +56,43 @@ def test_the_pipeline_emits_the_friendly_message_as_its_error_event(monkeypatch,
     events = list(pipeline_events("Design a 4-bit synchronous up-counter", "errtest", IcarusSimulator(workspace=str(tmp_path))))
     assert events[-1]["stage"] == "error"
     assert "free usage limit" in events[-1]["message"] and "Internal server error" not in events[-1]["message"]
+
+
+# ------------------------------------------------------------------ self-review findings (19 Nov 2026)
+import pytest  # noqa: E402
+
+from orchestrator import _chosen_model_problem  # noqa: E402
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ("LLM_UPSTREAM:EmptyContent: model=x max_tokens=8192 reasoning only", "spent its whole answer budget on reasoning"),
+    ("Error code: 429 - Too Many Requests", "usage limit"),
+    ("daily free allocation exceeded for @cf/meta/llama", "usage limit"),
+    ("Error code: 410 - model retired", "retired this model"),
+    ("Error code: 500 at https://api.cloudflare.com/client/v4/accounts/ab404cd/ai", "returned an error"),
+    ("RuntimeError: LLM_UPSTREAM:OpenCodeNotInstalled: the 'opencode' command was not found", "not installed"),
+    ("Error code: 401 - invalid api key", "did not accept the credentials"),
+    ("Error code: 404 - unknown model", "does not know this model"),
+])
+def test_the_reason_given_for_a_failed_chosen_model_is_the_real_one(raw, expected):
+    assert expected in _chosen_model_problem("m", RuntimeError(raw))
+
+
+def test_a_storage_error_does_not_show_server_paths():
+    from orchestrator import _user_facing_error
+    e = OSError(28, "No space left on device", "/Users/someone/proj/backend/workspace/abc/design.sv")
+    msg = _user_facing_error(e)
+    assert "No space left on device" in msg and "/Users" not in msg and "workspace" not in msg
+    assert "/Users" not in _user_facing_error(RuntimeError("failed to open /Users/x/backend/workspace/y.sv"))
+
+
+def test_model_ids_that_look_like_paths_are_kept_in_messages():
+    from orchestrator import _user_facing_error
+    for mid in ("@cf/openai/gpt-oss-120b", "nim/poolside/laguna-xs-2.1", "opencode/deepseek-v4.1-flash-free"):
+        assert mid in _user_facing_error(RuntimeError(f"The model you chose ({mid}) could not be used"))
+
+
+def test_the_fallback_reason_has_no_internal_prefix_or_json():
+    from orchestrator import _short_reason
+    r = _short_reason(RuntimeError('LLM_UPSTREAM:OpenCodeError: model=x {"name":"APIError","data":{"m":1}} daily limit'))
+    assert "LLM_UPSTREAM" not in r and "{" not in r and "daily limit" in r

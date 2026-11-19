@@ -147,6 +147,7 @@ def test_a_long_critical_path_keeps_its_endpoint_and_is_flagged():
     assert timing.parse_sta("Startpoint: " + COUNTER_BLOCK + "  9.0 slack (MET)\n", 10.0)["critical_path_truncated"] is False
 
 
+@pytest.mark.skipif(shutil.which("yosys") is None, reason="yosys not installed")
 def test_the_proof_timeout_is_reported_not_silent(tmp_path):
     (tmp_path / "netlist.v").write_text("module m(); endmodule\n")
     eq = equivalence.prove_equivalence(tmp_path, "m", "x.lib", timeout=0.001)
@@ -184,3 +185,42 @@ def test_reported_seconds_include_the_proof(tmp_path, monkeypatch):
     r = timing.run_timing(offline_designs.COUNTER_RTL, "counter", tmp_path, 100)
     wall = _t.time() - t0
     assert r.seconds >= wall - 0.3          # the reported time covers the whole call, proof included
+
+
+# ------------------------------------------------------------------ self-review findings (19 Nov 2026)
+from equivalence import _sequential_limits  # noqa: E402
+
+_NET = "  sky130_fd_sc_hd__dfrtp_1 _1_ (\n    .CLK(clk),\n    .D(d),\n    .Q(q),\n    .RESET_B(rst_n)\n  );\n"
+
+
+def test_a_flip_flop_on_the_other_clock_edge_is_not_proven():
+    rtl = "module m(input clk, rst_n, d, output reg q); always @(posedge clk or negedge rst_n) if (!rst_n) q <= 0; else q <= d; endmodule"
+    assert _sequential_limits(rtl, _NET) is None
+    flipped = _NET.replace("dfrtp_1", "dfrtn_1").replace(".CLK(", ".CLK_N(")
+    assert "falling" in _sequential_limits(rtl, flipped) or "neg" in _sequential_limits(rtl, flipped)
+
+
+def test_a_declaration_value_is_not_proven():
+    rtl = "module m(input clk, d, output q); reg [3:0] s = 4'd5; always @(posedge clk) s <= {s[2:0], d}; assign q = s[3]; endmodule"
+    assert "starting value" in _sequential_limits(rtl, _NET.replace(".RESET_B(rst_n)", ".RESET_B(1'b1)"))
+
+
+def test_two_clocks_are_not_proven():
+    rtl = "module m(input a, b, d, output reg x, y); always @(posedge a) x <= d; always @(posedge b) y <= d; endmodule"
+    net = _NET + _NET.replace("_1_", "_2_").replace(".CLK(clk)", ".CLK(b)")
+    assert "more than one clock" in _sequential_limits(rtl.replace("posedge a", "posedge clk"), net)
+
+
+@needs_tools
+def test_a_design_relying_on_a_power_up_value_is_not_reported_proven(tmp_path):
+    rtl = ("module iv(input clk, input en, output [3:0] q); reg [3:0] state = 4'd5;\n"
+           "always @(posedge clk) if (en) state <= state + 1; assign q = state; endmodule\n")
+    r = timing.run_timing(rtl, "iv", tmp_path, 100)
+    assert r.equivalence == "not_proven" and "starting value" in r.equivalence_method
+
+
+# ------------------------------------------------------------------ verification-round findings (19 Nov 2026)
+@pytest.mark.parametrize("decl", ["logic [3:0] state = 4'd5;", "reg [3:0] a, state = 4'd5;", "reg [3:0] state; initial state = 4'd5;"])
+def test_other_power_up_value_forms_are_not_proven(decl):
+    rtl = f"module m(input clk, d, output q); {decl} always @(posedge clk) state <= {{state[2:0], d}}; assign q = state[3]; endmodule"
+    assert "starting value" in _sequential_limits(rtl, _NET.replace(".RESET_B(rst_n)", ".RESET_B(1'b1)"))

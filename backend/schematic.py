@@ -9,6 +9,7 @@ with graceful fallback to the port-level diagram when yosys is unavailable.
 """
 
 import json
+import os
 import re
 from typing import Optional
 import shutil
@@ -156,21 +157,22 @@ def synthesize_with_yosys(rtl_code: str, module_name: str, work_dir: Path) -> di
     # read_verilog -sv -> SystemVerilog, hierarchy check, proc/opt, synth, stat, write_json
     rtl_json_out = work_dir / f"{module_name}_rtl.json"
     yosys_script = (
-        f"read_verilog -sv {rtl_file}; "
+        f"read_verilog -sv {rtl_file.name}; "
         f"hierarchy -check -top {module_name}; "
         # Snapshot after proc/opt: word-level RTL cells ($add, $mux, $dff, ...) for the RTL schematic view.
-        f"proc; opt; write_json {rtl_json_out}; synth -top {module_name}; "
-        f"check; stat; write_json {json_out}"
+        f"proc; opt; write_json {rtl_json_out.name}; synth -flatten -top {module_name}; "
+        f"check; stat; write_json {Path(json_out).name}"
     )
 
     try:
-        result = subprocess.run(
-            ["yosys", "-p", yosys_script],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            cwd=str(work_dir),
-        )
+        # Relative file names (cwd is work_dir): an absolute path with a space broke the script (self-review).
+        # run_tool kills the whole process group on timeout; the environment carries no API keys.
+        from simulator import clean_env, run_tool
+        env = clean_env()
+        if "HOME" in os.environ:          # the yosys shim and its WebAssembly cache live under HOME
+            env["HOME"] = os.environ["HOME"]
+        result = run_tool(["yosys", "-p", yosys_script], 30, capture_output=True, text=True,
+                          cwd=str(work_dir), env=env)
         output = (result.stdout or "") + (result.stderr or "")
 
         # Parse cell count: Yosys prints "Number of cells:  N"

@@ -251,7 +251,17 @@ def run_strength(simulator, design_id: str, rtl_code: str, testbench_code: str,
         return StrengthReport(status="skipped", note="No mutable operators found in this design.")
 
     scratch = (design_id[:26] + "_mu")[:32]        # fits DESIGN_ID_RE; one scratch folder, reused
-    killed, invalid = 0, 0
+    killed, invalid, inconclusive = 0, 0, 0
+    # Baseline: how long does the UNMUTATED design take with this testbench? A mutant that times out only
+    # counts as caught when the original finishes well inside the per-mutant limit (review finding: a slow
+    # testbench with one check scored 3/3 because every mutant "timed out").
+    baseline_fast = True
+    try:
+        t0 = time.time()
+        base = simulator.simulate(scratch, rtl_code, testbench_code, timeout=PER_MUTANT_TIMEOUT)
+        baseline_fast = base.status == "PASS" and (time.time() - t0) < PER_MUTANT_TIMEOUT / 3
+    except Exception:
+        baseline_fast = False
     survivors: List[MutantInfo] = []
     evaluated = 0
     partial = False
@@ -272,11 +282,14 @@ def run_strength(simulator, design_id: str, rtl_code: str, testbench_code: str,
             if _is_invalid(res):
                 invalid += 1
                 continue
-            evaluated += 1
             if res.status == "PASS":
+                evaluated += 1
                 survivors.append(MutantInfo(description=m.description, line=m.line))
+            elif res.status == "FAIL" or (res.status == "TIMEOUT" and baseline_fast):
+                evaluated += 1
+                killed += 1                 # the testbench reported a failure (or the mutant made the design hang)
             else:
-                killed += 1
+                inconclusive += 1           # a crash, or a timeout of a testbench that is slow anyway: not a detection
     finally:
         try:
             shutil.rmtree(simulator.workspace / scratch, ignore_errors=True)
@@ -284,11 +297,13 @@ def run_strength(simulator, design_id: str, rtl_code: str, testbench_code: str,
             pass
 
     if evaluated == 0:
-        return StrengthReport(status="skipped", invalid=invalid,
-                              note="None of the injected changes compiled, so the testbench could not be scored.",
+        return StrengthReport(status="skipped", invalid=invalid, inconclusive=inconclusive,
+                              note=("The testbench was too slow, or crashed, on every injected change, so it could not be scored."
+                                    if inconclusive else "None of the injected changes compiled, so the testbench could not be scored."),
                               seconds=round(time.time() - started, 1))
     return StrengthReport(
         status="partial" if partial else "ok", total=evaluated, killed=killed, invalid=invalid,
+        inconclusive=inconclusive,
         survivors=survivors,
         note=("A survivor is a change the testbench did not notice; some survivors may be equivalent "
               "to the original design, so this is evidence about the testbench, not a proof."),
@@ -298,7 +313,14 @@ def run_strength(simulator, design_id: str, rtl_code: str, testbench_code: str,
 
 def weak_strength_note(report: Optional[StrengthReport]) -> Optional[str]:
     """Warning text when the testbench missed too many injected bugs for the PASS to be trusted."""
-    if not report or report.status not in ("ok", "partial") or report.total < MIN_MUTANTS_FOR_WARNING:
+    if not report or report.status not in ("ok", "partial") or report.total < 1:
+        return None
+    if report.total < MIN_MUTANTS_FOR_WARNING:
+        # Few mutants say little, but catching NONE of them is still worth saying (review finding: a testbench that
+        # caught 0 of 3 got no warning at all).
+        if report.killed == 0:
+            return (f"Weak testbench: it caught none of the {report.total} injected bugs (only {report.total} could be "
+                    "made for this small design), so this PASS may hide real defects.")
         return None
     if report.killed / report.total >= WEAK_KILL_RATE:
         return None

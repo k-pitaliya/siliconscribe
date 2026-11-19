@@ -225,3 +225,62 @@ def test_parse_intent_gives_a_clear_error_after_two_bad_replies():
 def test_parse_intent_does_not_retry_when_the_first_reply_is_good():
     prov = _provider_with_replies([_GOOD_SPEC])  # a second call would raise StopIteration
     assert prov.parse_intent("make a wire").module_name == "m"
+
+
+# ------------------------------------------------------------------ self-review findings (19 Nov 2026)
+from llm_service import _extract_json, _parse_fix_response, _section  # noqa: E402
+from models import PortSpec, RTLDesignSpec  # noqa: E402
+
+DRAFT = "module counter(input clk, output reg [3:0] q); always @(posedge clk) q <= q + 2; endmodule"
+FINAL = "module counter(input clk, output reg [3:0] q); always @(posedge clk) q <= q + 1; endmodule"
+
+
+def test_a_draft_and_a_corrected_module_give_one_definition_the_last():
+    out = _strip_code_fence(f"Draft:\n```verilog\n{DRAFT}\n```\nCorrected:\n```verilog\n{FINAL}\n```")
+    assert out.count("module counter") == 1 and "q + 1" in out
+
+
+def test_reasoning_is_ignored_even_with_only_a_closing_tag():
+    assert _strip_code_fence(f"<think>maybe:\n{DRAFT}\n</think>\n{FINAL}").count("module counter") == 1
+    assert "q + 1" in _strip_code_fence(f"let me think\n{DRAFT}\n</think>\n```verilog\n{FINAL}\n```")
+
+
+def test_the_last_section_wins_and_a_restated_format_inside_reasoning_is_ignored():
+    text = f"<think>I must answer with <rtl>full corrected RTL</rtl></think>\n<rtl>\n{FINAL}\n</rtl>"
+    assert _section(text, "rtl") == FINAL
+
+
+def test_an_unreadable_repair_reply_is_flagged_not_reported_as_no_change():
+    for reply in ("I cannot help with that.", "<rtl>\nmodule counter(input clk", "```\nsome code\n```"):
+        r = _parse_fix_response(reply, "RTL0", "TB0")
+        assert r["parse_failed"] is True and (r["rtl_code"], r["testbench_code"]) == ("RTL0", "TB0")
+
+
+def test_json_is_found_after_braces_in_prose_and_the_last_object_wins():
+    assert _extract_json('Sure {as requested}: {"module_name": "a", "x": 1}')["module_name"] == "a"
+    assert _extract_json('{"module_name": "draft"} then final {"module_name": "final"}')["module_name"] == "final"
+    assert _extract_json('<think>{"module_name": "t"}</think>{"module_name": "real"}')["module_name"] == "real"
+
+
+def test_common_spec_spellings_are_accepted():
+    p = PortSpec(name="q", direction="Output", width=4, description=None)
+    assert p.direction == "output" and p.description == ""
+    assert PortSpec(name="d", direction="in").direction == "input"
+    s = RTLDesignSpec(module_name="Up/Down Counter", ports=[p], behavior=["counts up", "or down"], constraints="sync reset")
+    assert s.behavior == "counts up\nor down" and s.constraints == ["sync reset"]
+    from llm_service import model_module_name
+    assert model_module_name("Up/Down Counter") == "Up_Down_Counter" and model_module_name("testbench") == "testbench_dut"
+    assert model_module_name("alu_4bit") == "alu_4bit" and model_module_name("4bit alu") == "m_4bit_alu"
+
+
+def test_a_module_named_only_in_a_comment_is_not_a_complete_module():
+    from orchestrator import _has_complete_module
+    assert not _has_complete_module("// module counter\nmodule up_counter(input a); endmodule", "counter")
+    assert not _has_complete_module('module counter(input a); // no end\n/* endmodule */', "counter")
+    assert _has_complete_module("module counter(input a);\nendmodule", "counter")
+
+
+def test_a_stray_url_line_is_not_a_model():
+    from model_catalog import parse_opencode_models
+    ids = [m["id"] for m in parse_opencode_models("opencode/a-free\nhttps://opencode.ai/docs\n")]
+    assert ids == ["opencode/a-free"]

@@ -97,19 +97,32 @@ def _res(status, log=""):
     return SimulationResult(status=status, module_name="m", log_excerpt=log)
 
 
-def test_scoring_rules_pass_survives_everything_else_is_caught_and_noncompiling_is_ignored():
+def test_scoring_rules_pass_survives_fail_and_hang_are_caught_crash_is_inconclusive():
     code = ("module t(input a, b, c, d, output y, z); assign y = (a & b) | (c ^ d);\n"
             " assign z = (a == b) && (c != d); endmodule\n")
     n = len(select_mutants(candidate_mutants(code)))
     assert n >= 6
     script = [_res("PASS"), _res("FAIL"), _res("TIMEOUT"), _res("ERROR", "Compilation failed:\nboom"),
               _res("ERROR", "No valid summary"), _res("ERROR", "Rejected by sandbox policy: x")][:n]
-    sim = _FakeSim(script + [_res("FAIL")] * (n - len(script)))
+    sim = _FakeSim([_res("PASS")] + script + [_res("FAIL")] * (n - len(script)))     # first call: the unmutated baseline
     r = run_strength(sim, "design1234", code, "tb")
     assert r.invalid == 2                                               # compile failure + sandbox refusal
-    assert r.total == n - 2
+    assert r.inconclusive == 1                                          # a crash without a reported failure
+    assert r.total == n - 3
     assert len(r.survivors) == 1                                        # only the PASS survived
-    assert r.killed == r.total - 1                                      # FAIL, TIMEOUT and a crash all count as caught
+    assert r.killed == r.total - 1                                      # FAIL, and a hang of a fast testbench, count as caught
+
+
+def test_a_timeout_is_not_a_catch_when_the_testbench_is_slow_anyway(monkeypatch):
+    """Review finding: a one-check testbench with a long busy loop scored 3/3 because every mutant timed out."""
+    import mutation
+    monkeypatch.setattr(mutation, "PER_MUTANT_TIMEOUT", 0.3)
+    code = "module t(input a, b, output y); assign y = a & b; endmodule\n"
+    n = len(select_mutants(candidate_mutants(code)))
+    sim = _FakeSim([_res("PASS")] + [_res("TIMEOUT")] * n, delay=0.15)      # the baseline itself takes half the limit
+    r = run_strength(sim, "design1234", code, "tb")
+    assert r.killed == 0 and r.inconclusive == n
+    assert r.status == "skipped"                                            # nothing was really scored
 
 
 def test_time_budget_returns_a_partial_report_instead_of_hanging():
@@ -124,7 +137,8 @@ def test_warning_only_for_a_clearly_weak_testbench():
     weak = StrengthReport(status="ok", total=10, killed=3)
     assert "caught only 3 of 10" in weak_strength_note(weak)
     assert weak_strength_note(StrengthReport(status="ok", total=10, killed=9)) is None
-    assert weak_strength_note(StrengthReport(status="ok", total=3, killed=0)) is None      # too few to judge
+    assert "caught none of the 3" in weak_strength_note(StrengthReport(status="ok", total=3, killed=0))   # small, but zero
+    assert weak_strength_note(StrengthReport(status="ok", total=3, killed=1)) is None      # too few to judge a ratio
     assert weak_strength_note(StrengthReport(status="skipped")) is None
     assert weak_strength_note(None) is None
 

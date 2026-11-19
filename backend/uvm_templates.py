@@ -86,19 +86,31 @@ except ImportError:  # when executed as package
 # Helpers: spec introspection
 # ---------------------------------------------------------------------------
 
+_CLK_NAME_RE = re.compile(r"(?:^|_)(?:clk|clock)(?:_?\w*)?$", re.I)
+_RST_NAME_RE = re.compile(r"(?:^|_)a?(?:rst|reset)(?:_?n|_?b)?(?:$|_)", re.I)
+
+
 def _is_sequential(spec: RTLDesignSpec) -> bool:
+    """A clock input makes a design sequential, whatever the constraint text says (self-review finding: "Synchronous
+    design" without the word "sequential" produced no clock generator at all)."""
+    if any(p.direction == "input" and _CLK_NAME_RE.search(p.name) for p in spec.ports):
+        return True
     for c in (spec.constraints or []):
         if "sequential" in c.lower():
             return True
     return False
 
 
+def _reset_active_low(name: Optional[str]) -> bool:
+    """rst_n / reset_b / rstn are active-low; rst / reset are active-high."""
+    return bool(name) and re.search(r"(?:_?n|_?b)$", name, re.I) is not None and not name.lower().endswith(("rst", "reset"))
+
+
 def _detect_clk_rst(spec: RTLDesignSpec) -> Tuple[Optional[str], Optional[str]]:
     clk_name: Optional[str] = None
     rst_name: Optional[str] = None
     for p in spec.ports:
-        ln = p.name.lower()
-        if p.direction == "input" and "clk" in ln:
+        if p.direction == "input" and _CLK_NAME_RE.search(p.name):     # also "clock"; whole name parts only
             clk_name = p.name
             break
     # fallback search for exact 'clk'
@@ -108,8 +120,7 @@ def _detect_clk_rst(spec: RTLDesignSpec) -> Tuple[Optional[str], Optional[str]]:
                 clk_name = p.name
                 break
     for p in spec.ports:
-        ln = p.name.lower()
-        if p.direction == "input" and ("rst" in ln or "reset" in ln):
+        if p.direction == "input" and _RST_NAME_RE.search(p.name):     # not "first" or "burst"
             rst_name = p.name
             break
     return clk_name, rst_name
@@ -179,13 +190,17 @@ def _find_op_port(spec: RTLDesignSpec, clk: Optional[str], rst: Optional[str]) -
 
 
 def _is_alu_like(spec: RTLDesignSpec, op_port: Optional[PortSpec]) -> bool:
+    """The ALU scoreboard model (ADD/SUB/AND/OR/XOR) is only emitted for a design that says it is an ALU or names those
+    operations, and whose op port can encode five operations (self-review finding: a 2:1 mux with a, b and a 1-bit
+    select got an illegal enum ADD=1'b0, SUB=1'b1, AND=1'b0 ... and an ALU model)."""
+    if op_port is None or op_port.width < 3:
+        return False
     name = spec.module_name.lower()
     beh = (spec.behavior or "").lower()
-    if "alu" in name or "alu" in beh:
-        return op_port is not None
-    has_a = any(p.name.lower() == "a" for p in spec.ports)
-    has_b = any(p.name.lower() == "b" for p in spec.ports)
-    return has_a and has_b and op_port is not None
+    if re.search(r"\balu\b|arithmetic logic", name + " " + beh) or re.search(r"(?:^|_)alu(?:_|\d|$)", name):
+        return True
+    ops = sum(bool(re.search(rf"\b{w}\b", beh)) for w in ("add", "addition", "sub", "subtract", "and", "or", "xor"))
+    return ops >= 3
 
 
 def _max_val(width: int) -> int:
@@ -680,24 +695,27 @@ def _gen_sequence(spec: RTLDesignSpec, mod: str, is_seq: bool, clk: Optional[str
                 f"            if (!req.randomize()) `uvm_error(get_type_name(), \"Randomize failed in directed\")\n"
                 f"            req.{op_port.name} = {mod}_seq_item::op_e'(op_val);\n"
                 f"            finish_item(req);\n"
-                f"        endtask\n"
-                f"        task send_generic2(input logic [{op_port.width-1}:0] op_val, input logic [{data_ports[0].width-1}:0] d0, input logic [{data_ports[1].width-1}:0] d1);\n"
-                f"            {mod}_seq_item req;\n"
-                f"            req = {mod}_seq_item::type_id::create(\"req\");\n"
-                f"            start_item(req);\n"
-                f"            req.{op_port.name} = {mod}_seq_item::op_e'(op_val);\n"
-                f"            req.{data_ports[0].name} = d0;\n"
-                f"            req.{data_ports[1].name} = d1;\n"
+                f"        endtask"
             )
-            if len(rand_ports) > 3:
-                for p in rand_ports[2:]:
-                    if p.name == op_port.name:
-                        continue
-                    send_task += f"            // leave {p.name} randomized\n"
-            send_task += (
-                "            finish_item(req);\n"
-                "        endtask"
-            )
+            if len(data_ports) >= 2:      # self-review: data_ports[1] was indexed unconditionally (IndexError on mux-like specs)
+                send_task += (
+                    f"\n        task send_generic2(input logic [{op_port.width-1}:0] op_val, input logic [{data_ports[0].width-1}:0] d0, input logic [{data_ports[1].width-1}:0] d1);\n"
+                    f"            {mod}_seq_item req;\n"
+                    f"            req = {mod}_seq_item::type_id::create(\"req\");\n"
+                    f"            start_item(req);\n"
+                    f"            req.{op_port.name} = {mod}_seq_item::op_e'(op_val);\n"
+                    f"            req.{data_ports[0].name} = d0;\n"
+                    f"            req.{data_ports[1].name} = d1;\n"
+                )
+                if len(rand_ports) > 3:
+                    for p in rand_ports[2:]:
+                        if p.name == op_port.name:
+                            continue
+                        send_task += f"            // leave {p.name} randomized\n"
+                send_task += (
+                    "            finish_item(req);\n"
+                    "        endtask"
+                )
             # If directed_lines references send_generic with 3 args, adapt:
             # We'll keep as is; earlier directed_lines for generic single data used 3 args but helper expects 1.
             # Regenerate directed_lines to match helper signatures
@@ -814,10 +832,12 @@ def _gen_sequence(spec: RTLDesignSpec, mod: str, is_seq: bool, clk: Optional[str
     lines.append("        super.new(name);")
     lines.append("    endfunction")
     lines.append("")
+    # The helper tasks are class members, declared BEFORE body(): a task declared inside a task is illegal SystemVerilog
+    # (self-review finding: no generated bundle could compile; Icarus and Yosys both reject it).
+    lines.append(send_task.replace("\n        ", "\n    ").replace("        task", "    task", 1).replace("        //", "    //", 1))
+    lines.append("")
     lines.append("    virtual task body();")
     lines.append("        `uvm_info(get_type_name(), \"Starting directed corner-case sequence\", UVM_LOW)")
-    lines.append(send_task)
-    lines.append("")
     # If directed_body is empty, just info
     if directed_body.strip():
         lines.append(directed_body)
@@ -1005,7 +1025,7 @@ class {mod}_monitor extends uvm_monitor;
     endfunction
 
     virtual task run_phase(uvm_phase phase);
-        wait (vif.{eff_rst} == 1'b1);
+        wait (vif.{eff_rst} == 1'b{1 if _reset_active_low(eff_rst) else 0});   // reset released
         forever begin
             {mod}_seq_item trans;
             trans = {mod}_seq_item::type_id::create("trans");
@@ -1776,9 +1796,9 @@ def _gen_tb_top(spec: RTLDesignSpec, mod: str, is_seq: bool,
     conn_lines: List[str] = []
     for p in spec.ports:
         if is_seq and p.name == eff_clk:
-            conn_lines.append(f"        .{p.name}(clk)")
+            conn_lines.append(f"        .{p.name}({eff_clk})")
         elif is_seq and p.name == eff_rst:
-            conn_lines.append(f"        .{p.name}(rst_n)")
+            conn_lines.append(f"        .{p.name}({eff_rst})")
         else:
             # Use vif.<name> if interface has that signal, else DUT port directly?
             # For sequential interface, vif has the signal as internal logic, so use vif.<name>
@@ -1792,25 +1812,26 @@ def _gen_tb_top(spec: RTLDesignSpec, mod: str, is_seq: bool,
         clk_rst_block = f"""    //----------------------------------------------------------------------
     // Clock and Reset Generation
     //----------------------------------------------------------------------
-    logic clk   = 1'b0;
-    logic rst_n = 1'b0;
+    // The design's own clock and reset names, and the reset's real polarity (self-review finding: an active-high
+    // `rst` was wired to a non-existent .rst_n port and held at the wrong level).
+    logic {eff_clk} = 1'b0;
+    logic {eff_rst} = 1'b{0 if _reset_active_low(eff_rst) else 1};
 
     // 10ns period clock (100 MHz)
     initial begin
-        forever #5 clk = ~clk;
+        forever #5 {eff_clk} = ~{eff_clk};
     end
 
-    // Assert reset for 20ns
+    // Assert reset for 20ns, then release it
     initial begin
-        rst_n = 1'b0;
         #20;
-        rst_n = 1'b1;
+        {eff_rst} = 1'b{1 if _reset_active_low(eff_rst) else 0};
     end
 
     //----------------------------------------------------------------------
     // Interface Instantiation
     //----------------------------------------------------------------------
-    {mod}_if {mod}_vif (.clk(clk), .rst_n(rst_n));
+    {mod}_if {mod}_vif (.{eff_clk}({eff_clk}), .{eff_rst}({eff_rst}));
 
     //----------------------------------------------------------------------
     // DUT Instantiation

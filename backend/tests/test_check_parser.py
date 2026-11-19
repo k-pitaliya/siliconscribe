@@ -90,7 +90,9 @@ def test_chk_lines_can_never_change_the_verdict():
     """A testbench (or a forged line) cannot turn a failing run into a pass via CHK lines."""
     log = _chk("PASS") * 100 + "Passed: 3\nFailed: 2\n"
     assert _decide_verdict(log)[0] == "FAIL"
-    assert _decide_verdict(_chk("FAIL") + "Passed: 4\nFailed: 0\n")[0] == "PASS"  # rows are display data
+    # A CHK|FAIL row can only make the verdict STRICTER (self-review finding: it used to be ignored next to Failed: 0).
+    assert _decide_verdict(_chk("FAIL") + "Passed: 4\nFailed: 0\n")[0] == "FAIL"
+    assert _decide_verdict(_chk("PASS") * 50 + "Passed: 0\nFailed: 0\n")[0] == "ERROR"   # CHK|PASS rows never make a PASS
 
 
 def test_excerpt_drops_passing_check_lines_but_keeps_failures():
@@ -196,3 +198,9 @@ def test_type_names_written_by_different_models_collapse_to_one_chip(raw, expect
     r = parse_checks(log, 1, 0)
     assert r["checks"][0].category == expected
     assert [g.category for g in r["check_groups"]] == [expected]
+
+
+def test_a_non_ascii_digit_in_a_check_line_does_not_crash_the_run():
+    """Verification finding: CHK|PASS|directed|n|²|1|1| made simulate() raise ValueError."""
+    out = parse_checks("CHK|PASS|directed|n|²|1|1|\nCHK|PASS|directed|m|" + "9" * 5000 + "|1|1|\n", 2, 0)
+    assert out["checks_total_logged"] == 2 and all(c.t is None for c in out["checks"])
