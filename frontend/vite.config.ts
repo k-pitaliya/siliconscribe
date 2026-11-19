@@ -3,6 +3,11 @@ import react from '@vitejs/plugin-react'
 
 export default defineConfig({
   plugins: [react()],
+  resolve: {
+    // netlistsvg imports elkjs' Node entry, which has an optional require('webworker-threads') the browser
+    // bundler cannot resolve; the self-contained browser build of the same version has none.
+    alias: [{ find: /^elkjs$/, replacement: 'elkjs/lib/elk.bundled.js' }],
+  },
   build: {
     rollupOptions: {
       output: {

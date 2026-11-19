@@ -173,6 +173,15 @@ export interface SynthesisInfo {
   warnings?: string[]
   area_estimate?: number | string
   error?: string
+  /** Gate-level Yosys JSON netlist of the top module (ports + cells only), for the schematic. */
+  json_netlist?: YosysNetlist
+  /** Word-level (RTL cells) Yosys JSON netlist of the top module, for the schematic. */
+  rtl_netlist?: YosysNetlist
+}
+
+/** The reduced Yosys JSON the backend sends for schematics: one top module, its ports and cells. */
+export interface YosysNetlist {
+  modules: Record<string, { ports: Record<string, unknown>; cells: Record<string, { type: string }> }>
 }
 
 /** A design signal with bits that never switched in one or both directions. */

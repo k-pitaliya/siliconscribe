@@ -142,7 +142,7 @@ export default function ResultsPanel({
         )}
         {tab === 'schematic' && (
           <div className="tab-panel" role="tabpanel" id="panel-schematic" aria-labelledby="tab-schematic">
-            <SchematicView schematic={schematic} />
+            <SchematicView schematic={schematic} synthesis={synthesis} />
           </div>
         )}
       </div>

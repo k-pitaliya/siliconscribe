@@ -10,6 +10,7 @@ with graceful fallback to the port-level diagram when yosys is unavailable.
 
 import json
 import re
+from typing import Optional
 import shutil
 import subprocess
 from pathlib import Path
@@ -73,6 +74,32 @@ def _yosys_warnings(output: str, limit: int = 5) -> list[str]:
     return seen[:limit]
 
 
+def netlist_for_view(netlist: dict, module_name: str) -> Optional[dict]:
+    """The top module of a Yosys JSON netlist, reduced to what a schematic needs: ports and cells.
+
+    Attributes, source locations and net names are dropped (they carry the server's temporary paths and most of
+    the size), and cells get short neutral ids. The result is still valid Yosys JSON for a schematic renderer.
+    """
+    mod = (netlist or {}).get("modules", {}).get(module_name)
+    if not isinstance(mod, dict):
+        return None
+    ports = {
+        name: {"direction": p.get("direction"), "bits": p.get("bits", [])}
+        for name, p in (mod.get("ports") or {}).items()
+        if isinstance(p, dict)
+    }
+    cells = {}
+    for k, c in enumerate((mod.get("cells") or {}).values()):
+        if not isinstance(c, dict):
+            continue
+        cells[f"c{k}"] = {
+            "type": c.get("type"),
+            "port_directions": c.get("port_directions", {}),
+            "connections": c.get("connections", {}),
+        }
+    return {"modules": {module_name: {"attributes": {"top": 1}, "ports": ports, "cells": cells}}}
+
+
 def synthesize_with_yosys(rtl_code: str, module_name: str, work_dir: Path) -> dict:
     """
     Try to synthesize ``rtl_code`` with Yosys.
@@ -127,10 +154,12 @@ def synthesize_with_yosys(rtl_code: str, module_name: str, work_dir: Path) -> di
 
     # Build the yosys script.  Keep it single-string for ``yosys -p``.
     # read_verilog -sv -> SystemVerilog, hierarchy check, proc/opt, synth, stat, write_json
+    rtl_json_out = work_dir / f"{module_name}_rtl.json"
     yosys_script = (
         f"read_verilog -sv {rtl_file}; "
         f"hierarchy -check -top {module_name}; "
-        f"proc; opt; synth -top {module_name}; "
+        # Snapshot after proc/opt: word-level RTL cells ($add, $mux, $dff, ...) for the RTL schematic view.
+        f"proc; opt; write_json {rtl_json_out}; synth -top {module_name}; "
         f"check; stat; write_json {json_out}"
     )
 
@@ -190,8 +219,13 @@ def synthesize_with_yosys(rtl_code: str, module_name: str, work_dir: Path) -> di
                 "NOT a physical area in um^2."
             )
         if json_netlist is not None:
-            ret["json_netlist"] = json_netlist
-            summary = summarize_netlist(json_netlist, module_name)
+            summary = summarize_netlist(json_netlist, module_name)      # from the full netlist, before cleaning
+            ret["json_netlist"] = netlist_for_view(json_netlist, module_name)
+            if rtl_json_out.exists():
+                try:
+                    ret["rtl_netlist"] = netlist_for_view(json.loads(rtl_json_out.read_text()), module_name)
+                except Exception:
+                    pass
             if summary:
                 # The netlist is authoritative; the text regex above is only a fallback.
                 ret.update(summary)
