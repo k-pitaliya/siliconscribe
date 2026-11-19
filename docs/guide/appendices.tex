@@ -23,15 +23,17 @@
   \item[Degraded mode] Running on built-in designs because the AI provider is unavailable, clearly labelled.
   \item[Design id] A random UUID naming one run's workspace folder and saved project.
   \item[Directed test] A hand-chosen test case, usually a corner case.
+  \item[Disputed PASS] A PASS from the simulator that the run's own evidence contradicts (the original or a fresh testbench fails the final design); shown as ``PASS, disputed'', never as a plain PASS.
   \item[DUT] Device under test: the design being verified.
   \item[EDA] Electronic design automation: software for designing chips.
+  \item[Endpoint] One address of a web API, such as \code{POST /api/design/stream}.
   \item[Equivalence checking] A formal proof that two versions of a design (here the RTL and its mapped netlist) give the same outputs for every input.
   \item[Equivalent mutant] A changed design that behaves exactly like the original, so no testbench can catch it.
-  \item[Endpoint] One address of a web API, such as \code{POST /api/design/stream}.
+  \item[Error boundary] A React component that catches a drawing error in one panel and shows it there, so the rest of the page keeps working.
   \item[Event (SSE)] One streamed JSON message describing a pipeline stage.
-  \item[Formal verification] Proving a property for every possible input by reasoning, instead of trying examples in simulation.
   \item[Flatten] Merge all sub-modules into one, so area and timing cover the whole design.
   \item[Flip-flop] A one-bit memory element that updates on a clock edge.
+  \item[Formal verification] Proving a property for every possible input by reasoning, instead of trying examples in simulation.
   \item[FPGA] A chip that can be reconfigured to implement any digital circuit.
   \item[Frontend] The browser half of the app (React, TypeScript).
   \item[Gate-level netlist] A netlist in which every cell is a single small gate or a one-bit flip-flop.
@@ -39,26 +41,28 @@
   \item[Hallucination] An AI stating something false with confidence.
   \item[HDL] Hardware description language, such as Verilog.
   \item[Icarus Verilog] The free simulator SiliconScribe uses (\code{iverilog} + \code{vvp}).
+  \item[Inconclusive (mutant)] A mutant whose run crashed, or timed out with a testbench that is slow anyway; it is neither caught nor survived and is not counted.
   \item[Induction (temporal)] Proving two sequential designs match by showing they match at the start, and that matching at one clock edge forces matching at the next.
   \item[Instantiate] Place a copy of a module inside another module and connect its ports.
   \item[JSON] A text format of named fields used for data exchange.
   \item[Latch] A memory element that is transparent while its enable is active; usually an accident in combinational code.
   \item[Lint] Static checks for suspicious code, without running it.
   \item[LLM] Large language model: an AI that writes text, including code.
-  \item[Module] One hardware block in Verilog, from \code{module} to \code{endmodule}.
-  \item[Mutant / mutation testing] A deliberately broken copy of a design, used to check that tests catch bugs.
+  \item[Macro (Verilog)] A text substitution defined with \code{`define} and used as \code{`NAME}; expanded by the preprocessor before compiling.
   \item[Miter] A circuit that feeds the same inputs to two designs and raises a flag if any output differs; used for equivalence proofs.
   \item[Model menu] The sidebar control that chooses the AI model per run, from OpenCode, Cloudflare or NVIDIA NIM.
+  \item[Module] One hardware block in Verilog, from \code{module} to \code{endmodule}.
+  \item[Mutant / mutation testing] A deliberately broken copy of a design, used to check that tests catch bugs.
   \item[Netlist] A list of cells (gates and flip-flops) and the wires connecting them, produced by synthesis.
   \item[netlistsvg] An open-source (MIT) program that lays out a Yosys netlist as an SVG drawing; the Schematic tab uses it in the browser.
-  \item[Not proven] The equivalence result when the proof could not decide (for example re-encoded FSM state); neither a pass nor a failure.
   \item[No-op guard] Stops the loop when a fix changes nothing.
   \item[Non-blocking assignment] \code{<=} in Verilog: all registers update together at the clock edge.
+  \item[Not proven] The equivalence result when the proof could not decide (for example re-encoded FSM state); neither a pass nor a failure.
   \item[Offline provider] Built-in designs used without an AI service.
-  \item[OpenCode app] An installed coding-assistant app whose models SiliconScribe can use through its command line.
-  \item[OpenSTA] The open-source static timing analysis tool SiliconScribe uses.
   \item[Opcode] A small input that selects an operation (for example in an ALU).
   \item[OpenAI-compatible] An API that accepts the same request format as OpenAI's.
+  \item[OpenCode app] An installed coding-assistant app whose models SiliconScribe can use through its command line.
+  \item[OpenSTA] The open-source static timing analysis tool SiliconScribe uses.
   \item[Oracle] Whatever supplies the expected values in a test.
   \item[Oscillation guard] Stops the loop when a fix returns to a version tried before.
   \item[Parameter] A Verilog constant that can be changed per use, such as \code{WIDTH}.
@@ -66,15 +70,20 @@
   \item[Port] A pin of a module: input, output or inout, with a width.
   \item[PPA] Power, performance and area: the three key physical metrics of a chip.
   \item[Pre-layout] Before the cells are placed and wired on a chip; such timing has no wire delay.
+  \item[Preprocessor] The step before compiling that expands macros and directives; \code{iverilog -E} prints its output, which the sandbox checks again.
+  \item[Process group] A program and all the helper programs it started; stopping the group stops them all (a compile timeout used to leave \code{ivl} running).
   \item[Prompt] The text instruction given to an AI.
   \item[Pydantic] Python library that validates data shapes.
   \item[Rate limit] A cap on requests per user per time window (here 20 per minute).
   \item[Reasoning tokens] Hidden ``thinking'' output of some models, which uses the answer budget.
   \item[Register] A group of flip-flops holding a value.
+  \item[Regression test] A test written for a defect that was found and fixed, so the defect cannot come back unnoticed.
   \item[Reset] A signal that forces registers to a known value; active-low resets act at 0.
+  \item[Role-based review] A review in which each reviewer takes one engineering role (for example security or verification) and asks that role's questions.
   \item[RTL] Register-transfer level: hardware described as registers and the logic between them.
-  \item[SAT solver] A program that decides whether any set of 0/1 inputs makes a logic formula true; used to prove two circuits equal.
+  \item[Sabotage check] Undoing a fix on purpose and confirming that a test fails; it proves the test can catch the defect.
   \item[Sandbox policy] Rules that reject Verilog constructs able to access files or run programs.
+  \item[SAT solver] A program that decides whether any set of 0/1 inputs makes a logic formula true; used to prove two circuits equal.
   \item[Schematic] A drawing of a circuit: cells as symbols, wires as lines.
   \item[Second opinion] A fresh testbench written from the same specification and run on the final design after a repair changed the first one.
   \item[Self-checking testbench] A testbench that compares results itself and prints a verdict.
@@ -216,31 +225,32 @@ GET /api/models
  & \code{getModels} & Fetch the Model menu (optionally with models not marked free, or re-read). \\
  & \code{parseSpec} & Ask for the specification only (\code{/api/spec/parse}). \\
  & \code{runDesign} & One-shot pipeline call (\code{/api/design/run}). \\
- & \code{streamDesign} & Streamed pipeline: POST, read the body stream, split SSE frames, parse each JSON event. \\
- & \code{reSimulate} & Simulate edited code once (\code{/api/simulation/run}). \\
+ & \code{streamDesign} & Streamed pipeline: POST, read the body stream, normalise CRLF, split SSE frames, parse each JSON event; frames received after Stop are not applied, and the stream is always closed. \\
+ & \code{reSimulate} & Simulate edited code once (\code{/api/simulation/run}); takes an abort signal so Stop works. \\
  & \code{listProjects}, \code{getProject}, \code{deleteProject} & Projects menu operations. \\
  & \code{exportUVM} & Request the UVM bundle. \\
 \file{App.tsx} & \code{loadModels}, \code{chooseModel} & Read the Model menu, keep or restore the chosen model, remember a new choice. \\
  & \code{handleGenerate} & Show the specification review first if it is switched on, otherwise start the run. \\
- & \code{startRun} & Run the streamed pipeline and apply each event to the page. \\
- & \code{handleCancel} & Abort the running stream. \\
- & \code{handleReRun} & Re-simulate edited code. \\
- & \code{handleUVMExport} & Download the UVM zip. \\
- & \code{handleLoadProject}, \code{handleDeleteProject} & Load or delete a saved project. \\
+ & \code{startRun} & Clear every previous result, run the streamed pipeline and apply each event to the page. \\
+ & \code{handleCancel} & Abort the running stream or re-run. \\
+ & \code{handleReRun} & Re-simulate edited code and say what was not recomputed. \\
+ & \code{handleUVMExport} & Download the UVM zip (one export at a time). \\
+ & \code{handleLoadProject}, \code{handleDeleteProject} & Load (only the latest load is applied) or delete a saved project. \\
  & \code{refreshProjects}, \code{pushMsg} & Reload the project list; add a timeline message. \\
 \file{PromptPanel.tsx} & \code{submit}, \code{clampFreq}, \code{handleTextareaKey} & Validate and send the prompt; keep the target clock in 1--10000; Ctrl/Cmd+Enter. \\
 \file{ModelPicker.tsx} & \code{familyOf}, \code{switchView}, \code{onKeyDown} & Which tab a model belongs to; switch between OpenCode, Cloudflare and NVIDIA NIM (also with arrow keys). \\
 \file{TestbenchModelSelect.tsx} & (component) & ``Testbench written by'' drop-down. \\
 \file{SpecReview.tsx} & \code{parseConstraints}, \code{confirm} & Turn the constraints box into a list; send the edited specification. \\
 \file{SpecSummary.tsx} & (component) & Read-only ``Specification the design was built from''. \\
-\file{TestCasesView.tsx} & \code{binString}, \code{BitsView} & Show expected and actual values bit by bit with differing bits highlighted. \\
+\file{TestCasesView.tsx} & \code{binString}, \code{BitsView}, \code{onRowKey} & Show expected and actual values bit by bit with differing bits highlighted; one tab stop with arrow-key navigation through every check. \\
 \file{theme.ts} & \code{useTheme}, \code{applyTheme} & Cycle system, light and dark; remember an explicit choice. \\
 \file{CodeEditor.tsx} & tab switch, copy & RTL/testbench tabs with Verilog highlighting and copy-to-clipboard. \\
-\file{AgentChat.tsx} & \code{stageIcon}, \code{formatElapsed}, \code{RunTimer} & Pick an icon for each stage and status; the ``Working\ldots'' timer. \\
-\file{ResultsPanel.tsx} & \code{ResultsView}, \code{Metric}, \code{describeUntoggled} & Verdict and metrics, Written by, second opinion, warnings, strength, synthesis, timing, toggle coverage, test types, lint, repair timeline, specification. \\
+\file{AgentChat.tsx} & \code{stageIcon}, \code{formatElapsed}, \code{RunTimer}, \code{InlineCode} & Pick an icon for each stage and status; the ``Working\ldots'' timer; \texttt{`code`} from the model shown as code in the folded diagnosis. \\
+\file{ErrorBoundary.tsx} & (component) & Show a drawing error inside the results panel with ``Try again'', instead of a blank page. \\
+\file{ResultsPanel.tsx} & \code{ResultsView}, \code{Metric}, \code{describeUntoggled} & Demo tag, verdict (``PASS, disputed'' when contradicted) and metrics, warnings, second opinion, Design written by, strength, synthesis, timing, toggle coverage, test types, lint, repair timeline, specification. \\
  & \code{EquivalenceLine} & The proof line: proven (green), not proven (grey), or a red alert that the netlist differs and the timing and area are invalid. \\
  & \code{CriticalPath} & The fold-out ``Critical path, pin by pin'' table: pin, cell, edge, delay, arrival. \\
-\file{WaveformViewer.tsx}, \file{waveformUtils.ts} & \code{zoomAt}, \code{resetView}, \code{groupSignals}, \code{valueAt}, \code{formatValue} & Zoom and fit the SVG waveform; group signals by role; value at the cursor in hex, binary or decimal. \\
+\file{WaveformViewer.tsx}, \file{waveformUtils.ts} & \code{zoomAt}, \code{resetView}, \code{groupSignals}, \code{valueAt}, \code{formatValue} & Zoom and fit the SVG waveform; group signals by role; value at the cursor in hex, binary or decimal (\code{formatValue} never fails, whatever the value text). \\
 \file{SchematicView.tsx} & \code{BlockDiagram}, \code{cellCount}, \code{SchematicView} & Block diagram of the ports (e.g.\ \code{count[3:0]}); RTL cells and Gate level views of the run's netlists with zoom, fit to panel and Download SVG; no drawing above 400 cells (\code{MAX_DRAWN_CELLS}). \\
 \file{netlistRender.ts} & \code{renderNetlist} & Lay out a Yosys JSON netlist as SVG text with netlistsvg; loaded on demand; an empty result is reported as a failure. \\
 \bottomrule

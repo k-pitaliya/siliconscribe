@@ -17,8 +17,8 @@ they are kept because they are still true records of what happened.
 \toprule
 \textbf{Check} & \textbf{Command} & \textbf{Result} & \textbf{Status} \\
 \midrule
-Backend suite & \code{python3 -m pytest} & 459 passed (32 files) & \textcolor{passgreen}{\textbf{PASS}} \\
-Frontend unit tests & \code{npx vitest run} & 226 passed (15 files) & \textcolor{passgreen}{\textbf{PASS}} \\
+Backend suite & \code{python3 -m pytest} & 589 passed (35 files) & \textcolor{passgreen}{\textbf{PASS}} \\
+Frontend unit tests & \code{npx vitest run} & 259 passed (18 files) & \textcolor{passgreen}{\textbf{PASS}} \\
 TypeScript and build & \code{npx tsc -b}, \code{npm run build} & 0 errors; build succeeds & \textcolor{passgreen}{\textbf{PASS}} \\
 Mutation sweep & \code{python3 tools/mutation_sweep.py} & 27 of 27 injected bugs caught & \textcolor{passgreen}{\textbf{PASS}} \\
 Gate-level mapping & \code{python3 tools/verify_mapping.py} & 19 of 19 designs give the same results in gate-level simulation & \textcolor{passgreen}{\textbf{PASS}} \\
@@ -292,7 +292,9 @@ The same behaviour was seen on a live FIFO run, also by
 \code{opencode/hy4-flash-free}. The run passed 4134 of
 4134 checks after one repair that changed the testbench; the second-opinion testbench
 passed all 3798 of its checks, while the original testbench still reported 482 failed
-checks on the final design, shown as a warning (Figure~\ref{fig:second}). The same
+checks on the final design. Since the fourth review round such a run is shown as
+``PASS, disputed'' in warning colour rather than as a plain PASS (Figure~\ref{fig:second},
+the recorded run replayed in the current interface). The same
 results panel also shows the strength (11 of 12 injected bugs caught), the timing and
 area estimate and the measured toggle coverage (100\%, 31 of 31 bits).
 
@@ -306,7 +308,7 @@ area estimate and the measured toggle coverage (100\%, 31 of 31 bits).
 \begin{figure}[htbp]
 \centering
 \includegraphics[width=0.85\textwidth]{s08_second_opinion.png}
-\caption[Second opinion and testbench-change warning on a live run]{Top of the results panel of a live FIFO run by \texttt{opencode/hy4-flash-free} (close-up): PASS 4134/4134 after one repair, the model that wrote it, the second opinion that agrees (3798/3798), and the warning that the original testbench still fails on the final design (482 failed).}
+\caption[Disputed PASS on a live run]{Top of the results panel of a live FIFO run by \texttt{opencode/hy4-flash-free} (close-up, the recorded run replayed in the current interface): the simulator's PASS 4134/4134 after one repair is shown as ``PASS, disputed'' because the original testbench still fails the final design (482 failed); the fresh second-opinion testbench agrees (3798/3798).}
 \label{fig:second}
 \end{figure}
 
@@ -540,7 +542,7 @@ Silently shortened test labels & a test type named \code{undefined_opcode} shown
 \end{tabularx}
 \end{table}
 
-The same review added a \emph{Test cases} tab to the results panel. It lists every executed check with its type (for example reset, directed, hold, exhaustive), its time, the expected and actual values and the result, with per-type pass ratios, filters, a bit-level difference for failures and a jump to that moment in the waveform. These rows are display data parsed from one \code{CHK|...} line per comparison; the verdict is still decided only by the validated summary, and a regression test proves the rows cannot change it. The waveform viewer was redesigned in the same round (signals grouped by role, value at the cursor, radix selection, two measurement cursors, flags at failed checks, fit-to-width zoom and a full-window mode).
+The same review added a \emph{Test cases} tab to the results panel. It lists every executed check with its type (for example reset, directed, hold, exhaustive), its time, the expected and actual values and the result, with per-type pass ratios, filters, a bit-level difference for failures and a jump to that moment in the waveform. These rows are parsed from one \code{CHK|...} line per comparison; the verdict is decided by the validated summary, and since the fourth review round a \code{CHK|FAIL} row can only make it stricter (a FAIL), never turn it into a PASS. The waveform viewer was redesigned in the same round (signals grouped by role, value at the cursor, radix selection, two measurement cursors, flags at failed checks, fit-to-width zoom and a full-window mode).
 
 \subsection{Third review round: timing stage and model access}
 \label{sec:review3}
@@ -562,6 +564,34 @@ Combinational loop & a meaningless maximum frequency & refused with a reason \\
 Testbench overrides a parameter & a different circuit timed from the one simulated & numeric overrides applied before mapping \\
 Equivalence check with \code{x} allowed on inputs & SAT ``disproved'' the correct ALU c7 with an input value containing \code{x} & inputs restricted to defined 0/1 values \\
 Design built from an initialised array (c5) & equivalence check could not run (SAT cannot model memory initialisation) & RTL passed through Yosys \code{memory} first, as synthesis does \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{Fourth review round: nine engineering roles}
+\label{sec:review4}
+Before the viva the whole tool (not the documents) was reviewed once more by nine reviewers, each taking one engineering role: ASIC design, design verification, backend systems, security, LLM integration, frontend, interface design, test engineering and release engineering. About 110 findings were reported; each was reproduced before it was fixed, every fix has a regression test, and each fix was checked by deliberately undoing it and confirming that a test fails. A tenth, independent reviewer then received only the findings and the change set, tried to break the fixes, and found a macro-argument sandbox bypass, a regular-expression slowdown introduced by the fixes and three regressions; those were fixed in the same way. All 123 saved runs and the 14 evaluation designs give the same verdicts with the old and the new code. Table~\ref{tab:review4} lists the findings that matter most.
+
+\begin{table}[H]
+\centering
+\caption{Most important findings of the fourth review round (each reproduced, fixed and covered by a regression test).}
+\label{tab:review4}
+\footnotesize
+\begin{tabularx}{\textwidth}{@{}p{4.2cm}p{4.4cm}X@{}}
+\toprule
+\textbf{Probe} & \textbf{Before} & \textbf{After} \\
+\midrule
+Testbench with a comment or a macro around \code{$dumpfile} / \code{$fopen} & wrote a file outside the workspace; run reported PASS & rules also applied after comment removal and to the macro-expanded source \\
+Repair keeps the bug and edits the expected values & plain PASS, warnings only in text & shown as ``PASS, disputed''; the oracle may be rewritten only after a compile failure \\
+Phase counters, \code{CHK|FAIL} rows, design forging the summary through \code{final} or \texttt{\%c} & PASS & FAIL, or refused before compiling \\
+Port wider than 64 bits & upper bits never compared & check task widened to 256 bits; wider ports carry a warning \\
+Slow one-check testbench in mutation testing & every timed-out mutant counted as caught (3 of 3) & timeouts of a slow testbench are inconclusive \\
+64-bit register; slow path on a second clock & refused as ``no logic''; reported as meeting 500 MHz & timed correctly; misses timing \\
+Flip-flop on the other clock edge; register with a declaration value & equivalence ``proven'' & ``not proven'' with the reason \\
+Two runs of the same design at once & wrong verdict in 25 of 25 tries & one run per design folder at a time \\
+Compile timeout & compiler child left at 100\% CPU & whole process group stopped; compile under CPU and memory limits \\
+Quota error during a repair & whole run lost & run kept, with the reason \\
+Partly unknown value shown in decimal & whole page blank & formatter never fails; error boundary around the results \\
 \bottomrule
 \end{tabularx}
 \end{table}

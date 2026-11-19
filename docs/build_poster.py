@@ -393,7 +393,7 @@ rows = [("Metric", "Achieved", "Status"),
         ("Mutation sweep (built-in)", "27 / 27", "PASS"),
         ("Gate-level simulation", "19 / 19 match", "PASS"),
         ("Formal netlist = RTL", "16 / 18 proven", "PROVEN*"),
-        ("Automated tests", "459 + 226", "PASS")]
+        ("Automated tests", "589 + 259", "PASS")]
 cws = [rw * 0.46, rw * 0.30, rw * 0.24]; trh = 0.8; ty = iy + 0.72
 for r, row in enumerate(rows):
     xx = rx
@@ -410,7 +410,7 @@ text(rx, ty + len(rows) * trh + 0.05, rw, 0.5, ["* the 2 FSMs are not proven (st
 gy = iy + 8.6; gh = TOP + RH - 0.3 - gy
 w1 = iw * 0.55; w2 = iw - w1 - 0.35
 framed(f"{SHOTS}/s08_second_opinion.png", ix, gy, w1, gh * 0.47,
-       "Live FIFO run: PASS after one repair, second opinion agrees, warning kept")
+       "Live FIFO run: the original testbench still fails, so the PASS is shown as disputed")
 framed(f"{ASSETS}/chart_live_evaluation.png", ix, gy + gh * 0.47 + 0.25, w1, gh * 0.53 - 0.25,
        "Testbench strength per design in the live evaluation", crop=(0, 0.215, 1, 1))
 framed(f"{SHOTS}/schematic_counter_gate_full.png", ix + w1 + 0.35, gy, w2, gh,

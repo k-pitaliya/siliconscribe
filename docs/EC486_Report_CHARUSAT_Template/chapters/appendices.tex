@@ -32,7 +32,7 @@ calls.
 \begin{lstlisting}[language=bash,basicstyle=\ttfamily\scriptsize]
 cd backend
 export PATH="$HOME/.local/bin:$PATH"
-OFFLINE_MODE=1 python3 -m pytest            # 459 passed
+OFFLINE_MODE=1 python3 -m pytest            # 589 passed
 python3 tools/mutation_sweep.py             # 27/27 injected bugs caught
 python3 tools/verify_mapping.py             # 19/19 designs, same results at gate level
 python3 evaluation/independent/run.py       # 14/14 evaluated designs correct
@@ -40,7 +40,7 @@ python3 evaluation/independent/strength.py  # strength of the reference testbenc
 python3 tools/preflight.py --live           # one small model call; fallback ladder
 
 cd ../frontend
-npx tsc -b && npx vitest run && npm run build   # 226 passed
+npx tsc -b && npx vitest run && npm run build   # 259 passed
 \end{lstlisting}
 
 The live evaluation of Section~\ref{sec:eval} is re-run with

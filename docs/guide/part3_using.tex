@@ -30,8 +30,10 @@ curl -fsSL -o sky130hd_tt.lib.gz https://raw.githubusercontent.com/parallaxsw/Op
 gunzip -kf sky130hd_tt.lib.gz
 
 cd ../../frontend
-npm install
+npm ci
 \end{lstlisting}
+
+\file{backend/.env.example} is safe to copy to \file{backend/.env}: every line in it is commented out. Uncomment only what you use, and remember that values in \file{.env} \emph{override} variables given on the command line (the backend loads it with \code{override=True}); an active example line once silently replaced the model chosen on the command line.
 
 \section{Starting the app}
 
@@ -50,7 +52,7 @@ cd ai-eda-playground/frontend && npm run dev -- --host 127.0.0.1 --port 5173
 
 Open \url{http://127.0.0.1:5173}. The badge at the top left must say \textbf{Live} followed by a model name (for example \texttt{Live \textbullet\ opencode/deepseek-v4.1-flash-free}); it follows the model chosen in the Model menu. If it says \emph{Offline demo} or \emph{Demo fallback}, the live model is not in use. During development Vite forwards \code{/api} calls to port 8000.
 
-From the project folder, \code{./run.sh} still starts both halves in one terminal (backend on port 8000, frontend on 5173; Ctrl-C stops both), using whatever is in \file{backend/.env}.
+From the project folder, \code{./run.sh} still starts both halves in one terminal (backend on 127.0.0.1:8000, frontend on 127.0.0.1:5173; Ctrl-C stops both), adds \file{~/.local/bin} to \code{PATH}, and uses whatever is in \file{backend/.env}. Both halves listen on 127.0.0.1 only: the backend has no login, so it must not be reachable from the room's network. If port 5173 is already taken (for example by a forgotten earlier server), the frontend now stops with an error instead of quietly starting on 5174 while 5173 keeps showing an old build.
 
 \section{Offline mode and live mode}
 
@@ -96,7 +98,7 @@ Never paste a key into the web page, a prompt, a chat, a screenshot, a document 
 
 \section{The screen}
 
-The page has three parts. The \textbf{top bar} has the badge on the left (``Live'' with the model chosen in the menu, ``Offline demo'' or ``Demo fallback''), and on the right the \textbf{Projects} menu, \textbf{Export UVM}, \textbf{Re-run} (or \textbf{Stop} during a run) and the theme button. The \textbf{sidebar} on the left is where you describe the block, watch the run and choose settings. The \textbf{main pane} has five tabs: \textbf{Design}, \textbf{Results}, \textbf{Test cases}, \textbf{Waveform} and \textbf{Schematic}.
+The page has three parts. The \textbf{top bar} has the badge on the left (``Live'' with the model chosen in the menu, ``Offline demo'', ``Demo fallback'', or a red ``Server not reachable'' with a Retry button when the backend does not answer), and on the right the \textbf{Projects} menu, \textbf{Export UVM}, \textbf{Re-run} (or \textbf{Stop} during a run) and the theme button. The \textbf{sidebar} on the left is where you describe the block, watch the run and choose settings. The \textbf{main pane} has five tabs: \textbf{Design}, \textbf{Results}, \textbf{Test cases}, \textbf{Waveform} and \textbf{Schematic}.
 
 \begin{figure}[H]
 \centering
@@ -116,7 +118,7 @@ The page has three parts. The \textbf{top bar} has the badge on the left (``Live
 \vspace{0pt}
 From top to bottom:
 \begin{description}
-  \item[Describe the block] Up to 2000 characters, with a counter. Be specific about widths, reset style and behaviour. \textbf{Generate RTL} (or Ctrl/Cmd+Enter) starts the run.
+  \item[Describe the block] Up to 2000 characters, with a counter. Be specific about widths, reset style and behaviour. \textbf{Generate RTL} (or Ctrl/Cmd+Enter) starts the run; next to it the app reminds you that a live run takes about 3 to 13 minutes.
   \item[Run] During and after a run, the run timeline appears right under the prompt (Section~\ref{sec:timeline}).
   \item[Examples] Four chips that fill the prompt: 4-bit ALU, Up-counter, 4:1 mux and Buggy counter (scripted only in offline mode).
   \item[Model menu] Three source tabs, \textbf{OpenCode}, \textbf{Cloudflare} and \textbf{NVIDIA NIM}, a refresh button, and the \textbf{Model} drop-down. Free models are marked ``(free)''; the note under the menu says why. On the OpenCode tab, \textbf{Show other models} lists the models not marked free (the number hidden is shown; they may use credits on your OpenCode account). Your choice is remembered in the browser.
@@ -163,20 +165,21 @@ The run timeline lists one line per step: specification, RTL, lint, testbench, e
 \begin{figure}[H]
 \centering
 \includegraphics[width=0.95\textwidth]{s06_results_pass.png}
-\caption{Results of a real FIFO run (opencode/hy4-flash-free): PASS 4134/4134 after one repair, the second opinion agrees (3798/3798), and a warning that the original testbench still fails on the final design (482 failed). Strength 11 of 12, timing meets 100 MHz, toggle coverage 100\%.}
+\caption{Results of a real FIFO run (opencode/hy4-flash-free), replayed in the current interface: the simulator says PASS 4134/4134 after one repair, but the original testbench still fails the final design (482 failed), so the verdict reads ``PASS, disputed''. The fresh second-opinion testbench agrees (3798/3798). Strength 11 of 12, timing meets 100 MHz, toggle coverage 100\%.}
 \end{figure}
 
 \begin{description}
-  \item[Verdict] The status badge and four numbers: Tests, Passed, Failed, Pass rate. PASS (the design ran and every check passed), FAIL (some checks failed), ERROR (compile or runtime problem, no valid summary, or zero checks), TIMEOUT (the simulation ran too long). These come from the simulator transcript, never from the model.
-  \item[Written by] The model that wrote the design, and, if a separate model wrote the testbench, ``Testbench written by \ldots, a separate model''. It is not shown for an offline result or after a Re-run of edited code.
-  \item[Second opinion] Shown only when a repair rewrote the testbench: agrees, disagrees (do not trust this PASS) or not obtained, with the reason.
-  \item[Warnings] Amber notes such as too few checks, a weak testbench, the original testbench still failing, or two models disagreeing. A grey ``Built-in demo result: not generated by the AI model for your prompt'' note marks a demo fallback.
+  \item[Demo tag] If the result came from a built-in design and not from an AI model, ``Built-in demo result: not generated by the AI model for your prompt'' is shown \emph{above} the verdict, so it is read first.
+  \item[Verdict] The status badge and four numbers: Checks, Passed, Failed, Pass rate. PASS (the design ran and every check passed), FAIL (some checks failed), ERROR (compile or runtime problem, no valid summary, or zero checks), TIMEOUT (the simulation ran too long). These come from the simulator transcript, never from the model. \textbf{PASS, disputed}, in amber, means the simulator said PASS but the run's own evidence contradicts it: the original testbench, or a fresh second-opinion testbench, fails the final design. A ``Do not trust this PASS yet'' line under it says which.
+  \item[Design written by] The model that wrote the design, ending ``which also wrote the testbench'', or, if a separate model wrote the testbench, ``Testbench written by \ldots, a separate model''. It is not shown for an offline result or after a Re-run of edited code.
+  \item[Second opinion] Shown only when a repair rewrote the testbench: agrees (a fresh testbench with at least 20 checks passes), disagrees, or not obtained, with the reason. When it disagrees, or the original testbench still fails, the verdict itself reads \textbf{PASS, disputed} in warning colour, with a ``Do not trust this PASS yet'' line under it.
+  \item[Warnings] Amber notes with a strong left edge, right under the verdict: too few checks, a weak testbench, the original testbench still failing, two models disagreeing, a repair stopped because the model became unavailable, or a port wider than the check task compares.
   \item[Testbench strength] ``Caught N of M injected bugs'' with a bar, and the bugs that were not noticed (line and change). The bar turns amber when fewer than half were caught. A survivor may be an equivalent change (Section~\ref{sec:strength}).
   \item[Synthesis (yosys)] Generic (unmapped) cell count, flip-flops and latches, cell types, and any Yosys warning (with file names only, never the server's folder paths). The relative area proxy appears only when there is no mapped area.
   \item[Timing and area (pre-layout)] ``Meets'' or ``Misses'' the target clock with the slack and the maximum frequency; for a design with no clock, ``Longest input-to-output path'' instead. Then the slowest path, the line about the equivalence proof, the fold-out ``Critical path, pin by pin'' table, the mapped area in \umsq{} with cell and flip-flop counts, the most common cells, and the limits line (one corner, no wire delay, ideal clock, setup only, not sign-off). If the estimate refused the design, the reason is shown instead of a number. Section~\ref{sec:readtiming} explains the proof line and the table.
   \item[Toggle coverage (measured)] The percentage of design signal bits that switched both ways, with counts and the signals that never switched. It is read from the simulator's waveform file.
   \item[Test types] One chip per type of check (for example reset, corner, directed, hold, random), with ``Open test cases''.
-  \item[Lint, Self-correction loop, Errors] Lint findings; each repair attempt with its status, counts and fix type (\emph{compiler\_repair} and \emph{llm\_diagnosis} are real fixes; \emph{offline\_scripted} is the labelled demo path with no invented root cause); the error lines of a failed run.
+  \item[Lint, Self-correction loop, Errors] Lint findings (labelled ``advisory'' when the simulator compiled and ran the code, so a lint tool's complaint is not mistaken for broken Verilog); each repair attempt with its status, counts and fix type (\emph{compiler\_repair} and \emph{llm\_diagnosis} are real fixes; \emph{offline\_scripted} is the labelled demo path with no invented root cause); the error lines of a failed run.
   \item[Specification the design was built from] A fold-out, read-only copy of the specification that was used.
 \end{description}
 
@@ -189,7 +192,7 @@ The run timeline lists one line per step: specification, RTL, lint, testbench, e
 \begin{figure}[H]
 \centering
 \includegraphics[width=0.92\textwidth]{s08_second_opinion.png}
-\caption{The second opinion and the testbench-change warning are both shown.}
+\caption{Close-up: ``PASS, disputed'', the ``Do not trust this PASS yet'' line, the testbench-change warning, the second opinion and who wrote the design, in that order.}
 \end{figure}
 
 \section{Reading the proof line and the critical path}
@@ -217,7 +220,7 @@ Below it, \textbf{Critical path, pin by pin} is a fold-out table (click the line
 \section{The Test cases tab}
 \label{sec:testcases}
 
-The Results tab only says ``4134 passed''. The Test cases tab shows \emph{which} checks ran. At the top, a bar and the totals; below it one chip per test type showing how many of that type passed; click a chip to filter. The table lists each check's number, type, name, simulation time, expected value, actual value and result. Use the Failed filter to see only failures, search by name, or click a row to see a bit-by-bit comparison with the differing bits highlighted and a \textbf{Show in waveform} button that jumps to that moment. Long runs stay fast because only the visible rows are drawn, and a note says when the list is capped (the totals are always exact). Testbenches that do not use the standard \texttt{chk} task show only totals, and the tab says so rather than inventing a list.
+The Results tab only says ``4134 passed''. The Test cases tab shows \emph{which} checks ran. At the top, a bar and the totals; below it one chip per test type showing how many of that type passed; click a chip to filter. The table lists each check's number, type, name, simulation time, expected value, actual value and result. Use the Failed filter to see only failures, search by name, or click a row to see a bit-by-bit comparison with the differing bits highlighted and a \textbf{Show in waveform} button that jumps to that moment. Long runs stay fast because only the visible rows are drawn, and a note says when the list is capped (the totals are always exact). Testbenches that do not use the standard \texttt{chk} task show only totals, and the tab says so rather than inventing a list; so does a run that ended early (for example when the model stopped answering), whose per-check detail was not kept. The list is keyboard friendly: Tab enters it once, and the arrow keys, Page Up/Down, Home and End move through every check, also beyond the rows currently drawn.
 
 \begin{figure}[H]
 \centering
@@ -272,7 +275,7 @@ The Design tab holds the RTL and testbench editors.
 
 \section{Editing and re-running}
 
-You can edit the RTL or testbench directly in the Design tab, then press \textbf{Re-run} to simulate once more without the AI. This is useful for trying your own fix, or for checking that a deliberate bug is caught: change \code{count + 1'b1} to \code{count + 2'd2} in a counter, press Re-run, and the Test cases and Waveform tabs show the failures at once. Re-run clears strength, timing, the second opinion and ``Written by'', because those described the previous code.
+You can edit the RTL or testbench directly in the Design tab, then press \textbf{Re-run} to simulate once more without the AI. This is useful for trying your own fix, or for checking that a deliberate bug is caught: change \code{count + 1'b1} to \code{count + 2'd2} in a counter, press Re-run, and the Test cases and Waveform tabs show the failures at once. Re-run clears strength, synthesis, timing, the second opinion, lint and ``Design written by'', because those described the previous code, and says so in a note at the top of the Results tab (``Re-run of edited code: only the simulation was repeated \ldots''). \textbf{Stop} also cancels a Re-run.
 
 \begin{figure}[H]
 \centering
@@ -282,12 +285,12 @@ You can edit the RTL or testbench directly in the Design tab, then press \textbf
 
 \section{Projects, theme, UVM export and Stop}
 
-\textbf{Projects} opens a menu of saved runs (newest first), each with its module name, status and prompt, and \textbf{Open} and \textbf{Delete} buttons (Delete asks first). Before the first run, the start screen also lists recent projects. The theme button cycles between system (follows the computer's setting), light and dark; an explicit choice is remembered in the browser. \textbf{Export UVM} downloads the 16-file UVM bundle as a zip (export only: it is not simulated). \textbf{Stop} cancels a running generation.
+\textbf{Projects} opens a menu of saved runs (newest first), each with its module name, status, prompt, date and time, the model that wrote it, and an amber \textbf{demo} label when it was a built-in demo run (runs saved before this was added show no model), with \textbf{Open} and \textbf{Delete} buttons (Delete asks first). Before the first run, the start screen also lists recent projects. The theme button cycles between system (follows the computer's setting), light and dark; an explicit choice is remembered in the browser. \textbf{Export UVM} downloads the 16-file UVM bundle as a zip (export only: it is not simulated; a second click while it is being made is ignored). \textbf{Stop} cancels a running generation or Re-run.
 
 \begin{figure}[H]
 \centering
 \includegraphics[width=0.92\textwidth]{s14_projects_menu.png}
-\caption{The Projects menu listing saved runs.}
+\caption{The Projects menu: saved runs with date, model and an amber ``demo'' label for a built-in demo run.}
 \end{figure}
 
 \begin{figure}[H]
@@ -312,24 +315,24 @@ These are the checks behind the numbers in this guide (final run: 19 Nov 2026). 
 
 \begin{lstlisting}[style=plain]
 cd backend
-PATH="$HOME/.local/bin:$PATH" OFFLINE_MODE=1 python3 -m pytest tests/ -q   # 459 passed
+PATH="$HOME/.local/bin:$PATH" OFFLINE_MODE=1 python3 -m pytest tests/ -q   # 589 passed
 python3 tools/mutation_sweep.py                       # 27 of 27 injected bugs caught
 PATH="$HOME/.local/bin:$PATH" python3 tools/verify_mapping.py   # 19 of 19 equivalent
 python3 evaluation/independent/run.py                 # every evaluated design vs. its reference
 PATH="$HOME/.local/bin:$PATH" python3 evaluation/independent/strength.py   # the references' own strength
 
 cd ../frontend
-npm test                                              # 226 passed (Vitest)
+npm test                                              # 259 passed (Vitest)
 npm run build                                         # TypeScript check + production build
 \end{lstlisting}
 
 \begin{description}
-  \item[pytest] 459 backend tests in 32 test files. They use a temporary workspace (the \code{_isolated_workspace} fixture in \file{tests/conftest.py}), so they never touch your real \file{projects.db}. Tests that need Icarus, Yosys or OpenSTA are skipped automatically if the tool is missing; Cloudflare and NIM are tested against small fake servers, not the internet.
+  \item[pytest] 589 backend tests in 35 test files. They use a temporary workspace (the \code{_isolated_workspace} fixture in \file{tests/conftest.py}), so they never touch your real \file{projects.db}. Tests that need Icarus, Yosys or OpenSTA are skipped automatically if the tool is missing; Cloudflare and NIM are tested against small fake servers, not the internet.
   \item[Mutation sweep] Injects 27 known bugs into the built-in designs and checks that the built-in testbenches catch every one.
   \item[Mapping verification] The checks of Chapter~\ref{ch:timing}: gate-level simulation agrees with the RTL, area and cells recount, minimum period independent of the target. Each design says OK or REFUSED (with a reason).
   \item[Equivalence proof] Runs inside every timing estimate, so it has no separate command; \file{tests/test_equivalence.py} checks it on small designs. Measured on the 14 evaluated and 4 built-in designs: 16 proven, 2 not proven (the FSMs f1 and f2), 0 different.
   \item[Independent references] Hand-written reference testbenches, not written by any model, for the 14 evaluated designs. All 14 final designs were correct (no false PASS). \file{strength.py} runs \emph{every} mutant (not a sample of 12) against each reference; the references caught every mutant except equivalent ones, unreachable code, or behaviour the prompt does not define.
-  \item[Frontend] 226 Vitest tests in 15 files; \code{npm run build} runs the TypeScript compiler (clean) and the production build.
+  \item[Frontend] 259 Vitest tests in 18 files; \code{npm run build} runs the TypeScript compiler (clean) and the production build.
   \item[Accessibility] An automated axe-core audit of every tab, both themes, for a passing and a failing run: 0 violations. Its structural rules also run in the test suite. This is an automated audit, not a user study.
   \item[Tests of the tests] The newest components were broken on purpose, one behaviour at a time, and the tests had to fail.
 \end{description}
@@ -346,6 +349,8 @@ PATH="$HOME/.local/bin:$PATH" env -u OFFLINE_MODE LLM_PROVIDER=opencode-app \
 
 The final run reported 0 failures and 0 warnings, with all three fallback rungs ready.
 
+Preflight does not just check that something answers on port 8000: it asks the running backend what it is. A backend left running in offline mode, or one that cannot find the simulator, is flagged (an old server answered ``OK'' before). It also checks that \code{node} and \file{frontend/node_modules} are present. Listing a model does not prove that the account is signed in or has quota left, so the line now says ``listed''; only \code{--live}, which makes one real model call, checks sign-in and quota.
+
 \section{What the test files protect}
 
 \begin{center}
@@ -355,8 +360,8 @@ The final run reported 0 failures and 0 warnings, with all three fallback rungs 
 \textbf{File(s)} & \textbf{Guards against} \\
 \midrule
 \file{test_orchestrator.py}, \file{test_edge_cases.py} & Broken repair loop, fallback rules, guards (anti-cheat, no-op, oscillation), compiler repairs, odd inputs. \\
-\file{test_verdict_integrity.py}, \file{test_simulator.py} & A wrong verdict: misplaced or non-numeric summaries, zero checks, FAIL lines under ``Failed: 0'', killed runs, forged summaries in the RTL, system tasks not on the allow-list, narrow testbench wires, hangs. \\
-\file{test_sandbox.py} & File access from Verilog, string tricks, the real exploit, environment scrubbing, output cap. \\
+\file{test_verdict_integrity.py}, \file{test_simulator.py} & A wrong verdict: misplaced or non-numeric summaries, zero checks, FAIL lines or \code{CHK|FAIL} rows under ``Failed: 0'', an earlier failing phase, killed runs, forged summaries in the RTL (also through \code{final}, \texttt{\%c} and macros), system tasks not on the allow-list, the comment and macro sandbox bypasses (run end to end with real Icarus), legitimate macros still allowed, scanners that stay fast on hostile input, ports wider than 64 bits, narrow testbench wires, hangs. \\
+\file{test_sandbox.py}, \file{test_run_isolation.py} & File access from Verilog, string tricks, the real exploit, environment scrubbing, output cap; two runs of one design at once, stale waveforms, a timed-out tool's child processes, and the workspace clean-up. \\
 \file{test_verification_quality.py}, \file{test_mutation.py} & Testbenches that cannot fail; the strength stage (operators, protected regions, scoring, time budget). \\
 \file{test_trust_signals.py}, \file{test_toggle_coverage.py} & The weak-evidence and weak-testbench warnings; measured toggle coverage. \\
 \file{test_independent_testbench.py}, \file{test_spec_review.py} & The separate testbench model rules, the second opinion, the reviewed specification and its bounds. \\
@@ -364,7 +369,8 @@ The final run reported 0 failures and 0 warnings, with all three fallback rungs 
 \file{test_equivalence.py} & The equivalence proof and the critical path: a combinational design proven by SAT, a sequential one by induction, a sabotaged netlist reported as different, a re-encoded FSM reported as not proven (never passed), the same parameter overrides as the mapping, \code{x} inputs unable to fake a mismatch, a lookup-table design proven rather than skipped, and critical-path rows that stop at the data arrival time. \\
 \file{test_model_catalog.py}, \file{test_model_switching.py}, \file{test_model_routing.py}, \file{test_opencode_provider.py} & The Model menu, per-run model choice and routing, model-id validation, keys never leaking, the OpenCode app provider. \\
 \file{test_llm_parsing.py}, \file{test_error_messages.py} & Fragile parsing of model answers; plain, safe error messages. \\
-\file{test_api.py}, \file{test_stream_persistence.py}, \file{test_disconnect.py} & Routes, streaming, rate limit, saving streamed runs, a closed browser tab stopping further stages. \\
+\file{test_api.py}, \file{test_api_guards.py}, \file{test_stream_persistence.py}, \file{test_disconnect.py} & Routes, streaming, saving streamed runs, a closed browser tab stopping further stages; the admin clean-up token, project ids, the database order and single-row delete, the forwarded-address rule, the exact rate limit, CORS, and the request-size limit (also for chunked uploads). \\
+\file{test_uvm_export.py} & The UVM bundle: no task inside a task, no crash on mux-like specifications, real clock and reset names and polarity, no ALU model for a mux. \\
 \file{test_check_parser.py}, \file{test_vcd_parser.py}, \file{test_vcd_roles.py}, \file{test_linter.py}, \file{test_models.py} & Check rows, waveform parsing and signal roles, lint, data shapes. \\
 \file{test_preflight.py}, \file{test_evaluate_live.py} & The demo preflight and the live-evaluation recorder. \\
 \bottomrule
@@ -372,7 +378,7 @@ The final run reported 0 failures and 0 warnings, with all three fallback rungs 
 \end{center}
 
 \begin{keyidea}
-The most important tests are the ones that prove a check can fail: mutation tests of the testbenches, sabotaged netlists for the timing checker and the equivalence proof, broken components for the test suite itself. A test suite that only checks that correct designs pass proves very little.
+The most important tests are the ones that prove a check can fail: mutation tests of the testbenches, sabotaged netlists for the timing checker and the equivalence proof, broken components for the test suite itself. A test suite that only checks that correct designs pass proves very little. For the same reason every fix from the nine-role review was checked by undoing it and confirming that a test fails (Chapter~\ref{ch:review}).
 \end{keyidea}
 
 % ---------------------------------------------------------------------------
@@ -398,6 +404,8 @@ OPENAI\_API\_KEY, OPENAI\_BASE\_URL, LLM\_MINI\_MODEL & OpenAI, or any compatibl
 LLM\_MODEL\_INTENT, \_RTL, \_TESTBENCH, \_EXPLAIN, \_FIX & Per-stage model routing for the default provider (a model chosen in the menu still wins). \\
 LLM\_TIMEOUT\_SECONDS & Per-call timeout (default 120; 360 for the free models in the demo). \\
 LLM\_MAX\_TOKENS & Answer budget (default 8192). \\
+LLM\_MAX\_RETRIES & Retries of a failed call by the HTTP client for Cloudflare, NIM and the other HTTP providers (default 2). \\
+EQUIVALENCE\_ENABLED, EQUIVALENCE\_MAX\_CELLS, EQUIVALENCE\_TIMEOUT & Equivalence proof on/off (default on), skipped above this many mapped cells (600), stopped after this many seconds (20). \\
 STRENGTH\_ENABLED, STRENGTH\_MAX\_MUTANTS, STRENGTH\_BUDGET\_SECONDS & Testbench strength on/off (default on), mutants per run (12), time budget (40 s). \\
 TIMING\_ENABLED & Timing and area estimate on/off (default on; needs the tools and library). \\
 SECOND\_OPINION\_ENABLED & Second opinion on/off (default on). \\
@@ -405,6 +413,8 @@ SIM\_MAX\_CONCURRENT, SIM\_MAX\_MEMORY\_MB & Simulations at once (2); memory cap
 CORS\_ALLOW\_ORIGINS & Extra exact browser origins allowed to call the API (comma-separated, no wildcards). \\
 TRUST\_PROXY\_HEADERS & 1 only behind a trusted reverse proxy, so the rate limit uses the forwarded address. \\
 ADMIN\_TOKEN & Enables \code{/api/admin/cleanup}; sent as the \code{X-Admin-Token} header. \\
+SILICONSCRIBE\_WORKSPACE & Folder for run files and the projects database (default \file{backend/workspace}; the tests set a temporary one). \\
+HOST & Address for \code{python3 main.py} (default 127.0.0.1; the backend has no login). \\
 VITE\_API\_BASE & Frontend: backend address if not served from the same origin. \\
 \bottomrule
 \end{longtable}
@@ -420,7 +430,15 @@ VITE\_API\_BASE & Frontend: backend address if not served from the same origin. 
 \toprule
 \textbf{Symptom} & \textbf{Cause and fix} \\ \midrule \endhead
 Status ERROR, ``Compilation failed'' & The code does not compile. Read the error line in the log; the loop repairs wire/reg and disable/return automatically and asks the model for anything else. \\
-``Rejected by sandbox policy'' & The code uses a file or system task (\code{$fopen}, \code{$readmemh}, \code{`include}, \ldots) or a task not on the allow-list. Remove it. \\
+``Rejected by sandbox policy'' & The code uses a file or system task (\code{$fopen}, \code{$readmemh}, \code{`include}, \ldots) or a task not on the allow-list, directly or through a macro. Remove it. \\
+``\ldots{} uses macros but could not be preprocessed'' & The code uses \code{`define} macros that Icarus' preprocessor rejects (for example an undefined macro), so the sandbox cannot check what they expand to. Fix or remove the macro. \\
+``RTL must not print \ldots{} or use a final block'' & The design itself calls \code{$display}/\code{$write} or has a \code{final} block. Only the testbench may print; delete those lines from the RTL. \\
+Verdict ``PASS, disputed'' & The simulator said PASS, but the original testbench or a fresh second-opinion testbench fails the final design. Compare the testbench change in the Self-correction loop with the specification before trusting it. \\
+``The repair model became unavailable'' & The model stopped answering during a repair (quota or timeout). The last simulated result is kept; try again later or pick another model. \\
+``The repair reply could not be read'' & The model's repair answer had no \code{<rtl>}/\code{<testbench>} sections, even after one retry. Try another model. \\
+Red ``Server not reachable'' badge & The backend is not running or not on 127.0.0.1:8000. Start it and press Retry. \\
+HTTP 413 & The request was larger than 1 MB. Generated code is normally far smaller; check what is being sent. \\
+\code{npm run dev} stops with ``Port 5173 is in use'' & An earlier frontend is still running. Stop it, or you would be looking at an old build. \\
 Status ERROR, ``No valid summary'' & The testbench did not print whole-line \code{Passed:} and \code{Failed:} numbers, often because its own watchdog fired first. Re-run with a fresh testbench or another model. \\
 ``The model you chose (\ldots) could not be used'' & That model hit its limit, timed out, was refused or is unknown. Pick another model from the Model menu. Your run is not replaced by the demo. \\
 ``The AI model did not answer in time'' & Free models can take minutes per step. Try again, pick another model, or raise \code{LLM_TIMEOUT_SECONDS}. \\
@@ -428,11 +446,11 @@ Status ERROR, ``No valid summary'' & The testbench did not print whole-line \cod
 Cloudflare or NVIDIA NIM tab says ``not set up'' & The key is missing or malformed in \file{backend/.env}. Fix it and restart the backend. \\
 Cloudflare HTTP 403, code 5035 & That model is not allowed on the Workers Free plan. Pick another. \\
 GitHub Copilot is not in the menu & Connect it in the OpenCode app with \code{/connect}, press the refresh button, tick ``Show other models''. \\
-``LLM became unavailable mid-run'' & The provider failed after the run had started producing your design. Retry; the app refuses to swap in a demo design at this point. \\
+``LLM became unavailable mid-run'' & The provider failed after the run had started producing your design (outside the repair step). Retry; the app refuses to swap in a demo design at this point. \\
 Banner ``Degraded mode'' & The default provider failed before anything was generated, so the run used built-in designs and says so. Check the model and network. \\
 No ``Timing and area'' section & Yosys, OpenSTA or \file{backend/pdk/sky130hd_tt.lib} is missing, or the run did not PASS. Start the backend with \code{PATH="$HOME/.local/bin:$PATH"}. \\
 Timing shows a reason instead of a number & The design has tri-states, latches, a combinational loop, a derived or gated clock, or no logic cells. This is a deliberate refusal (Chapter~\ref{ch:timing}). \\
-``Netlist not formally proven equal to the RTL'' & Usually a state machine whose state synthesis re-encoded; induction cannot pair the registers. Not an error; the gate-level simulation check still applies (Section~\ref{sec:equivalence}). \\
+``Netlist not formally proven equal to the RTL'' & Usually a state machine whose state synthesis re-encoded; induction cannot pair the registers. The line gives the reason; it is also shown for a flip-flop on the other clock edge, several clocks, or a register with a declaration or \code{initial} value (reset it explicitly instead). Not an error; the gate-level simulation check still applies (Section~\ref{sec:equivalence}). \\
 Red ``The mapped netlist does not match the RTL'' & Treat the timing and area as invalid. This should not happen with correct tools; keep the run and report it. \\
 RTL cells or Gate level button greyed out & No netlist for this run: Yosys is not installed, or synthesis failed. Hover over the button for the reason. \\
 ``\ldots{} cells is too many to draw'' & The design has more than 400 cells. Use the RTL cells view instead. \\
@@ -518,7 +536,10 @@ Yield a new event from \code{pipeline_events} with its own \code{stage} name, ad
   \item The sandbox is defence in depth, not a jail or a container boundary.
   \item The evaluation used small blocks (under about 100 lines), one run per prompt, mainly one model.
   \item GitHub Copilot ``auto'' cannot name the model that wrote a result.
-  \item The UVM bundle is exported, not compiled or run.
+  \item The UVM bundle is exported, not compiled or run; its counter scoreboard model is still simplistic.
+  \item A comparison written with \code{==} instead of \code{===} can let an undriven output pass; the prompts require \code{===} and the standard check task uses it, but a hand-written testbench is not checked for it.
+  \item The equivalence proof says ``not proven'' for several clocks, other-edge flip-flops and power-up values rather than proving them; a design that aliases its clock through a wire is also reported as not proven.
+  \item Runs saved before the nine-role review do not record their model, so the Projects menu cannot label them.
   \item One server, in-process rate limiter, SQLite, and a local single-user model provider: not a multi-user production service.
 \end{enumerate}
 
@@ -579,7 +600,7 @@ Short, honest answers you can give in your own words.
   \item[17. Why offer a separate testbench model?]
   So the expected values come from a different reader of the specification. Then a failing check is reported, not rewritten. In one live run the two models disagreed (FAIL 124/146); the counter was correct and the testbench sampled one cycle early, and the app said the models disagree instead of passing it.
   \item[18. What is the security risk of running generated Verilog, and what did you do?]
-  Verilog can read and write files. The review proved a testbench could leak a secret file. Now file tasks and includes are refused, every system task must be on an allow-list, the tool environment is scrubbed of keys, and output, CPU and memory are capped. It is defence in depth; a container is the real boundary for multi-user use.
+  Verilog can read and write files. The review proved a testbench could leak a secret file. Now file tasks and includes are refused, every system task must be on an allow-list, the rules run again on the macro-expanded code (a macro-argument trick got past the text scan in the last review), the tool environment is scrubbed of keys, and output, CPU and memory are capped for both compiler and simulator. It is defence in depth; a container is the real boundary for multi-user use.
   \item[19. Where are the API keys?]
   Only in \file{backend/.env}, which is git-ignored. The web page never asks for them, and model ids from the browser are checked before they reach a subprocess.
   \item[20. What happens if the AI service is down?]
@@ -600,4 +621,14 @@ Short, honest answers you can give in your own words.
   Which chain of gates is slowest, and therefore what limits the clock rate, with the delay of each stage. In the built-in 8-bit ALU it is input \code{b[0]} through six \code{maj3} carry cells (a ripple-carry adder, about 0.36 to 0.39 ns each) to \code{overflow}, 2.69 ns in total. To make it faster you would change that adder, for example to carry-lookahead.
   \item[28. What does the gate-level schematic show?]
   The design after Yosys' generic synthesis, drawn in the browser with netlistsvg: every single-bit gate and flip-flop. It uses Yosys' generic gates, not the sky130 cells that were timed. Designs over 400 cells are not drawn; the RTL cells view shows them as word-level blocks.
+  \item[29. How did you review your own tool before the viva?]
+  Nine reviewers, each taking one engineering role (ASIC, verification, backend, security, LLM integration, frontend, interface, test, release), reviewed everything except the documents and reported about 110 findings. Each was reproduced, fixed, and pinned by a test that I showed fails when the fix is undone. Then an independent reviewer, given only the findings and the changes, tried to break the fixes; it found a sandbox bypass through a macro argument, a regex slowdown and three regressions, which were fixed the same way. All 123 saved runs give the same verdicts with the old and new code.
+  \item[30. What was the most serious finding, and how was it fixed?]
+  Two kinds. Security: a comment between \code{$dumpfile} and its argument, and later a macro argument, let a testbench write a file outside its folder. The sandbox now runs its rules on comment-stripped text and again on the macro-expanded source from Icarus' own preprocessor. Honesty: a repair could keep the bug and edit the expected values, and the screen still showed a green PASS while the original testbench failed. Now that PASS is shown as ``PASS, disputed'', and the testbench may be rewritten freely only when it did not compile.
+  \item[31. What does ``PASS, disputed'' mean?]
+  The simulator reported PASS, but the run's own evidence contradicts it: the testbench was changed during repair and either the original testbench or a fresh second-opinion testbench fails the final design. The app does not decide which side is right; it refuses to show a plain PASS and tells you to compare the testbench change with the specification.
+  \item[32. Why can't the equivalence proof handle a register with a starting value?]
+  Simulation starts the register at that value, but real hardware powers up in an unknown state, so the netlist does not keep it. Induction compares the two designs from the same start, so it would wrongly ``prove'' them equal. The app reports ``not proven'' with the reason and recommends an explicit reset.
+  \item[33. How do you know your tests are not just passing?]
+  Every fix was checked by undoing it on purpose and confirming that a test fails. Four tests passed for the wrong reason at first (for example a guard test that a different guard satisfied) and were rewritten until they failed for the right reason.
 \end{description}

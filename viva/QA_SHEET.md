@@ -68,3 +68,12 @@ Synthesis re-encodes FSM states (for example to one-hot), so the registers of th
 **22. What does the critical path table tell you?**
 The slowest path pin by pin, with each sky130 cell's delay: where the time goes. For the 8-bit ALU it is the ripple-carry chain: six maj3 (majority = carry) cells at about 0.36 to 0.39 ns each, 2.69 ns in total. That is exactly the case a carry-lookahead or carry-select adder would shorten, so the table shows what to change to make the design faster.
 
+**23. How did you check your own tool before the viva?**
+Nine reviewers, each acting as one engineering role (ASIC, verification, backend, security, LLM integration, frontend, UX, test, release), reviewed everything except the documents and reported about 110 findings. Each was reproduced with a real run, fixed, and pinned by a test that fails when the fix is undone (I undid every fix once to prove it). An independent reviewer then got only the findings and the change set and tried to break the fixes: it found a macro-argument sandbox bypass, a regex slowdown the fixes introduced, and three regressions, all fixed the same way. The 123 saved runs give identical verdicts with the old and new code.
+
+**24. What does "PASS, disputed" mean?**
+The simulator said PASS, but the run's own evidence contradicts it: the testbench was changed during repair and the ORIGINAL testbench, or a fresh second-opinion testbench, fails the final design. The app does not guess which side is right; it refuses to show a plain green PASS. The live FIFO run is the example: 4134/4134 on the rewritten testbench, 482 failures on the original one, so it is shown as disputed.
+
+**25. What was the most serious thing the review found?**
+A testbench could write a file outside its folder: first with a comment between `$dumpfile` and its argument, later (found by the independent reviewer) by passing the `$` of `$fopen` through a macro argument. The rules now also run on comment-stripped text and on the macro-expanded source from Icarus' own preprocessor. On the honesty side: a repair could keep the bug and edit the expected values, and the screen still said PASS; now only a testbench that did not compile may be rewritten freely, and a contradicted PASS is shown as disputed.
+

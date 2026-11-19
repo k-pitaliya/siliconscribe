@@ -15,7 +15,9 @@ Everything here was checked against the real app. Where a number depends on the 
 4. Pre-generate one good live result in the app (a counter or FIFO) so it is in the **Projects** drawer.
 5. Laptop: charger in, notifications off, browser zoom 100%, window at least 1500 px wide, one browser tab.
 6. Optional: tick **Review the specification before generating** to show the audience the specification the model wrote before it builds anything, and pick a second model under **Testbench written by** to show independent verification (it costs one extra model call and can make the run end FAIL if the two disagree: that is the feature working, say so).
-7. Optional, free and offline (about 30 s): `PATH="$HOME/.local/bin:$PATH" python3 tools/verify_mapping.py`. Every design should say OK or REFUSED (with a reason); this is the evidence behind the timing numbers if you are asked.
+7. Do not run `pip install -U` or `npm update` before the demo: the tested versions are the ones installed now.
+8. Back up `backend/workspace/projects.db` (your saved live runs) to a USB stick or cloud folder.
+9. Optional, free and offline (about 30 s): `PATH="$HOME/.local/bin:$PATH" python3 tools/verify_mapping.py`. Every design should say OK or REFUSED (with a reason); this is the evidence behind the timing numbers if you are asked.
 
 ## Start the app (two terminals)
 ```
@@ -28,6 +30,10 @@ PATH="$HOME/.local/bin:$PATH" env -u OFFLINE_MODE LLM_PROVIDER=opencode-app \
 cd ~/Kushal_Master/Projects/VLSI/ai-eda-playground/frontend && npm run dev -- --host 127.0.0.1 --port 5173
 ```
 Open http://127.0.0.1:5173. The top-right badge must say **Live · deepseek-v4.1-flash-free**. If it says *Offline demo* or *Demo fallback*, the live model is not in use.
+
+On the morning of the 25th: run the preflight **without** `--live` once more after starting both servers (it now checks that the running backend is live and can see the simulator), keep the Mac awake during long runs with `caffeinate -dims` in a third terminal, and if `npm run dev` says port 5173 is in use, stop the old server first (otherwise you would be looking at an old build). If the badge says **Server not reachable**, the backend is not running: start it and press Retry.
+
+What looks different since the 19 Nov self-review: a PASS whose original testbench (or a fresh second-opinion testbench) still fails is shown as **PASS, disputed** in amber, which is intended, so explain it. The verdict card says "Checks", the attribution says "Design written by", and saved demo runs carry a **demo** label in Projects.
 
 ## Demo flow (about 8 minutes)
 1. **One sentence.** "SiliconScribe turns plain English into Verilog plus an independent self-checking testbench, runs both in a real simulator, and repairs failures. The simulator decides PASS or FAIL, never the model."
@@ -49,7 +55,7 @@ Open http://127.0.0.1:5173. The top-right badge must say **Live · deepseek-v4.1
 | Live run is slow | Keep talking over the timeline; switch to the loaded result | "Free models can take minutes; the timer shows it is working." |
 | The model stalls or says it could not be used | Pick another free model in the **Model** menu (for example `hy4-flash-free` or `beam-free`) and run again; Cloudflare is the second tab if it is set up | "Free models vary; the menu lists every one the OpenCode app offers." |
 | Live run errors or quota is out | Projects, Load the saved result | "This is a saved live run from earlier." |
-| Backend will not start with the live model | `OFFLINE_MODE=1` with the same uvicorn command (then the "buggy 4-bit counter" chip is scripted and shows a failure and a repair) | "This is the scripted offline demo; the badge says so." |
+| Backend will not start with the live model | `cd backend && PATH="$HOME/.local/bin:$PATH" OFFLINE_MODE=1 python3 -m uvicorn main:app --host 127.0.0.1 --port 8000` (do NOT keep `env -u OFFLINE_MODE` in front, it would undo the setting) (then the "buggy 4-bit counter" chip is scripted and shows a failure and a repair) | "This is the scripted offline demo; the badge says so." |
 | Everything fails | Open `backend/evaluation/summary.md` and `artifacts/` | "These are the recorded live results." |
 
 Never pretend an offline or saved result is a fresh live one. The app labels them, and so should you.

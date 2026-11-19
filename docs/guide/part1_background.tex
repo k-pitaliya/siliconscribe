@@ -76,12 +76,15 @@ These safeguards stop the system from fooling itself or its user:
 
 \begin{description}
   \item[Independent testbench.] The testbench generator is never shown the RTL. It derives every expected value from the specification. Optionally a \emph{different} AI model writes it.
-  \item[Simulator as the oracle.] PASS or FAIL comes from the simulator output, never from the model. A PASS needs a valid summary and at least one executed check.
-  \item[Anti-cheat guard.] A ``fix'' that deletes test checks from a testbench that already ran is rejected. If a repair changed the testbench, the original one is run again and a fresh second-opinion testbench is asked for.
+  \item[Simulator as the oracle.] PASS or FAIL comes from the simulator output, never from the model. A PASS needs a valid summary and at least one executed check, and any failure anywhere in the log (a \code{FAIL} line, a \code{CHK|FAIL} row, an earlier \code{Failed:} count above zero) turns it into a FAIL.
+  \item[The design cannot write its own verdict.] The RTL may not print, end the simulation or reach into the testbench, and these rules are checked again after macros are expanded.
+  \item[Anti-cheat guard.] A ``fix'' may rewrite the testbench freely only when the testbench did not even compile; otherwise it may only keep or add checks. If a repair changed the testbench, the original one is run again and a fresh second-opinion testbench is asked for. If either of them fails the final design, the verdict reads \textbf{PASS, disputed}, never a plain PASS.
   \item[Loop guards.] If a fix changes nothing, or brings back a version already tried, the loop stops instead of burning time.
   \item[Testing the test.] After every PASS, small bugs are injected into the design to see whether the testbench notices (testbench strength), and toggle coverage is measured from the simulator's own waveform file.
   \item[You can check the question.] The specification the model wrote can be reviewed and edited before anything is built.
   \item[Honest degraded mode.] If the AI service is unavailable, the app says so clearly and labels results as coming from built-in examples. A model you chose yourself is never silently replaced.
+  \item[Honest numbers.] The timing estimate and the formal proof say ``not proven'' or refuse, with the reason, whenever their method cannot decide; they never round a doubt up to a pass.
+  \item[Reviewed by role.] Before the viva the tool was reviewed by nine reviewers, each taking one engineering role, and every finding was reproduced, fixed and pinned by a test (Chapter~\ref{ch:review}).
 \end{description}
 
 \section{Results in numbers}
@@ -96,7 +99,9 @@ Evaluated designs correct against hand-written references & 14 of 14 \\
 Mutation sweep of the built-in designs & 27 of 27 caught \\
 Timing netlists equal to the RTL in gate-level simulation & 19 of 19 designs \\
 Timing netlists formally proven equal to the RTL & 16 of 18 (2 FSMs not proven, 0 different) \\
-Automated tests & 459 backend (32 files) + 226 frontend (15 files), all passing \\
+Automated tests & 589 backend (35 files) + 259 frontend (18 files), all passing \\
+Nine-role self-review (19 Nov 2026) & about 110 findings, all reproduced and fixed \\
+Saved runs re-checked with the new code & 123 of 123 verdicts unchanged \\
 \bottomrule
 \end{tabularx}
 \end{center}
@@ -286,7 +291,12 @@ endmodule
   \item \code{@(negedge clk)} waits for the falling clock edge, so checks happen safely between rising edges.
   \item \code{$display} prints to the simulator transcript; \code{$finish} ends the simulation.
   \item The three final lines are a \textbf{contract} with SiliconScribe: the simulator wrapper reads \code{Passed:}, \code{Failed:} and \code{ALL TESTS PASSED} from the transcript to decide the verdict (Section~\ref{sec:verdict}).
+  \item The comparison uses \code{===}, not \code{==}. With \code{==}, a comparison against an unknown value (\code{x}) is itself unknown, the \code{if} takes the \code{else} branch, and an undriven output can slip through. \code{===} compares \code{x} and \code{z} literally, so an output that never got a real value fails.
 \end{itemize}
+
+\begin{keyidea}
+In the shipped testbenches every comparison goes through one \code{chk} task. Its expected and actual inputs are 256 bits wide. An earlier version used 64 bits, and the last review showed what that means: a 72-bit design that dropped its top byte still passed, because the top byte was never compared. A port wider than 256 bits now comes with a warning that its upper bits are not checked.
+\end{keyidea}
 
 \section{Directed and random stimulus}
 
@@ -308,6 +318,8 @@ How do you know a testbench is good? Break the design on purpose and see whether
 SiliconScribe uses the idea twice. First, a fixed sweep (\file{backend/tools/mutation_sweep.py}) injects known bugs such as ``count by two'', ``reset ignored'', ``enable ignored'', ``ADD replaced by SUB'' and ``mux inputs swapped'' into the built-in designs. An early 14-bug version caught only 11; the three survivors exposed real gaps (enable not tested, overflow flag not checked, undefined opcodes not driven). After the testbenches were hardened and the sweep grew to 27 bugs, all 27 are caught. Second, and more important, the app does it automatically after every PASS, on the model's own design and testbench: this is the \textbf{testbench strength} shown with each result (Section~\ref{sec:strength}).
 
 One caution: a mutant can be \textbf{equivalent}, meaning the change does not alter what the design does (for example in code that can never be reached). No testbench can catch it, so a survivor is ``not noticed'', not ``proven missed''.
+
+A second caution is about what counts as ``caught''. Only a mutant the testbench \emph{reports as failing} counts. A mutant that makes the simulation hang counts only if the original design finishes quickly with the same testbench; otherwise a slow testbench would score 100\% simply because every mutant ran out of time (the last review showed a one-check testbench scoring 3 of 3 this way). Crashes and such timeouts are reported as \emph{inconclusive}, not as caught.
 
 \section{Why the oracle must be independent}
 
@@ -337,6 +349,8 @@ SiliconScribe uses one formal check, \textbf{equivalence checking}: it compares 
 
 Sometimes induction cannot decide. A common reason is that the synthesizer stored a state machine's state in a different code (for example one flip-flop per state instead of a 2-bit number). Both versions still behave the same, but their flip-flops no longer pair up one to one, so this simple form of induction cannot finish the proof. SiliconScribe then says ``not proven'': not a pass and not a failure.
 
+Induction as used here also assumes that every flip-flop ticks at the same moment and starts from the same state. Three kinds of design break that assumption, so SiliconScribe reports them as ``not proven'' with the reason rather than trusting the proof: a flip-flop clocked on the \emph{other} edge of the clock, a design with more than one clock, and a register that gets a starting value from its declaration (\code{reg q = 0;}) or an \code{initial} block. The last one is subtle: the simulator uses that starting value, but real hardware powers up in an unknown state, so the netlist does not keep it.
+
 % ---------------------------------------------------------------------------
 \chapter{EDA Tools Used}
 \label{ch:tools}
@@ -356,7 +370,9 @@ SiliconScribe uses exactly this command to compile:
 \begin{lstlisting}[style=plain]
 iverilog -o testbench.vvp -g2012 -Wall _timescale.v design.sv testbench.sv
 \end{lstlisting}
-where \code{-g2012} enables the 2012 language mode and \code{-Wall} turns on all warnings. \file{_timescale.v} is a one-line file the app writes (\code{`timescale 1ns/1ps}) so every file gets a sensible default time unit.
+where \code{-g2012} enables the 2012 language mode and \code{-Wall} turns on all warnings. \file{_timescale.v} is a one-line file the app writes (\code{`timescale 1ns/1ps}) so every file gets a sensible default time unit. The command runs under CPU-time, memory and file-size limits, and if it runs out of time it is stopped together with every helper process it started (\code{iverilog} starts a second program, \code{ivl}, which used to keep running on its own after a timeout).
+
+Icarus has a third mode that SiliconScribe uses for safety, not for simulation: \code{iverilog -E} only \emph{preprocesses} the files. It expands every macro (\code{`define}) and prints the result. The sandbox (Section~\ref{sec:sandbox}) runs its rules a second time on that expanded text, because a macro can assemble a forbidden name such as \code{$fopen} out of pieces that look harmless one by one.
 
 \section{VCD: the waveform file}
 

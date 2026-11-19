@@ -282,8 +282,11 @@ the weakest kind of PASS. Two extra checks then run on the final design. First, 
 \emph{original} testbench is re-run; if it still fails, a warning is attached.
 Second, a fresh testbench is generated from the same specification, validated (it
 must instantiate the design and contain checks) and simulated. The outcome is shown
-as ``agrees'' (PASS), ``disagrees'' (FAIL, which puts a warning on the PASS) or
-``unavailable'' (the fresh testbench could not be generated or did not run cleanly).
+as ``agrees'' (PASS with at least 20 checks), ``disagrees'' (FAIL) or
+``unavailable'' (the fresh testbench could not be generated, did not run cleanly, or ran
+too few checks to count). When the original testbench still fails or the fresh one
+disagrees, the verdict is shown as \textbf{``PASS, disputed''} in warning colour, not as
+a plain green PASS.
 A failure inside these extra checks never breaks a run that has already been verified.
 
 \section{Persistence Schema}

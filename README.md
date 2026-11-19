@@ -68,18 +68,18 @@ Natural language ─▶ Specification ─▶ RTL gen ─▶ Testbench gen ─▶
 cd backend
 python3 -m venv venv && source venv/bin/activate   # if not already created
 pip install -r requirements.txt
-cp .env.example .env        # optional provider settings, see "Model providers" below
+cp .env.example .env        # optional; every line is commented out. NOTE: .env values override the command line
 
 # 2. Frontend
 cd ../frontend
-npm install
+npm ci
 
 # 3. Launch both (from repo root)
 ./run.sh
 ```
 
-- Backend: http://localhost:8000  (docs at `/docs`)
-- Frontend: http://localhost:5173
+- Backend: http://127.0.0.1:8000  (docs at `/docs`; it listens on 127.0.0.1 only, since it has no login)
+- Frontend: http://127.0.0.1:5173 (`strictPort`: it stops with an error instead of moving to another port)
 
 **Live setup used for the demo and the evaluation** (two terminals; from `viva/DEMO_RUNBOOK.md`):
 
@@ -144,13 +144,13 @@ Full table (checks, strength, toggle coverage, timing, area per design): [`backe
 
 ```bash
 cd backend
-PATH="$HOME/.local/bin:$PATH" OFFLINE_MODE=1 python3 -m pytest tests/ -q   # 459 passed (32 test files)
+PATH="$HOME/.local/bin:$PATH" OFFLINE_MODE=1 python3 -m pytest tests/ -q   # 589 passed (35 test files)
 PATH="$HOME/.local/bin:$PATH" python3 tools/mutation_sweep.py            # 27 of 27 injected bugs caught
 PATH="$HOME/.local/bin:$PATH" python3 tools/verify_mapping.py            # 19 of 19 designs equivalent at gate level (about 30 s)
 PATH="$HOME/.local/bin:$PATH" python3 tools/preflight.py                 # demo readiness, free checks only
 #   add --live to preflight.py for ONE tiny live model call (uses a little quota)
 cd ../frontend
-npm test                  # 226 passed (vitest)
+npm test                  # 259 passed (vitest)
 npm run build             # tsc -b && vite build
 ```
 
@@ -161,7 +161,10 @@ The backend suite runs with **no API key** (`OFFLINE_MODE=1`); the model catalog
 - The API accepts browser calls from this machine only: CORS allows `localhost` / `127.0.0.1` origins, with no wildcard. Extra exact origins are opt-in through `CORS_ALLOW_ORIGINS` (comma-separated; entries with `*` are ignored).
 - Keys live only in `backend/.env` (git-ignored) or the backend's environment, never in the web page, the frontend bundle or the logs. The simulator child process gets a scrubbed environment.
 - Path-traversal block (`DESIGN_ID_RE ^[a-zA-Z0-9_-]{1,32}$` + `is_relative_to`), `max_length` (prompt 2K, rtl/tb 50K), generic `500` errors instead of `str(e)`, per-IP rate limit `20/min` on all `POST`, `MAX_CODE_BYTES 200KB`, simulation timeout `1..120 s`, workspace GC. Set `TRUST_PROXY_HEADERS=1` only behind a trusted reverse proxy.
+- Sandbox: system tasks are allow-listed; file I/O, `include, token pasting and non-plain `$dumpfile` names are refused; token-spanning checks run on comment-stripped text, and every rule runs again on the macro-expanded source (Icarus' own preprocessor) whenever a macro is used. Compiler and simulator run under CPU/memory/file limits; a timed-out tool is killed with its children. The OpenCode child process gets an allowlisted environment.
+- Request bodies are capped at 1 MB (also chunked uploads); the backend binds 127.0.0.1.
 - The sandbox is defence in depth on a developer machine, not a jail. For multi-user use the simulator belongs in a container.
+- **Nine-role self-review (19 Nov 2026):** ASIC, verification, backend, security, LLM, frontend, UX, QA and release reviewers reported about 110 findings; each was reproduced, fixed and pinned by a test shown to fail without the fix, then an independent verifier tried to break the fixes (see the guide, chapter "Lessons from the Nine-Role Review"). All 123 saved runs give the same verdicts with the old and new code.
 
 ## Limitations
 
@@ -217,7 +220,7 @@ backend/
   pdk/               sky130hd_tt.lib goes here (git-ignored, see pdk/README.md)
   tools/             mutation_sweep.py, verify_mapping.py, evaluate_live.py, preflight.py, build_opensta.sh
   evaluation/        live evaluation: summary.md, results.jsonl, artifacts/, independent/
-  tests/             pytest suite (459 tests, 32 files; offline, no key)
+  tests/             pytest suite (589 tests, 35 files; offline, no key)
 frontend/
   src/App.tsx        layout + streaming + Projects drawer + UVM export → zip download
   src/components/    PromptPanel, ModelPicker, TestbenchModelSelect, SpecReview, SpecSummary, CodeEditor, AgentChat,

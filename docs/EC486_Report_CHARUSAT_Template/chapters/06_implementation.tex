@@ -43,14 +43,14 @@ are used for the timing and area estimate; if either tool or the cell library is
 missing, the API reports the estimate as not available instead of inventing numbers.
 
 \section{Test Strategy}
-The backend suite has 459 tests in 32 files: data models and validation, linter behaviour,
+The backend suite has 589 tests in 35 files: data models and validation, linter behaviour,
 simulator and VCD parsing, toggle coverage, API edge cases, orchestrator
 repair/fallback/guard paths, LLM response parsing (XML sections, malformed JSON
 salvage, literal newlines), verdict integrity, the sandbox policy, mutation testing,
 the timing and area stage, the formal equivalence check and the critical path, the model catalogue and model switching, the separate
 testbench model, the specification review and the verification tools themselves. The
 suite runs against a throw-away workspace and never touches the developer's
-database. The frontend suite has 226 Vitest tests in 15 files, including an automated
+database. The frontend suite has 259 Vitest tests in 18 files, including an automated
 accessibility audit with axe-core. The mutation tests are the important ones: they take a
 curated design, inject a semantic bug (wrong increment, missing reset, wrong mux
 select, wrong ALU opcode), and assert that the testbench reports FAIL. A testbench
@@ -120,21 +120,21 @@ Verification tools & \code{tools/}, \code{evaluation/} & \code{mutation_sweep.py
 \subsection{Test inventory}
 \begin{table}[H]
 \centering
-\caption{Automated tests (459 backend in 32 files, 226 frontend in 15 files), all passing in the final check of 19 November 2026.}
+\caption{Automated tests (589 backend in 35 files, 259 frontend in 18 files), all passing in the final check of 19 November 2026.}
 \label{tab:tests}
 \footnotesize
 \begin{tabularx}{\textwidth}{@{}p{3.2cm}r X@{}}
 \toprule
 \textbf{Area} & \textbf{Tests} & \textbf{Files (tests)} \\
 \midrule
-Verdict and sandbox & 87 & \code{test_check_parser} (38), \code{test_verdict_integrity} (30), \code{test_sandbox} (19) \\
-Repair loop and trust & 98 & \code{test_spec_review} (19), \code{test_mutation} (18), \code{test_verification_quality} (17), \code{test_trust_signals} (16), \code{test_orchestrator} (15), \code{test_independent_testbench} (13) \\
-Timing, equivalence, coverage & 93 & \code{test_timing} (46), \code{test_equivalence} (22), \code{test_toggle_coverage} (9), \code{test_verify_mapping} (8), \code{test_synthesis_metrics} (5), \code{test_yosys_warnings} (3) \\
-Models and providers & 107 & \code{test_model_catalog} (38), \code{test_model_switching} (32), \code{test_llm_parsing} (15), \code{test_opencode_provider} (8), \code{test_model_routing} (7), \code{test_error_messages} (7) \\
-Parsing and data & 44 & \code{test_models} (14), \code{test_linter} (13), \code{test_vcd_parser} (6), \code{test_vcd_roles} (6), \code{test_simulator} (5) \\
-API and tooling & 30 & \code{test_evaluate_live} (12), \code{test_edge_cases} (6), \code{test_api} (5), \code{test_preflight} (5), \code{test_stream_persistence} (1), \code{test_disconnect} (1) \\
+Verdict and sandbox & 123 & \code{test_verdict_integrity} (61), \code{test_check_parser} (39), \code{test_sandbox} (19), \code{test_run_isolation} (4) \\
+Repair loop and trust & 112 & \code{test_independent_testbench} (24), \code{test_spec_review} (19), \code{test_mutation} (19), \code{test_verification_quality} (17), \code{test_orchestrator} (17), \code{test_trust_signals} (16) \\
+Timing, equivalence, coverage & 111 & \code{test_timing} (53), \code{test_equivalence} (29), \code{test_toggle_coverage} (12), \code{test_verify_mapping} (8), \code{test_synthesis_metrics} (6), \code{test_yosys_warnings} (3) \\
+Models and providers & 128 & \code{test_model_catalog} (39), \code{test_model_switching} (32), \code{test_llm_parsing} (23), \code{test_error_messages} (18), \code{test_opencode_provider} (8), \code{test_model_routing} (8) \\
+Parsing and data & 62 & \code{test_models} (14), \code{test_linter} (14), \code{test_uvm_export} (12), \code{test_simulator} (10), \code{test_vcd_parser} (6), \code{test_vcd_roles} (6) \\
+API and tooling & 53 & \code{test_api_guards} (15), \code{test_edge_cases} (13), \code{test_evaluate_live} (12), \code{test_api} (6), \code{test_preflight} (5), \code{test_stream_persistence} (1), \code{test_disconnect} (1) \\
 \midrule
-Frontend (Vitest) & 226 & App (three files), AgentChat, ModelPicker, PromptPanel, ResultsPanel, SchematicView, SpecReview, SpecSummary, TestbenchModelSelect, TestCasesView, WaveformViewer, waveform helpers, accessibility audit \\
+Frontend (Vitest) & 259 & App (four files), stream client, error boundary, AgentChat, ModelPicker, PromptPanel, ResultsPanel, SchematicView, SpecReview, SpecSummary, TestbenchModelSelect, TestCasesView, WaveformViewer, waveform helpers, accessibility audit \\
 \bottomrule
 \end{tabularx}
 \end{table}

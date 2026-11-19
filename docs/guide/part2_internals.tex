@@ -73,13 +73,14 @@ The browser never talks to the AI provider and never runs tools. All secrets (AP
 \file{backend/tools/build_opensta.sh} & Builds OpenSTA from source into \file{~/.local/opensta} (no Homebrew). \\
 \file{backend/evaluation/} & Recorded live results: \file{results.jsonl}, \file{summary.md}, the final designs and testbenches in \file{artifacts/}. \\
 \file{backend/evaluation/independent/} & Hand-written reference testbenches (\file{tb_c1.v} \ldots\ \file{tb_s6.v}), \file{run.py} that checks each evaluated design against them, and \file{strength.py} that checks the references themselves with every mutant. \\
-\file{backend/tests/} & 459 automated backend tests in 32 test files, plus \file{conftest.py} (shared test set-up) and two fake servers (\file{cf_fake.py}, \file{nim_fake.py}) so Cloudflare and NIM code is tested without the internet. \\
+\file{backend/tests/} & 589 automated backend tests in 35 test files, plus \file{conftest.py} (shared test set-up) and two fake servers (\file{cf_fake.py}, \file{nim_fake.py}) so Cloudflare and NIM code is tested without the internet. \\
 \file{backend/workspace/} & Runtime files: one folder per design (\file{design.sv}, \file{testbench.sv}, \file{transcript.log}, \file{design.vcd}) and \file{projects.db}. \\
 \file{frontend/src/App.tsx} & The page: holds all state and connects the components. \\
 \file{frontend/src/api.ts} & Every call to the backend, including the SSE stream reader. \\
 \file{frontend/src/types.ts} & TypeScript copies of the backend data shapes. \\
 \file{frontend/src/theme.ts} & Light, dark or system theme; an explicit choice is remembered in the browser. \\
 \file{frontend/src/components/} & PromptPanel, ModelPicker, TestbenchModelSelect, SpecReview, SpecSummary, AgentChat, CodeEditor, ResultsPanel, TestCasesView, WaveformViewer, SchematicView (plus their tests). \\
+\file{frontend/src/ErrorBoundary.tsx} & Catches a drawing error in the results panel so the rest of the page keeps working. \\
 \file{frontend/src/netlistRender.ts} & Lays out a Yosys netlist as an SVG drawing with netlistsvg; loaded only when a schematic view needs it. \\
 \file{docs/} & Report, presentation, poster, screenshots, live evidence, this guide. \\
 \file{run.sh}, \file{Dockerfile}, \file{docker-compose.yml}, \file{render.yaml}, \file{vercel.json} & Ways to run and deploy (Chapter~\ref{ch:running}). \\
@@ -166,7 +167,7 @@ synthesis & Generic synthesis result or ``not available''. \\
 second\_opinion & Sent twice when a repair rewrote the testbench: first ``asking for a fresh testbench'', then \code{second_opinion} (status PASS, FAIL or unavailable, with counts and the model). \\
 strength & After a PASS: \code{strength} (bugs injected, bugs caught, survivors). \\
 timing & After a PASS, when the tools exist: \code{timing} (slack, area, cells, or the reason it was refused). \\
-done & Final verdict: \code{status}, \code{response} (the complete RunResponse). \\
+done & Final verdict: \code{status}, \code{response} (the complete RunResponse, including \code{pass_disputed} when the evidence contradicts a PASS); its message says ``PASS, but disputed: \ldots'' in that case. \\
 error & Something failed: a short, safe \code{message}. \\
 \bottomrule
 \end{tabularx}
@@ -183,7 +184,7 @@ All of this lives in \file{backend/orchestrator.py}, mainly in the generator fun
 The orchestrator does not pass model output blindly to the next stage:
 
 \begin{description}
-  \item[\code{_has_complete_module(code, name)}] True only if the text contains \code{endmodule} and a \code{module <name>} header. Catches truncated or chatty answers before they reach the compiler, where they would cause a cryptic syntax error.
+  \item[\code{_has_complete_module(code, name)}] True only if the text contains \code{endmodule} and a \code{module <name>} header, both outside comments and strings (a comment such as \code{// module counter} next to \code{module up_counter} used to pass). Catches truncated or chatty answers before they reach the compiler, where they would cause a cryptic syntax error.
   \item[\code{_tb_check_count(tb)}] Counts the places where a testbench can actually fail: increments of a fail or error counter, \code{$error} / \code{$fatal}, \code{assert(} and calls of the standard \code{chk(...)} task. Comments and strings are blanked out first (\code{_strip_comments_and_strings}), so a comment such as \code{// $error} does not count, and a bare \code{fail_count = 0} is not a check. A testbench with zero checks cannot fail, so it is refused: ``Refusing to report PASS from a testbench that cannot fail.''
   \item[\code{_tb_problems(tb, name)}] The full acceptance test for a testbench: a complete module named \code{testbench}, at least one check, and a real instance of the design (\code{_instantiates_dut}), not just a mention of its name. The same rules apply to a testbench proposed by a repair.
   \item[Retry once.] RTL and testbench generation each get one automatic retry when the answer is invalid; a second failure stops the run with a clear message.
@@ -249,20 +250,30 @@ fix_location: ...   confidence: high|medium|low
 
 The prompt also tells the model to check the testbench against the specification first: if the testbench's expected value is wrong, the bug is in the testbench, not the RTL. This rule came from a real live failure (a 32-bit expected value compared with a 3-bit output).
 
+Two things can go wrong with the answer itself, and both are handled honestly. If the reply cannot be read (a refusal, a reply cut off inside \code{<rtl>}, code without the tags), the fixer asks once more with the format spelled out; if the second reply is also unreadable the loop stops with ``The repair reply could not be read'', not with the misleading ``no change''. And if the model stops answering in the middle of the loop (a quota or a timeout), the run is \emph{kept}: the last simulated result, the code and the waveform are returned with the note ``The repair model became unavailable \ldots{} this is the last simulated result''. Before the last review such a failure threw the whole run away.
+
 \subsection{Anti-cheat guard}
 
-If the last run compiled and ran (FAIL, not ERROR or TIMEOUT), and the proposed testbench has \emph{fewer} checks than the current one, the testbench change is thrown away and the note ``Testbench change rejected: it removed self-checks'' is added. A testbench that did not even compile, or that hung, may be rewritten. A proposed RTL that is not a complete module with the right name, or a proposed testbench that fails \code{_tb_problems}, is also rejected.
+The testbench is the judge, so the repair loop must not be able to weaken it. The rule depends on what the last run showed:
 
-When a separate model wrote the testbench (Section~\ref{sec:independenttb}), the rule is stricter: after a FAIL, \emph{no} testbench change from the design model is applied at all (``Testbench change not applied: a separate model wrote it, so a failing check is reported and not rewritten away'').
+\begin{description}
+  \item[The testbench did not compile.] Its oracle never ran, so the fixer may rewrite it freely.
+  \item[It ran but printed no readable summary] (for example \code{passed = 12} instead of \code{Passed: 12}) and no failure lines. The oracle is broken, so it may be repaired, but the repaired testbench may not have fewer checks.
+  \item[Anything else] (a FAIL, a runtime stop such as \code{$fatal}, a hang). The testbench did its job. A proposed testbench with \emph{fewer} checks is thrown away with the note ``Testbench change rejected: it removed self-checks''.
+\end{description}
 
-Even an accepted testbench change leaves a trace. At the end of the run, if the result is PASS and the testbench is no longer the one first generated, the \emph{original} testbench is run again on the final design. If it still fails, the result carries the warning ``The testbench was modified during repair, and the ORIGINAL testbench still reports \ldots{} Review the testbench change before trusting this PASS.''
+The middle case used to be treated like the first: any ERROR or TIMEOUT unlocked a free rewrite. The last review showed how that could be abused: a testbench that stopped at its first mismatch with \code{$fatal} gave an ERROR, the design model replaced it with a one-check testbench, kept the bug, and got a PASS. Failure lines without a summary are now a FAIL (Section~\ref{sec:verdict}), so that path is closed. A proposed RTL that is not a complete module with the right name, or a proposed testbench that fails \code{_tb_problems}, is also rejected.
+
+When a separate model wrote the testbench (Section~\ref{sec:independenttb}), the rule is stricter: the design model may not change that testbench at all unless its oracle is broken (one of the first two cases). If it does repair it, the result is no longer labelled independent, and a warning says so (``The separate model's testbench did not compile and was repaired by the design model, so the final testbench is no longer independent of the design'').
+
+Even an accepted testbench change leaves a trace. At the end of the run, if the result is PASS and the testbench is no longer the one first generated, the \emph{original} testbench is run again on the final design. If it still fails, the result carries the warning ``The testbench was modified during repair, and the ORIGINAL testbench still reports \ldots{} Review the testbench change before trusting this PASS.'' The verdict itself then changes too: the response gets a \code{pass_disputed} reason and the screen shows \textbf{PASS, disputed} in warning colour with ``Do not trust this PASS yet'' under it. The same happens when the fresh second-opinion testbench fails the final design. Before the last review the headline stayed a plain green PASS and the contradiction was only in the warning text, which is exactly where an examiner would not look.''
 
 \subsection{No-op and oscillation guards}
 
 \code{_state_hash} computes a SHA-256 fingerprint of the RTL and testbench together, after removing comments and all whitespace, so cosmetic edits do not count as changes. If the fix produces the same fingerprint as now, the loop stops (``Model returned no change''). If it produces a fingerprint seen earlier, the loop stops (``Oscillation detected''). Tracking the testbench as well as the RTL matters: a fix that only repairs a wrong expected value in the testbench is a real change.
 
 \begin{viva}
-\emph{``What stops the AI from cheating?''} Several things: the testbench is written from the specification, and its prompt tells it the RTL is withheld; a fix may not reduce the number of checks in a testbench that already ran; if the testbench changed, the original one is run again at the end and a fresh second-opinion testbench is asked for; with a separate testbench model, a failing check is never rewritten by the design model; and only the simulator's own Passed/Failed counts decide the verdict. Also, a fix that changes nothing or repeats an earlier state stops the loop.
+\emph{``What stops the AI from cheating?''} Several things: the testbench is written from the specification, and its prompt tells it the RTL is withheld; a fix may rewrite the testbench freely only when it did not compile, and otherwise may not reduce its checks; if the testbench changed, the original one is run again at the end and a fresh second-opinion testbench is asked for, and if either fails the verdict reads ``PASS, disputed''; with a separate testbench model, a failing check is never rewritten by the design model; the design may not print or end the simulation; and only the simulator's own counts decide the verdict. Also, a fix that changes nothing or repeats an earlier state stops the loop.
 \end{viva}
 
 \section{Post-processing}
@@ -274,7 +285,7 @@ After the loop, in this order, the orchestrator:
   \item if the run passed but the testbench was changed during repair, re-runs the original testbench and asks for a second opinion (Section~\ref{sec:secondopinion});
   \item for a PASS, measures testbench strength (Section~\ref{sec:strength});
   \item for a PASS, when Yosys, OpenSTA and the cell library are all present, runs the timing and area estimate, which ends with the equivalence proof (Chapter~\ref{ch:timing});
-  \item joins every warning (too few checks, weak testbench, original testbench still failing, second opinion disagrees, the two models disagree) into one \code{verification_warning} shown on the result.
+  \item joins every warning (repair stopped because the model became unavailable, a port wider than the check task compares, too few checks, weak testbench, original testbench still failing, second opinion disagrees, the two models disagree, an independent testbench repaired by the design model) into one \code{verification_warning} shown on the result, and sets \code{pass_disputed} when the original or the fresh testbench fails a PASS.
 \end{enumerate}
 Each extra check is wrapped so that if it fails it only disappears from the result; it can never break a run that already has a verdict. Measured toggle coverage is not a separate stage: the simulator computes it every time it parses a result (Section~\ref{sec:toggle}).
 
@@ -286,7 +297,8 @@ All model calls go through \code{_call_llm} inside \code{pipeline_events}:
   \item If the run is already offline, call the per-run \code{OfflineProvider}.
   \item Otherwise call the live provider. If it raises an error, \code{_is_upstream_error} decides whether this was the provider's fault (connection error, timeout, rate limit, HTTP 401/403/429/5xx, empty answer). Programming errors are \emph{not} hidden; they surface as errors.
   \item For a provider failure \emph{before any live call has succeeded}, switch this run to offline mode and set a visible \code{fallback_notice}.
-  \item For a provider failure \emph{after} a live call succeeded (\code{live_ok}), fail honestly: ``LLM became unavailable mid-run''. Swapping to a curated design at that point would silently replace your design with an unrelated counter. A specification you confirmed counts as user work, so it sets \code{live_ok} too.
+  \item For a provider failure \emph{after} a live call succeeded (\code{live_ok}), never switch to the demo. At the repair step the run is kept with the last result (see above); at any other step it fails honestly: ``LLM became unavailable mid-run''. Swapping to a curated design at that point would silently replace your design with an unrelated counter. A specification you confirmed counts as user work, so it sets \code{live_ok} too.
+  \item The decision to run offline is made with the provider that serves \emph{the chosen model}, not the default one. Before the last review, a Cloudflare model you picked was silently served by the scripted demo whenever the OpenCode app (the default provider) was missing from the server.
   \item If \emph{you} picked a model in the Model menu (not the server's default) and it fails, the run is never swapped for the scripted demo. \code{_chosen_model_problem} says in plain words why: ``The model you chose (\ldots) could not be used: its usage limit has been reached / it did not answer in time / the provider did not accept the credentials \ldots{} Pick another model from the Model menu.'' The same happens when the separate testbench model fails (``The testbench model you chose \ldots'').
 \end{enumerate}
 
@@ -313,13 +325,13 @@ Mutation testing (Section~\ref{sec:mutation}) is normally run once, by hand, on 
   \item \code{mask_code} makes a same-length copy of the RTL with comments, strings, compiler directives and parameter declarations blanked out, so nothing in them is ever changed.
   \item \code{candidate_mutants} lists every one-token change the operators can make: an arithmetic, logic or comparison operator swapped (for example \code{+} to \code{-}, \code{&} to \code{|}, \code{==} to \code{!=}, \code{<} to \code{<=}), a \code{~} or \code{!} removed, \code{posedge} swapped with \code{negedge}, a sized constant changed by one, the lowest bit of a binary or hex literal flipped, a 1-bit constant flipped, or an \code{if} condition negated. Bit ranges such as \code{[WIDTH-1:0]} and loop headers are protected: changing them alters a declaration or can create an endless loop, not a realistic bug.
   \item \code{select_mutants} picks up to 12 of them (\code{STRENGTH_MAX_MUTANTS}), spread across the kinds of change and along the file, in a fixed (repeatable) way.
-  \item \code{run_strength} simulates the \emph{same} testbench against each mutant, with 6 seconds per mutant and a 40-second budget overall (\code{STRENGTH_BUDGET_SECONDS}). A mutant that does not compile says nothing and is not counted. A mutant whose run is not a PASS is \textbf{caught}; one that still passes \textbf{survived}.
+  \item \code{run_strength} first runs the \emph{unmutated} design with the same testbench and times it (the baseline). Then it simulates the same testbench against each mutant, with 6 seconds per mutant and a 40-second budget overall (\code{STRENGTH_BUDGET_SECONDS}). A mutant that does not compile says nothing and is not counted. A mutant the testbench \emph{reports as failing} is \textbf{caught}; one that still passes \textbf{survived}. A mutant that times out counts as caught only if the baseline finished in well under the limit (the mutant made the design hang); otherwise, like a crash, it is \textbf{inconclusive} and not counted.
 \end{enumerate}
 
 The result is shown as ``Caught N of M injected bugs'', with each survivor's line number and change. If the time budget runs out, the score is marked as stopped early.
 
 \begin{warnbox}
-A survivor is ``not noticed'', not ``proven missed'': some mutants are \textbf{equivalent} (the changed design behaves exactly like the original), so no testbench could catch them. The sample is small and syntactic. The score is evidence about the testbench, not a proof. When at least 5 mutants ran and fewer than half were caught, \code{weak_strength_note} adds a ``Weak testbench'' warning to the PASS.
+A survivor is ``not noticed'', not ``proven missed'': some mutants are \textbf{equivalent} (the changed design behaves exactly like the original), so no testbench could catch them. The sample is small and syntactic. The score is evidence about the testbench, not a proof. When at least 5 mutants ran and fewer than half were caught, \code{weak_strength_note} adds a ``Weak testbench'' warning to the PASS; for a small design with fewer than 5 mutants it warns when \emph{none} was caught. Before the last review, a slow testbench with a single check scored 3 of 3 because every mutant ran out of time, and a small design that caught 0 of 3 got no warning at all.
 \end{warnbox}
 
 \section{Measured toggle coverage}
@@ -327,7 +339,7 @@ A survivor is ``not noticed'', not ``proven missed'': some mutants are \textbf{e
 
 Coverage asks how much of the design the tests exercised. SiliconScribe measures one kind directly: \textbf{toggle coverage}. A bit is covered when the simulator recorded it going from 0 to 1 \emph{and} from 1 to 0. A bit that never moved was never really tested.
 
-\code{toggle_coverage} in \file{backend/vcd_parser.py} reads the VCD file the simulator wrote (not anything the testbench prints). It counts only signals declared inside the design instance under the testbench, so testbench variables cannot inflate the number. A change through \code{x} or \code{z} does not count. The result is a percentage of bits, the number of bits and signals, and up to 12 signals that never switched (with the bit positions that never rose or never fell). If the VCD was larger than the 8 MB read limit, the figure is marked as a lower bound.
+\code{toggle_coverage} in \file{backend/vcd_parser.py} reads the VCD file the simulator wrote (not anything the testbench prints). It counts only signals inside the \emph{design's own} instance: the simulator first finds, in the testbench text, the instance names of modules defined in the RTL (\code{dut_instance_names}), and only signals below one of those instances count, also when the design sits inside a wrapper module or a \code{generate} block. Testbench variables and testbench-side helper modules cannot inflate the number (before the last review, an unrelated stimulus generator in the testbench raised an adder's coverage from 46\% to 77\%). Each run deletes the previous run's waveform first, so an old file can never be measured for a new run. A change through \code{x} or \code{z} does not count. The result is a percentage of bits, the number of bits and signals, and up to 12 signals that never switched (with the bit positions that never rose or never fell). If the VCD was larger than the 8 MB read limit, the figure is marked as a lower bound.
 
 \begin{warnbox}
 Only toggle coverage is measured. Line and branch coverage are not. Verilator was tried for them and rejected: with the pip-installed Verilator only 3 of 12 evaluated designs built, and the testbenches of two designs (c3, c4) stopped with ``unsupported tristate construct''. The older \code{compute_coverage} summary (vectors, pass rate, any \code{COV:} lines a testbench prints) is still there, but it only repeats what the testbench reported.
@@ -341,8 +353,8 @@ The weakest kind of PASS is one that only appeared after a repair \emph{rewrote 
 So, when the final status is PASS and the testbench is no longer the one first generated, the orchestrator asks for a \textbf{fresh testbench} from the same specification (by the same testbench model), checks it with \code{_tb_problems}, and runs the final design against it. There are three outcomes:
 \begin{description}
   \item[Agrees] The fresh testbench passes: ``Second opinion agrees: a fresh testbench, written from the same specification, passes all N of N checks.''
-  \item[Disagrees] The fresh testbench fails: a warning is added to the PASS (``do not trust this PASS'').
-  \item[Unavailable] The fresh testbench could not be generated, was unusable, or did not run cleanly. The reason is shown; nothing is assumed.
+  \item[Disagrees] The fresh testbench fails: the PASS becomes ``PASS, disputed'' and a warning names the failing count.
+  \item[Unavailable] The fresh testbench could not be generated, was unusable, did not run cleanly, or ran fewer than 20 checks (too few to count as agreement; a one-check testbench used to count). The reason is shown; nothing is assumed.
 \end{description}
 The second opinion is skipped in offline mode (the scripted demo has nothing new to say) and can be turned off with \code{SECOND_OPINION_ENABLED=0}.
 
@@ -355,9 +367,9 @@ By default one model writes both the design and the testbench. Withholding the R
 
 The ``Testbench written by'' menu lets a \emph{different} model, even from a different provider, write the testbench (\code{testbench_model} in the request). Then three rules change:
 \begin{itemize}
-  \item After a FAIL, the design model is \textbf{never} allowed to change the testbench: a failing check is reported, not rewritten away. Only a testbench that does not compile or hangs may be repaired.
+  \item The design model is \textbf{never} allowed to change the testbench to make a failing check go away: a failing check is reported, not rewritten. Only a testbench whose oracle is broken (it did not compile, or printed no readable summary) may be repaired, and then the result is no longer labelled independent. Two spellings of the same model (\code{x-free} and \code{opencode/x-free}) are not counted as independence.
   \item If the two models disagree (the run ends in FAIL), the result says so and names both models: ``Either the design or the testbench misreads the specification: compare the first failing check with the specification before changing either.''
-  \item The result records both models (``Written by \ldots. Testbench written by \ldots, a separate model'').
+  \item The result records both models (``Design written by \ldots. Testbench written by \ldots, a separate model''); with one model it says ``Design written by \ldots, which also wrote the testbench''.
 \end{itemize}
 
 \begin{keyidea}
@@ -414,7 +426,11 @@ A clock period is the time between two drum beats. Every signal must finish its 
 
 \section{Clocks come from the netlist}
 
-It would be easy to guess the clock from a port name such as \code{clk}. \file{timing.py} does not. It reads the mapped netlist and takes whatever input port is actually wired to the flip-flops' clock pins, whatever its name. A design with several clocks gets one clock each; paths between them are not timed and the note says so.
+It would be easy to guess the clock from a port name such as \code{clk}. \file{timing.py} does not. It reads the mapped netlist and takes whatever input port is actually wired to the flip-flops' clock pins, whatever its name. A design with several clocks gets one clock each. Every clock's own paths are timed, \emph{including} the paths from the inputs and to the outputs of that clock's flip-flops; only paths that cross from one clock to another are not timed, and the note says so.
+
+\begin{warnbox}[A bug the last review found here]
+Input and output delays used to be attached only to the first clock. Paths from the inputs into the second clock's flip-flops were therefore not timed at all, so a slow multiplier on a second clock was reported as meeting 500 MHz (slack $+1.74$ ns) when on its own it misses by 1.43 ns. Now every clock gets its own input and output delays.
+\end{warnbox}
 
 \section{When the estimate refuses}
 
@@ -433,6 +449,10 @@ Some designs cannot be timed honestly with this simple setup. For them the repor
 \begin{warnbox}[Pre-layout estimate: not sign-off]
 The app prints this with every result: one typical corner; no placement or routing, so \textbf{no wire delay}; an ideal clock (no clock tree); zero input and output delays; \textbf{setup analysis only} (hold needs a real clock tree to mean anything). \textbf{Power is not reported.} Real chips are checked after place and route, at several corners. So this answers ``is this logic anywhere near the target clock, and roughly how big is it?'', nothing more. Never present it as final (sign-off) timing or as the area of a manufactured chip.
 \end{warnbox}
+
+Two numbers need care. The maximum frequency is computed as $1000 / (\text{period} - \text{slack})$, which is only right when the worst path takes one whole clock period. When the worst path starts or ends on the falling clock edge (a half-cycle path), that formula gives a number that changes with the target clock, so no maximum frequency is shown at all. And a design without a clock is timed against a virtual clock: its longest input-to-output delay is a real number, but $1/\text{delay}$ is not a clock rate, so the chat message does not quote one.
+
+The cell counts come from Yosys' statistics. Yosys writes large areas in exponent form (\code{1.6E+03} for a group of 64 flip-flops), and the parser used to skip such lines, so a 64-bit register was refused as ``no logic cells'' and larger counters reported 0 flip-flops; it now reads exponent numbers. If the testbench sets parameters with \code{defparam}, the note says that those values were \emph{not} applied, so the numbers are for the design's default parameters.
 
 Examples from the built-in designs: the 4-bit counter maps to 11 cells, 150.144\,\umsq{}, minimum period 0.727 ns (meets 100 MHz with +9.27 ns slack); the 8-bit ALU has no clock, 109 cells, 636.861\,\umsq{}, longest path 2.69 ns. The live-generated FIFO (s6) is 120 cells, 1830.51\,\umsq{}, minimum period 1.845 ns.
 
@@ -461,14 +481,14 @@ The timing and area numbers describe \file{netlist.v}, the mapped netlist. They 
 \begin{description}
   \item[\code{proven}] Combinational: ``SAT proof over every input value''. Sequential: every register and output point proven by induction.
   \item[\code{different}] The solver found input values where the netlist and the RTL disagree. The app shows a red alert and declares the timing and area invalid.
-  \item[\code{not_proven}] Induction proved only some points. This usually means synthesis re-encoded the state of a state machine, so registers no longer pair by name. It is never shown as a pass.
-  \item[no result] Yosys could not run the check, or it took longer than 60 seconds; the line says so.
+  \item[\code{not_proven}] Induction proved only some points. This usually means synthesis re-encoded the state of a state machine, so registers no longer pair by name. It is also the result, with the reason, when a netlist flip-flop uses a clock edge the RTL does not use, when there are several clocks, or when a register gets a starting value from its declaration or an \code{initial} block (\code{_sequential_limits}): induction would otherwise ``prove'' those wrongly. It is never shown as a pass.
+  \item[no result] Yosys could not run the check, the design has more than 600 mapped cells (the proof is skipped: SAT on a large multiplier can run for minutes), or the proof took longer than 20 seconds and was stopped. The app shows ``Netlist not formally checked'' with the reason, never a silent gap.
 \end{description}
 
 \textbf{Measured result.} On the 14 evaluated designs plus 4 built-in designs (18 in all): 16 \textbf{proven}, 2 \textbf{not proven} (f1 and f2, the two state machines, whose state was re-encoded by synthesis) and 0 different. A deliberately sabotaged netlist, with one NAND gate swapped for a NOR, was reported as different. The proof shows netlist $=$ RTL for those 16 designs; it says nothing about whether their RTL meets the prompt.
 
 \begin{warnbox}[What the proof does not cover]
-It does not prove that the RTL is correct; a bug in the RTL is copied faithfully into the netlist. ``Not proven'' is an honest ``don't know'', not a hidden failure: for f1 and f2 the gate-level simulation check below still passed with the same testbench.
+It does not prove that the RTL is correct; a bug in the RTL is copied faithfully into the netlist. ``Not proven'' is an honest ``don't know'', not a hidden failure: for f1 and f2 the gate-level simulation check below still passed with the same testbench. The last review checked the proof's blind spots directly: a netlist with one flip-flop moved to the falling clock edge, and a design whose register started at 5 from its declaration, were both ``proven'' before; both are now ``not proven'' with the reason.
 \end{warnbox}
 
 \section{How the estimate itself was checked}
@@ -599,17 +619,22 @@ The full system prompts are in \file{backend/llm_service.py} (and Appendix~B of 
 
 \section{Reading the model's answer}
 
-Models wrap code in prose and Markdown fences. The parsers are deliberately forgiving:
+Models wrap code in prose and Markdown fences, think out loud first, and sometimes give a draft before the real answer. The parsers are forgiving, but in a careful order:
 
 \begin{description}
-  \item[\code{_strip_code_fence}] Finds every complete \code{module ... endmodule} unit, fenced or not, and returns the \emph{longest}. Models sometimes put the real module unfenced and a short example in a fence, so ``first fence'' is unreliable.
-  \item[\code{_extract_json}] Finds the outermost \texttt{\{...\}} and parses it, accepting raw newlines inside strings (models often paste Verilog into JSON without escaping).
-  \item[\code{_parse_fix_response}] Reads the \code{<diagnosis>}, \code{<rtl>}, \code{<testbench>} and \code{<summary>} sections; falls back to JSON, then to \code{_salvage_fix_json}, which recovers each field by locating the next known key.
+  \item[\code{_strip_think}] Removes reasoning blocks (\code{<think>...</think>}), and everything before a lone closing \code{</think>} (some models print only the closing tag). Every parser below starts with this, so a draft written while ``thinking'' is never taken as the answer.
+  \item[\code{_strip_code_fence}] Finds every complete \code{module ... endmodule} unit in the whole reply and keeps \emph{one definition per module name: the last one} (\code{_last_definition_of_each}). A reply with a draft and then a ``corrected'' copy used to produce the module twice, which Icarus rejects as ``already declared''; helper modules with other names are all kept.
+  \item[\code{_extract_json}] Takes the \emph{last} complete top-level JSON object in the reply that parses, accepting raw newlines inside strings (models often paste Verilog into JSON without escaping). The old ``first brace to last brace'' slice broke on prose such as ``\{as requested\}'' before the JSON, or on a draft object followed by the final one.
+  \item[\code{_parse_fix_response}] Reads the \emph{last} \code{<diagnosis>}, \code{<rtl>}, \code{<testbench>} and \code{<summary>} sections (a model that first restates the format inside its reasoning no longer fools it); falls back to JSON, then to \code{_salvage_fix_json}, which recovers each field by locating the next known key. If none of these yields any code, the answer is marked \code{parse_failed} (Section~\ref{ch:pipeline} describes the one retry).
 \end{description}
+
+The specification model is also forgiving about spelling: port directions such as \code{Output}, \code{out} or \code{in} are normalised, a missing description becomes empty text, a behaviour given as a list is joined, and a single constraint string becomes a list. A module name written by the model is turned into a plain identifier (\code{model_module_name}: \code{Up/Down Counter} becomes \code{Up_Down_Counter}, and \code{testbench}, which would collide with the testbench's own module, becomes \code{testbench_dut}). A name \emph{you} type in the specification review is not rewritten; it is checked and refused with a clear message if it is not a plain identifier.
+
+When a call fails, the reason shown is read with whole-word patterns (\code{_reason}): HTTP 429 or ``too many requests'' is a usage limit; 410 or ``retired'' means the provider retired the model; an empty answer after reasoning means the model spent its whole answer budget on thinking; a missing \code{opencode} command is reported as such. The earlier substring tests gave wrong reasons, for example ``credentials'' for any message that contained \code{max_tokens}. The HTTP client retries a failed call twice (\code{LLM_MAX_RETRIES}); three retries with a 120-second timeout could make one call wait eight minutes.
 
 \section{The offline provider}
 
-\code{OfflineProvider} needs no internet. It is used when \code{OFFLINE_MODE=1}, when nothing is configured, or as the labelled fallback described in Chapter~\ref{ch:pipeline}. It matches keywords in the prompt (\code{match_design}): ``alu'' with ``8'' gives the 8-bit ALU, then ``alu'', ``counter'', ``adder'' or ``mux''; anything else defaults to the counter, with a notice saying the request did not match. A prompt containing ``buggy'' gets the counter with a deliberate bug (counting by two), which demonstrates the repair loop. Its ``fix'' simply swaps in the known-correct design, so it reports \code{fix_type = "offline_scripted"} and \emph{no} diagnosis, because inventing a root cause would be dishonest.
+\code{OfflineProvider} needs no internet. It is used when \code{OFFLINE_MODE=1}, when nothing is configured, or as the labelled fallback described in Chapter~\ref{ch:pipeline}. It matches whole words in the prompt (\code{match_design}): ``alu'' with ``8-bit'' gives the 8-bit ALU, then ``alu'', ``counter'', ``adder'' or ``mux'' (plurals allowed); anything else defaults to the counter, with a notice saying the request did not match. Whole words matter: plain substring matching sent ``8-bit counter with a load \emph{value}'' to the ALU (``value'' contains ``alu'') and ``dis\emph{count} calculator'' to the counter, both labelled as exact matches. A ``half adder'' is answered with the built-in full adder but labelled as not an exact match. A prompt containing ``buggy'' gets the counter with a deliberate bug (counting by two), which demonstrates the repair loop. Its ``fix'' simply swaps in the known-correct design, so it reports \code{fix_type = "offline_scripted"} and \emph{no} diagnosis, because inventing a root cause would be dishonest.
 
 \section{The model list for other providers}
 
@@ -628,11 +653,12 @@ With the OpenCode app, the menu lists what the app offers (Section~\ref{sec:rout
 \begin{enumerate}
   \item \textbf{Validate the design id}: 1--32 characters of letters, digits, \code{_} or \code{-}, and the resolved folder must stay inside the workspace. This blocks tricks such as \code{../../etc}.
   \item \textbf{Policy scan} (\code{sandbox_violations} plus \code{rtl_integrity_violations}); any violation returns status ERROR with the reasons, before any file is written.
-  \item \textbf{Wait for a slot}: at most 2 simulations run at once (\code{SIM_MAX_CONCURRENT}); extra requests wait their turn.
-  \item \textbf{Write files} (\code{write_files}): each file at most 200 KB; \code{design.sv} and \code{testbench.sv} in the design's folder; \code{ensure_vcd_dump} inserts \code{$dumpfile("design.vcd")} and \code{$dumpvars(0, testbench)} if the testbench has none.
-  \item \textbf{Compile} (\code{compile}): \code{iverilog -g2012 -Wall}, 30-second limit, scrubbed environment. A one-line file with \code{`timescale 1ns/1ps} is compiled first so every file has a sensible default time unit without shifting line numbers. Failure returns ERROR with parsed file/line errors. A port-width mismatch between testbench and design, which Icarus only warns about, is treated as an error, because a narrower wire silently hides the upper bits.
+  \item \textbf{Wait for the design's folder, then for a slot}: only one run at a time may use a design's folder (\code{_dir_lock}), and at most 2 simulations run at once (\code{SIM_MAX_CONCURRENT}); extra requests wait their turn. Without the folder lock, two runs of the same design (two tabs, a double-clicked Re-run) overwrote each other's files and got each other's verdicts: the last review measured a wrong verdict in 25 of 25 tries.
+  \item \textbf{Remove the previous run's outputs}: old waveform files, transcript and compiled simulation are deleted, so an old file can never be reported for this run (a testbench that dumps to its own file name used to leave the old \file{design.vcd} behind, and it was shown as the new waveform).
+  \item \textbf{Write files} (\code{write_files}): each file at most 200 KB; \code{design.sv} and \code{testbench.sv} in the design's folder; \code{ensure_vcd_dump} inserts \code{$dumpfile("design.vcd")} and \code{$dumpvars(0, testbench)} right after the first module header that is not inside a comment, if the testbench has no dump call of its own (a dump call mentioned only in a comment does not count).
+  \item \textbf{Compile} (\code{compile}): \code{iverilog -g2012 -Wall}, 30-second limit, scrubbed environment, under the same CPU, memory and file limits as the simulation; a compile that times out is stopped together with its helper process \code{ivl} (\code{run_tool} kills the whole process group). A one-line file with \code{`timescale 1ns/1ps} is compiled first so every file has a sensible default time unit without shifting line numbers. Failure returns ERROR with parsed file/line errors. A port-width mismatch between testbench and design, which Icarus only warns about, is treated as an error, because a narrower wire silently hides the upper bits.
   \item \textbf{Run} (\code{run}): \code{vvp} with the timeout clamped to 1--120 s, an output-size cap (\code{ulimit -f}), a CPU-time cap (\code{ulimit -t}) and a memory cap (\code{ulimit -v}, 1024 MB by default, enforced on Linux only), stdin closed, transcript to \file{transcript.log}. Overrun returns TIMEOUT, with the last output kept so the fixer can see where it hung.
-  \item \textbf{Decide the verdict} (\code{parse_results}), read the \code{CHK} rows (\file{checks.py}, display only) and measure toggle coverage from the VCD.
+  \item \textbf{Decide the verdict} (\code{parse_results}), read the \code{CHK} rows (\file{checks.py}) in one pass that keeps only counters and the rows that can be shown (a runaway testbench printing millions of lines used to take about 470 MB here; it now takes about 2 MB), and measure toggle coverage of the design's own instance from the VCD.
 \end{enumerate}
 
 \section{How the verdict is decided}
@@ -645,9 +671,10 @@ The testbench prints its own summary, so \code{_decide_verdict} must not trust t
 \toprule
 \textbf{Condition in the transcript} & \textbf{Status} \\
 \midrule
-No whole-line \code{Passed: <number>} and \code{Failed: <number>} pair (for example \code{Failed: x}) & ERROR \\
-\code{Failed: N} with N $>$ 0 (the \emph{last} pair counts) & FAIL \\
-\code{Failed: 0}, but the log has lines starting with FAIL, ERROR or FATAL & FAIL \\
+No whole-line \code{Passed: <number>} and \code{Failed: <number>} pair, and no failure lines & ERROR \\
+No valid summary, but failure lines (FAIL, ERROR, FATAL, \code{CHK|FAIL}) & FAIL \\
+\code{Failed: N} with N $>$ 0 anywhere, even if a later line says \code{Failed: 0} & FAIL \\
+\code{Failed: 0}, but the log has lines starting with FAIL, ERROR or FATAL, or a \code{CHK|FAIL} row & FAIL \\
 \code{Passed: 0}: no checks were executed & ERROR \\
 The simulator exited with a non-zero code (killed by a limit, crashed) & ERROR \\
 Otherwise (\code{Passed} $>$ 0, \code{Failed: 0}, clean exit) & PASS \\
@@ -655,22 +682,26 @@ Otherwise (\code{Passed} $>$ 0, \code{Failed: 0}, clean exit) & PASS \\
 \end{tabularx}
 \end{center}
 
-So a PASS needs a valid summary \emph{and} at least one executed check. Zero checks is never a PASS. A testbench whose watchdog fires before it prints its summary has no valid summary, so the run is an ERROR. The words \code{ALL TESTS PASSED} alone never decide anything.
+So a PASS needs a valid summary \emph{and} at least one executed check, and nothing in the log may say otherwise. Zero checks is never a PASS. The words \code{ALL TESTS PASSED} alone never decide anything. Only ASCII digits count as numbers (a \code{²} once crashed the parser).
+
+Three rows of the table came from the last review. A testbench that resets its counters for each phase could print \code{Failed: 4} and later \code{Failed: 0}, and only the last line counted. A \code{CHK|FAIL} row was ignored next to \code{Failed: 0}. And failure lines without a summary gave ERROR, which the repair loop treats as ``the testbench is broken, rewrite it'' (Section~\ref{ch:pipeline}): a testbench that stopped at its first mismatch with \code{$fatal} could be rewritten away. All three now give FAIL.
 
 Test count is passed plus failed. Up to 20 FAIL/ERROR lines are collected as errors. The \code{log_excerpt} the debugger sees is the first 1000 and the last 1500 characters of the transcript (with passing \code{CHK} lines removed), so the first failing vector is not cut off.
 
-The design under test must not be able to write the verdict either. \code{rtl_integrity_violations} rejects RTL that contains \code{Passed:}, \code{Failed:}, \code{ALL TESTS PASSED}, \code{$finish}, \code{$stop} or \code{$fatal}, or that reaches into the testbench (\code{testbench.}...). A design that printed a fake summary at time 0 was once reported as PASS; it is now refused.
+The design under test must not be able to write the verdict either. \code{rtl_integrity_violations} rejects RTL that contains \code{Passed:}, \code{Failed:}, \code{ALL TESTS PASSED}, \code{$finish}, \code{$stop} or \code{$fatal}; that prints anything (\code{$display}, \code{$write}, \code{$strobe}, \code{$monitor}) or has a \code{final} block; or that reaches into the testbench (\code{testbench.}\ldots, also with a comment before the dot, or \code{$root}). A design that printed a fake summary at time 0 was once reported as PASS. The last review found two more ways: a \code{final} block (which runs after \code{$finish}, so its lines come last) printing \texttt{\%cassed: 16} with the character code of P, and a macro alias \code{`define T testbench} used as \code{`T.fail_count = 0}. Both are refused; the macro case because the rules are run again on the macro-expanded RTL. Comments are ignored for these checks, so a comment such as ``// final value'' is fine.
 
 \section{The sandbox policy}
+\label{sec:sandbox}
 
 Generated Verilog runs with the server's permissions, and Verilog has file-access system tasks. The final review proved the risk: a planted secret file was read by a testbench and returned in the API response. The protection has these layers:
 
 \begin{enumerate}
-  \item \textbf{Static policy.} Reject \code{$fopen}, \code{$fwrite}, \code{$fdisplay}, \code{$fgets}, \code{$fscanf}, \code{$fread}, \code{$readmemh}/\code{b}, \code{$writememh}/\code{b}, \code{$system}, \code{$sdf_annotate}, \code{$dumpports} and their variants; any \code{`include}; macro token pasting; and any \code{$dumpfile} that is not a plain file name in quotes. Comments are \emph{not} stripped first, because a \code{"//"} inside a string could fool a naive comment stripper into hiding a forbidden call. A false alarm is cheap; a miss is not.
+  \item \textbf{Static policy.} Reject \code{$fopen}, \code{$fwrite}, \code{$fdisplay}, \code{$fgets}, \code{$fscanf}, \code{$fread}, \code{$readmemh}/\code{b}, \code{$writememh}/\code{b}, \code{$system}, \code{$sdf_annotate}, \code{$dumpports} and their variants; any \code{`include}; macro token pasting; and any \code{$dumpfile} that is not a plain file name in quotes. Forbidden names are searched in the raw text, comments included; checks that span tokens (the \code{$dumpfile} argument, a reference to the testbench) run on text whose comments were removed by a string-aware scanner, so \code{$dumpfile/**/("/abs/x")} is caught too.
   \item \textbf{Allow-list of system tasks.} A list of forbidden tasks always misses one (a review found a testbench that wrote a file with \code{$fopena} and \code{$fputc} and still got PASS). So every system task must also be on an allow-list of side-effect-free tasks: printing, simulation control, time and random numbers, waveform dump, string formatting and maths. Anything else is refused.
+  \item \textbf{Checked again after macro expansion.} A macro can build a name the scan never sees: \code{`define ID(a) a} followed by \code{`ID($)fopen} wrote a file in the last review. Whenever a macro is used, Icarus' own preprocessor expands the RTL and testbench together (in compile order) and every rule runs again on the result; code that cannot be preprocessed is refused. Legitimate macros, such as a check macro that calls \code{$display}, still work.
   \item \textbf{The same check in several places.} The scan runs before compiling, before the linter calls its tools, and before the timing stage maps the design, not only before simulation.
   \item \textbf{Scrubbed environment.} \code{clean_env} passes only \code{PATH}, \code{LANG}, \code{LC_ALL} and \code{TMPDIR} to the tools, so API keys never reach them.
-  \item \textbf{Resource caps.} \code{ulimit -f} limits any file the simulation writes (about 64 MB), so an endless \code{$display} loop cannot fill the disk; CPU time and memory are capped (memory on Linux only); at most 2 simulations at once.
+  \item \textbf{Resource caps.} The compiler and the simulator run under the same caps, and a tool that times out is stopped together with its child processes. \code{ulimit -f} limits any file the simulation writes (about 64 MB), so an endless \code{$display} loop cannot fill the disk; CPU time and memory are capped (memory on Linux only); at most 2 simulations at once.
 \end{enumerate}
 
 \begin{warnbox}
@@ -683,7 +714,7 @@ This is defence in depth, not a jail. A static scan of a language as flexible as
 
 \section{Linter (\texttt{linter.py})}
 
-\code{VerilogLinter.lint(rtl, tb)} returns \code{ok}, \code{errors}, \code{warnings} and raw output. It tries Verilator (\code{--lint-only -Wall}), then Icarus (compile to \file{/dev/null}), and always runs pattern heuristics (\code{_heuristic_checks}) such as unbalanced \code{module}/\code{endmodule}. With no tool installed, heuristic errors stay errors, so broken code is never reported as clean. The orchestrator runs lint three times (RTL alone, RTL plus testbench, after each fix) and only reports; lint never blocks the pipeline.
+\code{VerilogLinter.lint(rtl, tb)} returns \code{ok}, \code{errors}, \code{warnings} and raw output. It tries Verilator (\code{--lint-only -Wall}), then Icarus (compile to \file{/dev/null}), and always runs pattern heuristics (\code{_heuristic_checks}) such as unbalanced \code{module}/\code{endmodule}. With no tool installed, heuristic errors stay errors, so broken code is never reported as clean. The width heuristic compares a number only with the width of the signal it is \emph{assigned} to (\code{count <= 16;} for a 4-bit \code{count}); it used to compare any number with the smallest vector in the file, so \code{if (cnt <= 9)} next to a 2-bit select was flagged. The orchestrator runs lint three times (RTL alone, RTL plus testbench, after each fix) and only reports; lint never blocks the pipeline. Old lint is cleared when a repair changes the code, and when the simulator compiled and ran the code, the Results tab labels lint as \emph{advisory}.
 
 \section{Coverage (\texttt{cov\_metrics.py})}
 \label{sec:coverage}
@@ -698,7 +729,7 @@ This is defence in depth, not a jail. A static scan of a language as flexible as
 \section{Schematic and synthesis}
 \label{sec:schematicnetlists}
 
-\code{build_schematic} groups the specification's ports into inputs, outputs and inouts; the frontend draws a block with ports on each side. \code{YosysSynthesizer} runs \code{read_verilog; hierarchy; proc; opt; write_json; synth; check; stat; write_json} with a 30-second limit, \emph{without} a cell library. The two \code{write_json} steps save two snapshots of the design for the Schematic tab:
+\code{build_schematic} groups the specification's ports into inputs, outputs and inouts; the frontend draws a block with ports on each side (every inout included, with room for the longest port name). \code{YosysSynthesizer} runs \code{read_verilog; hierarchy; proc; opt; write_json; synth -flatten; check; stat; write_json} with a 30-second limit, \emph{without} a cell library, using relative file names, a clean environment and closed input. \code{-flatten} matters: without it a ripple adder built from four \code{full_adder} instances was reported as ``4 cells of type full\_adder'', and a latch inside a sub-module was missed. The two \code{write_json} steps save two snapshots of the design for the Schematic tab:
 \begin{itemize}
   \item after \code{proc; opt}: \textbf{word-level RTL cells} such as \code{$add}, \code{$sub}, \code{$mux}, comparators and \code{$adff} flip-flops (field \code{rtl_netlist});
   \item after \code{synth}: \textbf{single-bit generic gates} such as \code{$_XOR_}, \code{$_NAND_} and \code{$_DFFE_PN0P_} (an enabled flip-flop with an active-low asynchronous reset) (field \code{json_netlist}). These are Yosys' own generic cells, not sky130 standard cells; the sky130 netlist exists only inside the timing stage.
@@ -709,11 +740,15 @@ Generic synthesis also reports Yosys' generic (unmapped) cell count, the most co
 
 \section{UVM export (\texttt{uvm\_templates.py})}
 
-\code{generate_uvm_bundle(spec)} writes 16 files from templates: interface, sequence item, sequencer, sequence, driver, monitor, agent, scoreboard, coverage, environment, test, package, top module, Makefile, file list and README. It detects clocks, resets and opcode ports to adapt the templates (for example an ALU-style scoreboard). Only ALU-like designs get a real reference model in the scoreboard; for other designs the scoreboard is a placeholder that logs transactions and leaves a marked hook for the user's own reference model. The bundle is zipped and downloaded by the browser. It is export-only and has never been compiled in Questa here.
+\code{generate_uvm_bundle(spec)} writes 16 files from templates: interface, sequence item, sequencer, sequence, driver, monitor, agent, scoreboard, coverage, environment, test, package, top module, Makefile, file list and README. It detects clocks, resets and opcode ports to adapt the templates. The top module uses the design's own clock and reset names and the reset's real polarity (\code{rst_n} and \code{reset_b} are active-low, \code{rst} active-high), and the monitor waits for the reset to be \emph{released}. A clock input makes the design sequential even if the specification never uses the word. Only a design that says it is an ALU (or names the operations) and has an operation port of at least 3 bits gets the ALU reference model; for other designs the scoreboard is a placeholder that logs transactions and leaves a marked hook for the user's own reference model. The bundle is zipped and downloaded by the browser. It is export-only and has never been compiled in Questa here.
+
+\begin{warnbox}[What the last review found in the export]
+Every generated sequence declared helper tasks \emph{inside} the \code{body()} task, which SystemVerilog does not allow, so no bundle could compile; mux-like specifications crashed the generator; an active-high reset was wired to a port that did not exist; and a 2:1 mux was treated as an ALU (with an illegal enumeration). All four are fixed and tested structurally. The counter scoreboard's reference model is still simplistic, and the bundle is still never simulated here.
+\end{warnbox}
 
 \section{Persistence (\texttt{db.py}) and cleanup}
 
-One SQLite table, \code{projects}, with columns for id, prompt, module name, spec, RTL, testbench, explanation, status, pass/fail counts, iterations, creation time, a waveform-truncated flag, and \code{data} (the full response as JSON). \code{save_project}, \code{get_project}, \code{list_projects}, \code{count_projects} and \code{delete_project} do what their names say. \code{cleanup_old_workspaces} deletes design folders older than 24 hours at start-up.
+One SQLite table, \code{projects}, with columns for id, prompt, module name, spec, RTL, testbench, explanation, status, pass/fail counts, iterations, creation time, a waveform-truncated flag, and \code{data} (the full response as JSON). \code{save_project}, \code{get_project}, \code{list_projects}, \code{count_projects} and \code{delete_project} do what their names say; the project list also returns each run's model and whether it was a built-in demo run, read from the saved JSON. \code{cleanup_old_workspaces} deletes, at start-up, only folders whose names look like the app's own (letters, digits, \code{_} and \code{-}) and whose \emph{newest file} is older than 24 hours (a folder's own date does not change when a file inside is rewritten, so an active folder once looked old). The workspace is one absolute folder next to the backend code; tests point it at a temporary folder before anything is imported, so a test run never touches your saved projects.
 
 \section{Data contracts (\texttt{models.py})}
 
@@ -774,7 +809,9 @@ POST & /api/admin/cleanup & Delete old workspaces; disabled unless \code{ADMIN_T
   \item Every route except \code{/}, \code{/health} and a plain \code{/api/models} calls \code{_check_rate_limit}: 20 requests per 60 seconds per IP, protected by a lock because handlers run in threads. By default the IP is the real socket address. Only when \code{TRUST_PROXY_HEADERS=1} (behind a trusted proxy such as Render) is the \emph{last} \code{X-Forwarded-For} entry used, which the proxy adds; otherwise any caller could fake that header to dodge the limit.
   \item Simulation, synthesis, timing, model list, specification, project and export routes are plain \code{def}, so FastAPI runs them in a thread pool and the server stays responsive during a simulation or a slow model listing.
   \item Model ids in every request are checked against the safe pattern (Section~\ref{sec:modelid}) before anything else happens; a bad one is HTTP 422.
-  \item Errors are logged in full on the server, but clients only receive a short, safe message such as ``Internal server error'', so stack traces and file paths never leak.
+  \item Errors are logged in full on the server, but clients only receive a short, safe message such as ``Internal server error'', so stack traces and file paths never leak. A storage error says ``The server could not read or write its working files'' with the system's reason, without the path; absolute server paths are removed from short messages, while model ids that look like paths (\code{nim/poolside/...}) are kept.
+  \item Request bodies are limited to 1 MB by a small middleware (\code{BodySizeLimit}) that counts the bytes as they arrive, so a chunked upload without a size header is capped too; a larger body gets HTTP 413 before it is parsed.
+  \item The server listens on 127.0.0.1 only: it has no login, so it must not be reachable from the room's Wi-Fi. The admin token is compared as bytes, so a non-ASCII header is a clean 403, not a 500.
   \item Design ids are full UUIDs; an earlier 8-character id could collide and overwrite another project.
   \item If a built frontend exists in \file{static/} (the Docker image), the backend serves it too, so one container runs the whole app.
 \end{itemize}
@@ -801,21 +838,21 @@ POST & /api/admin/cleanup & Delete old workspaces; disabled unless \code{ADMIN_T
 
 \section{App.tsx: state and handlers}
 
-\code{App} keeps all state with React's \code{useState}: the provider badge, the model list and sources, the chosen model, testbench model and thinking level, the review-the-specification switch, the RTL and testbench text, module name, explanation, result, waveform, schematic, iteration history, design id, synthesis, strength, timing, second opinion, the models that wrote the design and testbench, the specification used, lint info, fallback notice and warning, timeline messages and saved projects. On first load it calls \code{getModels} (which also tells it whether the backend is live or offline) and \code{listProjects}. If the backend cannot be reached, it shows an offline-demo badge instead of failing. The chosen model, testbench model, ``Show other models'' and the review switch are remembered in the browser (\code{localStorage}).
+\code{App} keeps all state with React's \code{useState}: the provider badge, the model list and sources, the chosen model, testbench model and thinking level, the review-the-specification switch, the RTL and testbench text, module name, explanation, result, waveform, schematic, iteration history, design id, synthesis, strength, timing, second opinion, the models that wrote the design and testbench, the specification used, lint info, fallback notice and warning, timeline messages and saved projects. On first load it calls \code{getModels} (which also tells it whether the backend is live or offline) and \code{listProjects}. If the backend cannot be reached, the header shows a red ``Server not reachable'' badge with a Retry button: an unreachable server is not a mode, and the old offline-demo badge made it look like one. The chosen model, testbench model, ``Show other models'' and the review switch are remembered in the browser (\code{localStorage}).
 
 \begin{description}
   \item[\code{loadModels}, \code{chooseModel}] Read the Model menu from \code{/api/models}; keep the current choice if it is still offered, otherwise restore the remembered one, otherwise use the server's default. A testbench model that is no longer offered is cleared.
   \item[\code{handleGenerate}] If the review switch is on (and the app is live), call \code{parseSpec} and show the SpecReview panel; otherwise call \code{startRun} straight away.
-  \item[\code{startRun}] Clears old results, opens the stream (with the confirmed specification if there is one), and for each event: adds a timeline message, shows a fallback notice once (\code{lastNoticeRef} prevents duplicates), and fills whichever fields the event carries. On \code{done} it loads the complete response, switches to the Results tab and refreshes Projects. It turns common network problems into friendly messages.
-  \item[\code{handleCancel}] Aborts the stream (the Stop button).
-  \item[\code{handleReRun}] Sends the edited code to \code{/api/simulation/run} once, without the AI. It clears strength, timing, second opinion and ``Written by'', because those described the previous code, not the edited one.
-  \item[\code{handleUVMExport}] Requests the bundle and downloads the zip.
-  \item[\code{handleLoadProject}, \code{handleDeleteProject}] Open or delete a saved run (deleting asks for confirmation).
+  \item[\code{startRun}] Clears \emph{every} result of the previous run, including the RTL, testbench, explanation and design id (otherwise a new run that failed after its RTL arrived left the new RTL next to the old testbench, and Re-run checked that mixed pair), closes any open specification review, opens the stream (with the confirmed specification if there is one), and for each event: adds a timeline message, shows a fallback notice once (\code{lastNoticeRef} prevents duplicates), clears old lint when a repair changes the code, and fills whichever fields the event carries. On \code{done} it loads the complete response (including \code{pass_disputed}), switches to the Results tab and refreshes Projects. It turns network problems into plain messages that say the run is lost and what to do.
+  \item[\code{handleCancel}] Aborts the stream or a re-run (the Stop button). Both now carry an abort signal; Stop used to do nothing during a Re-run.
+  \item[\code{handleReRun}] Sends the edited code to \code{/api/simulation/run} once, without the AI. It clears strength, synthesis, timing, second opinion, lint and ``Design written by'', because those described the previous code, and shows the note ``Re-run of edited code: only the simulation was repeated \ldots''.
+  \item[\code{handleUVMExport}] Requests the bundle and downloads the zip; a second click while an export is running is ignored.
+  \item[\code{handleLoadProject}, \code{handleDeleteProject}] Open or delete a saved run (deleting asks for confirmation). Loading resets the repair count and lint too, and a counter (\code{loadSeq}) makes sure only the \emph{latest} load writes the screen: two quick clicks used to let the slower, older project overwrite the newer one.
 \end{description}
 
 \section{api.ts and streaming}
 
-The browser's built-in \code{EventSource} cannot send a POST body, so \code{streamDesign} uses \code{fetch} and reads the response body as a stream. It decodes chunks into a buffer, splits on blank lines (\texttt{\textbackslash n\textbackslash n}), takes the \code{data:} line of each frame and parses its JSON. HTTP 502/504 errors become ``Render is waking up\ldots'' because the free backend sleeps after 15 minutes idle.
+The browser's built-in \code{EventSource} cannot send a POST body, so \code{streamDesign} uses \code{fetch} and reads the response body as a stream. It decodes chunks into a buffer, normalises \texttt{\textbackslash r\textbackslash n} to \texttt{\textbackslash n} on the whole buffer (a pair can be split across two chunks), splits on blank lines, takes the \code{data:} line of each frame and parses its JSON. After Stop, frames already received are not applied (a cancelled run used to apply its final result), and the stream is always closed, even if handling an event throws. A FastAPI validation error (a list of messages) is shown as its messages, not as raw JSON. HTTP 502/504 errors say that the server did not answer in time. \file{api.stream.test.ts} runs this real function against a fake server; every other App test replaces it with a stub.
 
 \section{The components}
 
@@ -824,10 +861,78 @@ The browser's built-in \code{EventSource} cannot send a POST body, so \code{stre
   \item[ModelPicker] Three source tabs (OpenCode, Cloudflare, NVIDIA NIM) with arrow-key navigation, a refresh button, the model drop-down grouped by provider (free models marked ``(free)''), the model's note, a hint when a source is not set up, and on the OpenCode tab the ``Show other models'' check box with the number hidden.
   \item[TestbenchModelSelect] ``Testbench written by'': ``Same model as the design'' or any model from any source.
   \item[SpecReview] The specification review panel: module, ports and parameters, editable behaviour and constraints, ``Generate with this specification'' and Cancel.
-  \item[AgentChat] The run timeline: one message per event with an icon for its stage and status, the structured diagnosis when present, a ``Working\ldots'' timer while a run is going, and the design explanation.
+  \item[AgentChat] The run timeline: one message per event with an icon for its stage and status, the structured diagnosis folded under a ``Diagnosis'' line (it is also on the Results tab), with \texttt{`code`} from the model shown as code, a ``Working\ldots'' timer while a run is going, and the design explanation.
   \item[CodeEditor] Two tabs (RTL and testbench) using CodeMirror with Verilog highlighting, editable, with a copy button. Edited code can be re-simulated with Re-run. It is shown on the Design tab (before any run, the Design tab shows a welcome page with recent projects instead).
-  \item[ResultsPanel] Five tabs: Design, Results, Test cases, Waveform, Schematic. \emph{Results}: the verdict (status badge, tests, passed, failed, pass rate), ``Written by'', the second opinion, warnings, then sections for testbench strength, synthesis, timing and area (with the equivalence line, \code{EquivalenceLine}, and the fold-out critical path table, \code{CriticalPath}), toggle coverage, test types, lint, the self-correction loop, errors and the specification used (SpecSummary).
+  \item[ResultsPanel] Five tabs: Design, Results, Test cases, Waveform, Schematic. \emph{Results}, top to bottom: the built-in-demo tag when the result is not from an AI model, the verdict (status badge, which reads ``PASS, disputed'' in warning colour when the evidence contradicts the PASS; checks, passed, failed, pass rate), the ``Do not trust this PASS yet'' line, warnings, the second opinion, ``Design written by'', then sections for testbench strength, synthesis, timing and area (with the equivalence line, \code{EquivalenceLine}, and the fold-out critical path table, \code{CriticalPath}), toggle coverage, test types, lint, the self-correction loop, errors and the specification used (SpecSummary).
   \item[TestCasesView] Every executed check, with filters, search and a bit-by-bit comparison (Section~\ref{sec:testcases}).
-  \item[WaveformViewer] Draws the waveform as SVG: a time ruler, single-bit signals as high/low lines, buses as labelled hex segments, zoom (0.5$\times$ to 4$\times$) and reset, and a notice when data was truncated. No external tool such as GTKWave is needed.
+  \item[WaveformViewer] Draws the waveform as SVG: a time ruler, single-bit signals as high/low lines, buses as labelled hex segments, zoom (0.5$\times$ to 4$\times$) and reset, and a notice when data was truncated. No external tool such as GTKWave is needed. Values are formatted by \code{formatValue}, which never fails: Icarus prints a partly unknown nibble in capitals (\code{X0}), and that once threw an error in decimal mode that blanked the whole page. Only a pinned cursor is announced to screen readers, and a cursor from one run is not carried to the next.
+  \item[ErrorBoundary] Wraps the results panel: if any part of it fails to draw, that panel shows the error and a ``Try again'' button, and the rest of the app keeps working.
   \item[SchematicView] Three views chosen with buttons: \emph{Block diagram} (the module as a box with input ports on the left, outputs on the right and widths shown as \code{[n:0]}, drawn by the component itself), \emph{RTL cells} and \emph{Gate level} (the two netlists of Section~\ref{sec:schematicnetlists}). A view without a netlist is greyed out, with the reason as a tooltip. The netlist views are laid out by \textbf{netlistsvg} (open source, MIT licence) through \file{netlistRender.ts}, which is \emph{lazy-loaded}: the layout engine is fetched with a dynamic \code{import} only the first time such a view is opened, so the first page load stays fast. The SVG it returns is shown through an \code{<img>} tag from a blob URL, not inserted into the page: an SVG shown as an image cannot run script, whatever names the design's signals carry. Above 400 cells (\code{MAX_DRAWN_CELLS}) nothing is drawn and the tab says why. Zoom (0.5$\times$ to 6$\times$), \emph{Fit to panel} and \emph{Download SVG} work on the drawn view.
 \end{description}
+
+% ---------------------------------------------------------------------------
+\chapter{Lessons from the Nine-Role Review}
+\label{ch:review}
+
+Before the viva the whole tool (not the documents) was reviewed once more, this time by nine reviewers, each acting as one kind of engineer. Each role looks at the same code with different questions, so each finds different defects. This chapter explains what each role looks for, the most instructive thing it found, \emph{why} the defect existed, and why the fix works. It is the best preparation for the question ``how do you know it works?''.
+
+\section{How the review was run}
+
+\begin{enumerate}
+  \item \textbf{Nine roles, read-only.} ASIC design, design verification, backend systems, security, LLM integration, frontend, interface design, test engineering and release engineering. Each reviewer could read everything and run experiments in a scratch copy, but could not change the project. About 110 findings were reported.
+  \item \textbf{Reproduce first.} No finding was fixed on someone's word. Each was reproduced with a real run (a real simulation, a real Yosys or OpenSTA run, a real browser state in a test) before any code changed.
+  \item \textbf{A test for every fix.} Each fix comes with a regression test that fails without it.
+  \item \textbf{Sabotage the fixes.} Each fix was then undone on purpose, one at a time, to confirm that a test fails. Four fixes survived this at first: their tests passed for the wrong reason and were rewritten.
+  \item \textbf{An independent verifier.} A tenth reviewer received only the original findings and the change set (not the author's explanations), tried to break every security and verdict fix, and re-ran all saved runs with the old and new code. It found a sandbox bypass through a macro argument, a regular-expression slowdown introduced by the fixes, and three regressions. Those went through the same steps.
+\end{enumerate}
+
+\begin{keyidea}
+Fixing is the easy part. The discipline is in the steps around it: reproduce the defect, pin it with a test that fails, prove the test can fail by undoing the fix, and let someone who did not write the fix try to break it. The independent round showed why: three of the author's own fixes had introduced new bugs.
+\end{keyidea}
+
+\section{What each role looks for, and what it found}
+
+\subsection*{ASIC design engineer: ``are the numbers physically right?''}
+An ASIC engineer distrusts any number until it is traced to the tool output. Here: Yosys writes large areas as \code{1.6E+03}, and the parser read only plain decimals, so a 64-bit register ``mapped to no logic''. Input and output delays were attached to the first clock only, so a slow path on a second clock was reported as meeting 500 MHz. The maximum frequency was computed with a whole-period formula even for half-cycle paths. And the equivalence proof's induction assumes all flip-flops tick together and start equal, so it ``proved'' a netlist with a flip-flop on the wrong clock edge and a design that relied on a power-up value. \emph{Lesson:} every formula has a domain where it is valid; report ``not proven'' outside it.
+
+\subsection*{Design-verification engineer: ``can a wrong design be called PASS?''}
+A verification engineer attacks the oracle and the verdict. Found: a later \code{Failed: 0} cancelled an earlier \code{Failed: 4}; \code{CHK|FAIL} rows were ignored; a design could forge the summary from a \code{final} block; the standard check compared only 64 bits; a slow testbench scored 100\% strength because timeouts counted as catches; and a repair could keep the bug and edit the expected values, leaving a green PASS that its own original testbench contradicted. \emph{Lesson:} any evidence against a PASS must win, and must be visible in the headline, not only in a warning paragraph.
+
+\subsection*{Backend systems engineer: ``what happens under concurrency and failure?''}
+Found: two runs of the same design shared one folder and swapped verdicts (25 of 25 tries); a compile timeout killed \code{iverilog} but left its child \code{ivl} spinning at 100\% CPU; a runaway testbench made the parser hold every check line in memory (about 470 MB); an old waveform was shown for a new run. \emph{Lesson:} a subprocess is a tree, a folder is shared state, and anything you read must be bounded.
+
+\subsection*{Security engineer: ``can untrusted code reach outside its box?''}
+Found: a comment between \code{$dumpfile} and its argument slipped past the path check and Icarus wrote the waveform to any path. Later the verifier found that a macro argument could deliver the \code{$} of \code{$fopen}. Also, the OpenCode child process received every API key in the environment. \emph{Lesson:} check what the tool will \emph{actually} see, which is why the rules now run on the macro-expanded source from Icarus' own preprocessor, and give child processes an allowlist, not a denylist.
+
+\subsection*{LLM integration engineer: ``what does the app do with a bad reply?''}
+Found: a Cloudflare model you chose was silently replaced by the demo when the default provider was missing; a quota error at the repair step threw away the whole run; a draft followed by a corrected module produced the module twice; reasoning text was parsed as the answer; error reasons were guessed from substrings (``token'' in \code{max_tokens} read as a credentials problem). \emph{Lesson:} assume replies are messy and services fail mid-run, keep the user's work, and give the real reason.
+
+\subsection*{Frontend engineer: ``can the screen show something false or break?''}
+Found: one unusual value (\code{X0}) in decimal mode blanked the whole page; a slow project load overwrote a newer one; Stop did nothing during a Re-run; a new run that failed early left new RTL next to the old testbench, and Re-run checked that mixed pair. \emph{Lesson:} every async result needs an identity, and one broken panel must not take down the app.
+
+\subsection*{Interface designer: ``what will an examiner believe from the screen?''}
+Found: the green PASS was louder than the caution that qualified it; saved demo runs reopened looking live; nothing said a live run takes minutes; browser zoom on a laptop projector switched to a stacked layout; the welcome text claimed more than the app proves. \emph{Lesson:} honesty is also visual hierarchy: the most important caveat must sit next to the verdict.
+
+\subsection*{Test engineer: ``would the tests catch a regression?''}
+Found by changing one line at a time: the real streaming client had no test (every App test used a stub), the anti-cheat and oscillation tests passed even with those guards removed, the admin endpoint and project deletion had no tests (a change that deleted every project passed the suite), and simply collecting the tests ran the clean-up on the real workspace. \emph{Lesson:} a test you have never seen fail is not yet a test.
+
+\subsection*{Release engineer: ``will the demo run on the day?''}
+Found: the backend listened on every network interface without a login; \code{.env.example} had active lines that override the command line; Vite silently moved to another port when 5173 was busy, leaving an old build on the expected address; preflight called a backend left in offline mode ``responding''. \emph{Lesson:} check what is actually running, not that something answers.
+
+\section{Numbers to remember}
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}X>{\raggedleft\arraybackslash}p{5.2cm}@{}}
+\toprule
+Findings reported by the nine roles & about 110 \\
+Each fix pinned by a test that fails without it & yes (sabotage-checked) \\
+Defects found by the independent verifier in the fixes & 1 bypass, 1 slowdown, 3 regressions \\
+Saved runs with identical verdicts, old vs new code & 123 of 123 (and 14 of 14 evaluation designs) \\
+Automated tests after the review & 589 backend + 259 frontend \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{viva}
+\emph{``Did you test your own tool, or only trust it?''} It was reviewed by nine role-based reviewers; every finding was reproduced with a real run, fixed, and pinned by a test that was shown to fail when the fix is removed; then an independent reviewer tried to break the fixes and found three regressions and a bypass, which were fixed the same way. The 123 saved runs give the same verdicts with the old and new code, so the fixes did not change any honest result.
+\end{viva}

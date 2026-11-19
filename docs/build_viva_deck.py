@@ -295,11 +295,11 @@ bullets(s, 9.35, 3.15, 3.4, 3.7, [
 
 # 10 --------------------------------------------------------------- live: second opinion
 s = slide("Live run: second opinion after a repair", "A FIFO run passed after one repair, but that repair changed the testbench, which "
-          "is suspicious. So the tool generated a fresh testbench from the same specification: it agrees, 3798 of 3798. The tool "
-          "still warns that the original testbench fails 482 checks, so a person can review the change.", kicker="Evidence")
+          "is suspicious. So the tool generated a fresh testbench from the same specification: it agrees, 3798 of 3798. But the "
+          "original testbench still fails 482 checks, so the result is shown as PASS, disputed, until a person reviews the change.", kicker="Evidence")
 fit_picture(s, A("screenshot_s06_results_pass"), 0.6, 1.55, 8.4, 5.3, center=False)
-box(s, 9.35, 1.7, 3.4, 1.25, fillc=T_GREEN, line=GREEN, paras=[{"runs": parse("**PASS 4134 / 4134**"), "size": 24,
-                                                               "color": GREEN}, "after one repair"], size=15, label="kpi pass")
+box(s, 9.35, 1.7, 3.4, 1.25, fillc=RGBColor(0xFD, 0xF1, 0xE6), line=AMBER, paras=[{"runs": parse("**PASS, disputed**"), "size": 24,
+                                                               "color": AMBER}, "4134 / 4134 after one repair"], size=15, label="kpi pass")
 bullets(s, 9.35, 3.15, 3.4, 3.7, [
     "The repair **changed the testbench**",
     "Fresh testbench agrees: **3798 / 3798**",
@@ -360,12 +360,12 @@ for k, (big, small, c, bc) in enumerate(kp):
 # 13 --------------------------------------------------------------- timing, area, tools
 s = slide("Timing, area, repair and tool checks", "Left: timing per design. Combinational designs get a longest path, never a clock "
           "rate. Area grows with flip-flops, the FIFO is largest. A seeded counter bug was found from the log alone and repaired "
-          "from 1 of 20 to 20 of 20 checks. The tool itself has 459 backend and 226 frontend tests.", kicker="Results")
+          "from 1 of 20 to 20 of 20 checks. The tool itself has 589 backend and 259 frontend tests.", kicker="Results")
 fit_picture(s, A("chart_timing_area_repair"), 0.6, 1.5, 6.6, 5.4)
 bullets(s, 7.55, 1.75, 5.2, 5.0, [
     "Combinational designs report a **longest path**, never a clock rate",
     "Seeded counter bug: **1 / 20 → 20 / 20** checks after the live repair",
-    "**459** backend + **226** frontend automated tests pass",
+    "**589** backend + **259** frontend automated tests pass",
     "**27 / 27** injected bugs caught in the built-in designs",
     "**16 / 18** netlists formally proven equal to the RTL"], size=17.5, label="t13 bullets", space_after=11)
 
@@ -418,7 +418,7 @@ text(s, 1.0, 1.05, W - 2.0, 0.5, ["CONCLUSION"], size=15, color=RGBColor(0x93, 0
 text(s, 1.0, 1.55, W - 2.0, 1.9, ["Only the simulator decides, and every PASS states how much it is worth."], size=36,
      color=WHITE, bold=True, label="c main")
 for k, (big, small) in enumerate([("14 / 14", "live runs PASS"), ("102 / 111", "bugs caught"), ("16 / 18", "netlists formally proven"),
-                                  ("459 + 226", "automated tests")]):
+                                  ("589 + 259", "automated tests")]):
     x = 1.0 + k * 2.88
     text(s, x, 3.75, 2.7, 0.75, [big], size=32, color=WHITE, bold=True, label="c big")
     text(s, x, 4.45, 2.7, 0.45, [small], size=15, color=RGBColor(0xCB, 0xD5, 0xE1), label="c small")

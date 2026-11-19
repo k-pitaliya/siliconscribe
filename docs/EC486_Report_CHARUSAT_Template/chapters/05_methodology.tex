@@ -67,14 +67,18 @@ read as zero, and \code{ALL TESTS PASSED} overrode printed errors. The rules are
 \item the \code{Passed:} and \code{Failed:} summary lines must each occupy a whole
 line, the last pair wins, and both counts must be numbers, otherwise the run is
 ERROR;
-\item any \code{FAIL}, \code{ERROR} or \code{FATAL} line contradicts \code{Failed: 0}
-and makes the run FAIL;
+\item any \code{FAIL}, \code{ERROR} or \code{FATAL} line, or a \code{CHK|FAIL} row,
+contradicts \code{Failed: 0} and makes the run FAIL, and a \code{Failed:} count above
+zero anywhere in the log is not cancelled by a later \code{Failed: 0};
+\item failure lines with no valid summary are a FAIL, not an ERROR (an ERROR would let
+the repair loop treat the testbench as broken and rewrite it);
 \item at least one check must have executed: \code{Passed: 0} is ERROR, never PASS;
 \item a simulator exit code other than zero (for example killed by a resource limit)
 is ERROR;
 \item the design under test may not print the summary lines or end the simulation
-(\code{$finish}, \code{$stop}, \code{$fatal} are refused in the RTL), so it cannot
-write its own verdict;
+(\code{$finish}, \code{$stop}, \code{$fatal}, printing tasks, \code{final} blocks and
+references to the testbench hierarchy are refused in the RTL, also after macro
+expansion), so it cannot write its own verdict;
 \item a testbench whose watchdog stops the run before the summary is printed has no
 valid summary, so the run is ERROR.
 \end{itemize}
@@ -91,9 +95,9 @@ in Section~\ref{sec:evidence} exist.
 Generated or user-edited Verilog is executed by \code{vvp} with the server's privileges, so it is untrusted input. The final-review probe (Section~\ref{sec:review}) showed that Verilog file-I/O system tasks (\code{$fopen}, \code{$fgets}, \code{$fwrite}, \code{$readmemh} and related tasks) could read or write any path the process could reach, and that the contents came back in the API response. Three independent controls now apply to every simulation, and the static policy also runs before lint, synthesis and timing:
 
 \begin{enumerate}[label=\textbf{\arabic*.}]
-\item \textbf{Static policy.} Before anything is compiled, the RTL and testbench are scanned. System tasks are an allow-list: anything not on it, including \code{$system}, file I/O and \code{$readmemh}, is refused, as are the include directive, macro token pasting, and a \code{$dumpfile} argument that is not a plain file name. The scan deliberately does not strip comments: a naive comment stripper can be fooled by a double slash inside a string literal into hiding a forbidden call.
+\item \textbf{Static policy.} Before anything is compiled, the RTL and testbench are scanned. System tasks are an allow-list: anything not on it, including \code{$system}, file I/O and \code{$readmemh}, is refused, as are the include directive, macro token pasting, and a \code{$dumpfile} argument that is not a plain file name. Forbidden names are searched in the raw text, comments included; checks that span several tokens (the \code{$dumpfile} argument, the testbench hierarchy) run on text whose comments were removed by a string-aware, single-pass scanner. Whenever a macro is used, every rule is applied again to the macro-expanded source, produced by Icarus' own preprocessor in compile order: a macro can otherwise build a name the scan never sees (\code{`define ID(a) a} followed by \code{`ID($)fopen}, found in the fourth review round). Code that uses macros but cannot be preprocessed is refused.
 \item \textbf{Scrubbed environment.} The compiler and simulator run with a minimal environment (path, locale and temporary directory only), so API keys held by the server never reach them.
-\item \textbf{Resource limits.} The simulator runs under file-size, CPU-time and memory limits (the memory limit is enforced on Linux, not on macOS), so a runaway \code{$display} loop cannot fill the disk before the wall-clock timeout; at most two simulations run at once.
+\item \textbf{Resource limits.} The compiler and the simulator run under file-size, CPU-time and memory limits, a timed-out tool is stopped with all its child processes, (the memory limit is enforced on Linux, not on macOS), so a runaway \code{$display} loop cannot fill the disk before the wall-clock timeout; at most two simulations run at once.
 \end{enumerate}
 
 This is defence in depth, not a security boundary: a static scan of a language as flexible as Verilog can never be airtight. For multi-user deployment the simulator must run inside a container or jail (Section~\ref{sec:scale}).
@@ -314,6 +318,16 @@ when every register and output point is proven.
 registers no longer pair up by name and induction cannot decide. The result is then
 ``not proven'', never a pass and never a failure. The gate-level simulation check
 of Section~\ref{sec:gatelevel} still applies.
+\item \textbf{Cases the induction cannot see.} Temporal induction treats every
+flip-flop as ticking in the same step. A sequential result is therefore reported as
+``not proven'' when a netlist flip-flop uses a clock edge the RTL does not use, when
+the design has more than one clock, or when a register gets a starting value from its
+declaration or an \code{initial} block (simulation uses that value, the netlist does
+not keep it at power-up). The fourth review round showed each of these being
+``proven'' before.
+\item \textbf{Size and time limits.} The proof is skipped above 600 mapped cells and
+stopped after 20\,s, so a large multiplier cannot stall a run; a skipped or stopped
+proof is shown as ``not formally checked'' with the reason.
 \end{itemize}
 
 What the proof shows is narrow: the netlist that the timing and area numbers describe
