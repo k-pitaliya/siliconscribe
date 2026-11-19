@@ -17,8 +17,8 @@ they are kept because they are still true records of what happened.
 \toprule
 \textbf{Check} & \textbf{Command} & \textbf{Result} & \textbf{Status} \\
 \midrule
-Backend suite & \code{python3 -m pytest} & 453 passed (32 files) & \textcolor{passgreen}{\textbf{PASS}} \\
-Frontend unit tests & \code{npx vitest run} & 222 passed (15 files) & \textcolor{passgreen}{\textbf{PASS}} \\
+Backend suite & \code{python3 -m pytest} & 459 passed (32 files) & \textcolor{passgreen}{\textbf{PASS}} \\
+Frontend unit tests & \code{npx vitest run} & 226 passed (15 files) & \textcolor{passgreen}{\textbf{PASS}} \\
 TypeScript and build & \code{npx tsc -b}, \code{npm run build} & 0 errors; build succeeds & \textcolor{passgreen}{\textbf{PASS}} \\
 Mutation sweep & \code{python3 tools/mutation_sweep.py} & 27 of 27 injected bugs caught & \textcolor{passgreen}{\textbf{PASS}} \\
 Gate-level mapping & \code{python3 tools/verify_mapping.py} & 19 of 19 designs give the same results in gate-level simulation & \textcolor{passgreen}{\textbf{PASS}} \\

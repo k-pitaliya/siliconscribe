@@ -73,7 +73,7 @@ The browser never talks to the AI provider and never runs tools. All secrets (AP
 \file{backend/tools/build_opensta.sh} & Builds OpenSTA from source into \file{~/.local/opensta} (no Homebrew). \\
 \file{backend/evaluation/} & Recorded live results: \file{results.jsonl}, \file{summary.md}, the final designs and testbenches in \file{artifacts/}. \\
 \file{backend/evaluation/independent/} & Hand-written reference testbenches (\file{tb_c1.v} \ldots\ \file{tb_s6.v}), \file{run.py} that checks each evaluated design against them, and \file{strength.py} that checks the references themselves with every mutant. \\
-\file{backend/tests/} & 453 automated backend tests in 32 test files, plus \file{conftest.py} (shared test set-up) and two fake servers (\file{cf_fake.py}, \file{nim_fake.py}) so Cloudflare and NIM code is tested without the internet. \\
+\file{backend/tests/} & 459 automated backend tests in 32 test files, plus \file{conftest.py} (shared test set-up) and two fake servers (\file{cf_fake.py}, \file{nim_fake.py}) so Cloudflare and NIM code is tested without the internet. \\
 \file{backend/workspace/} & Runtime files: one folder per design (\file{design.sv}, \file{testbench.sv}, \file{transcript.log}, \file{design.vcd}) and \file{projects.db}. \\
 \file{frontend/src/App.tsx} & The page: holds all state and connects the components. \\
 \file{frontend/src/api.ts} & Every call to the backend, including the SSE stream reader. \\
