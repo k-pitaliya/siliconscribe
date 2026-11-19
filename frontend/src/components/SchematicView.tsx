@@ -116,6 +116,15 @@ export default function SchematicView({ schematic, synthesis }: { schematic: Sch
   const [natural, setNatural] = useState(0)
   const [drawn, setDrawn] = useState<Drawn>({ status: 'idle' })
 
+  const available: Record<View, boolean> = { block: !!schematic, rtl: !!synthesis?.rtl_netlist, gate: !!synthesis?.json_netlist }
+  // A new run or a loaded project can remove the selected view's data: fall back to a view that exists.
+  useEffect(() => {
+    if (!available[view]) {
+      const next = VIEWS.map(([v]) => v).find((v) => available[v])
+      if (next) setView(next)
+    }
+  }, [view, available.block, available.rtl, available.gate])   // eslint-disable-line react-hooks/exhaustive-deps
+
   const netlist = view === 'rtl' ? synthesis?.rtl_netlist : view === 'gate' ? synthesis?.json_netlist : undefined
   const cells = cellCount(netlist)
   const tooLarge = cells > MAX_DRAWN_CELLS
@@ -145,17 +154,18 @@ export default function SchematicView({ schematic, synthesis }: { schematic: Sch
   const label = VIEWS.find(([v]) => v === view)?.[1] ?? ''
   const noNetlistHint = synthesis?.available === false
     ? 'Needs Yosys, which is not installed on the server.'
-    : 'No netlist for this design yet: synthesis runs after the design passes simulation.'
+    : synthesis?.error
+      ? `Synthesis failed: ${synthesis.error}`
+      : 'No netlist for this run yet.'
 
   return (
     <div className="schematic-view">
       <div className="sch-toolbar">
         <div className="seg sch-views" role="group" aria-label="Schematic view">
           {VIEWS.map(([v, text]) => {
-            const available = v === 'block' ? !!schematic : !!(v === 'rtl' ? synthesis?.rtl_netlist : synthesis?.json_netlist)
             return (
               <button key={v} type="button" className={view === v ? 'seg-btn on' : 'seg-btn'} aria-pressed={view === v}
-                disabled={!available} title={available ? undefined : (v === 'block' ? 'No specification yet' : noNetlistHint)}
+                disabled={!available[v]} title={available[v] ? undefined : (v === 'block' ? 'No specification yet' : noNetlistHint)}
                 onClick={() => setView(v)}>
                 {text}
               </button>

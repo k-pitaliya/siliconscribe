@@ -314,8 +314,10 @@ function ResultsView({
                   <div>Slowest path: <span className="mono">{timing.critical_start}</span> to <span className="mono">{timing.critical_end}</span>
                     {timing.critical_delay_ns != null && <>, {timing.critical_delay_ns.toFixed(2)} ns</>}</div>
                 )}
-                {timing.equivalence && <EquivalenceLine status={timing.equivalence} method={timing.equivalence_method ?? ''} />}
-                {timing.critical_path && timing.critical_path.length > 1 && <CriticalPath rows={timing.critical_path} />}
+                {/* Shown whenever the proof ran or was skipped: a timeout or a size skip must be visible, not silent. */}
+                {(timing.equivalence || timing.equivalence_method) && <EquivalenceLine status={timing.equivalence ?? null} method={timing.equivalence_method ?? ''} />}
+                {timing.critical_path && timing.critical_path.length > 1 && (
+                  <CriticalPath rows={timing.critical_path} total={timing.critical_delay_ns ?? null} truncated={!!timing.critical_path_truncated} />)}
                 {timing.area_um2 != null && (
                   <div data-testid="timing-area">Mapped area: <strong>{timing.area_um2.toFixed(1)} µm²</strong> in {timing.cell_count} cells
                     {timing.flip_flops ? `, ${timing.flip_flops} flip-flops` : ''}</div>
@@ -461,7 +463,9 @@ function Metric({ label, value, tone }: { label: string; value: string; tone?: '
 }
 
 /** Formal equivalence of the mapped netlist and the RTL: proven, undecided, or a real mismatch. */
-function EquivalenceLine({ status, method }: { status: string; method: string }) {
+function EquivalenceLine({ status, method }: { status: string | null; method: string }) {
+  if (!status)
+    return <div data-testid="equivalence" className="equiv undecided"><strong>Netlist not formally checked.</strong> <span className="muted">{method}. The gate-level simulation check still applies.</span></div>
   if (status === 'proven')
     return <div data-testid="equivalence" className="equiv proven"><strong>Netlist formally proven equal to the RTL</strong> <span className="muted">({method})</span></div>
   if (status === 'different')
@@ -470,12 +474,13 @@ function EquivalenceLine({ status, method }: { status: string; method: string })
 }
 
 /** The worst path pin by pin, as in an STA report: where the time goes. */
-function CriticalPath({ rows }: { rows: CriticalPathRow[] }) {
-  const total = rows[rows.length - 1].arrival_ns
+function CriticalPath({ rows, total: pathDelay, truncated }: { rows: CriticalPathRow[]; total: number | null; truncated: boolean }) {
+  // The path's own delay (OpenSTA's data arrival), not the last row shown: rows of a very long path are capped.
+  const total = pathDelay ?? rows[rows.length - 1].arrival_ns
   const gates = rows.filter((r) => r.incr_ns > 0).length
   return (
     <details className="critical-path" data-testid="critical-path">
-      <summary>Critical path, pin by pin: {gates} delay stages, {total.toFixed(3)} ns</summary>
+      <summary>Critical path, pin by pin: {truncated ? 'long path, ' : `${gates} delay stages, `}{total.toFixed(3)} ns</summary>
       <div className="table-wrap" tabIndex={0} role="region" aria-label="Critical path table">
         <table>
           <thead><tr><th scope="col">Pin</th><th scope="col">Cell</th><th scope="col">Edge</th><th scope="col">Delay (ns)</th><th scope="col">Arrival (ns)</th></tr></thead>
@@ -485,7 +490,9 @@ function CriticalPath({ rows }: { rows: CriticalPathRow[] }) {
                 <td className="mono">{r.point}</td><td className="mono">{r.cell}</td><td>{r.edge}</td>
                 <td className="num">{r.incr_ns.toFixed(4)}</td><td className="num">{r.arrival_ns.toFixed(4)}</td>
               </tr>
-            ))}
+            )).flatMap((tr, i) => (truncated && i === rows.length - 1)
+              ? [<tr key="gap"><td colSpan={5} className="muted">... middle pins omitted (path too long to list) ...</td></tr>, tr]
+              : [tr])}
           </tbody>
         </table>
       </div>

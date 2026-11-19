@@ -26,7 +26,7 @@ def _script(module: str, liberty: str, params: Dict[str, int], sequential: bool)
     chparam = "".join(f" -chparam {k} {v}" for k, v in params.items())   # same overrides the netlist was mapped with
     # `memory`: arrays and lookup tables become plain logic and registers, as synthesis does (SAT cannot model
     # memory initialisation directly).
-    gold = (f"read_verilog -sv design.sv; hierarchy -check -top {module}{chparam}; proc; flatten; memory; opt_clean; "
+    gold = (f"read_verilog -sv design.sv; hierarchy -check -top {module}{chparam}; proc; flatten; memory; opt; opt_clean; "
             f"rename {module} gold; design -stash gold; ")
     # -ignore_miss_func: the library also has cells without a logic function (clock gates, fills); none is used.
     gate = (f'read_liberty -ignore_miss_func "{liberty}"; read_verilog netlist.v; hierarchy -top {module}; '
@@ -62,7 +62,7 @@ def interpret(output: str, sequential: bool) -> dict:
 
 
 def prove_equivalence(work_dir: Path, module: str, liberty: str, params: Optional[Dict[str, int]] = None,
-                      env: Optional[dict] = None, timeout: int = 60) -> dict:
+                      env: Optional[dict] = None, timeout: int = 20) -> dict:
     """Run the proof in `work_dir` (which holds design.sv and netlist.v from the timing stage)."""
     work_dir = Path(work_dir)
     netlist = (work_dir / "netlist.v").read_text()
@@ -71,7 +71,7 @@ def prove_equivalence(work_dir: Path, module: str, liberty: str, params: Optiona
         p = subprocess.run(["yosys", "-p", _script(module, liberty, params or {}, sequential)], cwd=str(work_dir),
                            capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL, env=env)
     except subprocess.TimeoutExpired:
-        return {"status": None, "method": "The equivalence check timed out.", "sequential": sequential}
+        return {"status": None, "method": f"The proof did not finish within {timeout} s, so it was stopped", "sequential": sequential}
     out = interpret((p.stdout or "") + (p.stderr or ""), sequential)
     out["sequential"] = sequential
     return out

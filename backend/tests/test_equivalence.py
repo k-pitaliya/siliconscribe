@@ -129,3 +129,58 @@ def test_a_lookup_table_design_is_proven_not_skipped(tmp_path):
     rtl = (ARTIFACTS / "c5_design.sv").read_text()
     r = timing.run_timing(rtl, _module(rtl), tmp_path, 100, testbench_code=(ARTIFACTS / "c5_testbench.sv").read_text())
     assert r.equivalence == "proven", r.equivalence_method
+
+
+# ------------------------------------------------------------------ code-review findings (19 Nov 2026)
+def _long_block(n):
+    rows = "".join(f"   0.1000   {0.1 * (k + 1):.4f} v _{k}_/Y (sky130_fd_sc_hd__nand2_1)\n" for k in range(n))
+    return ("_s_ (input port)\nEndpoint: out\n    Delay      Time   Description\n" + rows +
+            f"   0.0000   {0.1 * n:.4f} v out (out)\n             {0.1 * n:.4f}   data arrival time\n")
+
+
+def test_a_long_critical_path_keeps_its_endpoint_and_is_flagged():
+    block = _long_block(80)
+    rows = timing.critical_path_rows(block)
+    assert len(rows) == timing.CRITICAL_PATH_ROWS and rows[-1]["point"] == "out"          # endpoint never dropped
+    out = timing.parse_sta("Startpoint: " + block + "  9.0000   slack (MET)\n", 10.0)
+    assert out["critical_path_truncated"] is True and out["critical_path"][-1]["point"] == "out"
+    assert timing.parse_sta("Startpoint: " + COUNTER_BLOCK + "  9.0 slack (MET)\n", 10.0)["critical_path_truncated"] is False
+
+
+def test_the_proof_timeout_is_reported_not_silent(tmp_path):
+    (tmp_path / "netlist.v").write_text("module m(); endmodule\n")
+    eq = equivalence.prove_equivalence(tmp_path, "m", "x.lib", timeout=0.001)
+    assert eq["status"] is None and "did not finish" in eq["method"]
+
+
+def test_the_chat_message_does_not_call_a_mismatched_netlist_valid():
+    from models import TimingReport
+    r = TimingReport(available=True, slack_ns=9.0, met=True, target_mhz=100, equivalence="different")
+    assert "does NOT match the RTL" in timing.timing_message(r) and "meets" not in timing.timing_message(r)
+
+
+@needs_tools
+def test_a_flip_flop_that_synthesis_removes_does_not_break_the_proof(tmp_path):
+    rtl = ("module k(input clk, input rst_n, input a, b, output y); reg r; always @(posedge clk or negedge rst_n) "
+           "if (!rst_n) r <= 1'b0; else r <= 1'b0; assign y = a & b & ~r; endmodule")
+    r = timing.run_timing(rtl, "k", tmp_path, 100)
+    assert r.equivalence == "proven", r.equivalence_method
+
+
+@needs_tools
+def test_large_designs_skip_the_proof_quickly_and_say_why(tmp_path, monkeypatch):
+    monkeypatch.setenv("EQUIVALENCE_MAX_CELLS", "5")
+    called = []
+    monkeypatch.setattr(timing, "prove_equivalence", lambda *a, **k: called.append(1) or {"status": "proven", "method": ""})
+    r = timing.run_timing(offline_designs.ALU_RTL_4, _module(offline_designs.ALU_RTL_4), tmp_path, 100)
+    assert not called and r.equivalence is None and r.equivalence_method.startswith("Not attempted")
+
+
+@needs_tools
+def test_reported_seconds_include_the_proof(tmp_path, monkeypatch):
+    import time as _t
+    monkeypatch.setattr(timing, "prove_equivalence", lambda *a, **k: _t.sleep(2.0) or {"status": "proven", "method": "x"})
+    t0 = _t.time()
+    r = timing.run_timing(offline_designs.COUNTER_RTL, "counter", tmp_path, 100)
+    wall = _t.time() - t0
+    assert r.seconds >= wall - 0.3          # the reported time covers the whole call, proof included

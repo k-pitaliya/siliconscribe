@@ -80,3 +80,20 @@ describe('SchematicView', () => {
     expect(screen.getByRole('button', { name: 'RTL cells' })).toBeDisabled()
   })
 })
+
+describe('SchematicView: review findings', () => {
+  it('falls back to an available view when a new run removes the selected netlist', async () => {
+    renderNetlist.mockResolvedValue('<svg xmlns="http://www.w3.org/2000/svg"></svg>')
+    const { rerender } = render(<SchematicView schematic={schematic} synthesis={synthesis()} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Gate level' }))
+    await screen.findByRole('img', { name: /Gate level schematic/ })
+    rerender(<SchematicView schematic={schematic} synthesis={{ available: true }} />)       // new run: no netlist yet
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Block diagram' })).toHaveAttribute('aria-pressed', 'true'))
+    expect(screen.getByRole('img', { name: 'Schematic for module counter' })).toBeInTheDocument()
+  })
+
+  it('explains a missing netlist with the real synthesis error', () => {
+    render(<SchematicView schematic={schematic} synthesis={{ available: true, error: 'ERROR: syntax error near line 4' }} />)
+    expect(screen.getByRole('button', { name: 'Gate level' })).toHaveAttribute('title', expect.stringContaining('syntax error near line 4'))
+  })
+})

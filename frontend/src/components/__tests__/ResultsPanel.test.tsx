@@ -565,3 +565,31 @@ describe('ResultsPanel: formal equivalence and critical path', () => {
     expect(screen.queryByTestId('critical-path')).toBeNull()
   })
 })
+
+
+describe('ResultsPanel: review findings on the proof line and the critical path', () => {
+  const base = { result: passResult, waveform: null, schematic: null, history: [] as IterationRecord[] }
+  const t = (over: Partial<TimingReport> = {}): TimingReport => ({
+    available: true, library: 'sky130_fd_sc_hd', clock: 'clk', target_mhz: 100, period_ns: 10, slack_ns: 9.27, met: true,
+    cells: [], note: 'Not sign-off timing.', ...over,
+  })
+
+  it('shows a proof that timed out or was skipped, with the reason', () => {
+    render(<ResultsPanel {...base} timing={t({ equivalence: null, equivalence_method: 'Not attempted: 908 cells is above the 600-cell limit for the in-app proof' })} />)
+    const e = screen.getByTestId('equivalence').textContent ?? ''
+    expect(e).toContain('Netlist not formally checked')
+    expect(e).toContain('908 cells')
+  })
+
+  it('takes a long path total from the path delay and marks omitted pins', () => {
+    const critical_path = [
+      { point: 'a[0]', cell: 'in', edge: 'rise', incr_ns: 0, arrival_ns: 0 },
+      { point: '_1_/Y', cell: 'nand2_1', edge: 'fall', incr_ns: 0.1, arrival_ns: 0.1 },
+      { point: 'y', cell: 'out', edge: 'fall', incr_ns: 0, arrival_ns: 12.524 },   // capped rows: not the path delay
+    ]
+    render(<ResultsPanel {...base} timing={t({ critical_path, critical_path_truncated: true, critical_delay_ns: 13.79 })} />)
+    const p = screen.getByTestId('critical-path').textContent ?? ''
+    expect(p).toContain('long path, 13.790 ns')
+    expect(p).toContain('middle pins omitted')
+  })
+})

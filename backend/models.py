@@ -326,6 +326,7 @@ class TimingReport(BaseModel):
     critical_delay_ns: Optional[float] = None
     # The worst path, cell by cell: {point, cell, edge (rise/fall), incr_ns, arrival_ns}. See timing.parse_sta.
     critical_path: List[dict] = Field(default_factory=list)
+    critical_path_truncated: bool = False   # middle pins of a very long path omitted; endpoint always kept
     # Formal check that the mapped netlist equals the RTL (equivalence.py): proven | different | not_proven | None.
     equivalence: Optional[str] = None
     equivalence_method: str = ""

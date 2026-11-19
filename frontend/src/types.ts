@@ -221,6 +221,7 @@ export interface TimingReport {
   /** Formal check that the mapped netlist equals the RTL. */
   equivalence?: 'proven' | 'different' | 'not_proven' | null
   equivalence_method?: string
+  critical_path_truncated?: boolean
   area_um2?: number | null
   cell_count?: number | null
   flip_flops?: number | null

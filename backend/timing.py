@@ -234,7 +234,9 @@ def parse_sta(text: str, period_ns: float) -> dict:
             worst = cand
     if worst:
         out["critical_start"], out["critical_end"], out["critical_delay_ns"] = worst[1], worst[2], worst[3]
+        full = critical_path_rows(worst[4], limit=None)
         out["critical_path"] = critical_path_rows(worst[4])
+        out["critical_path_truncated"] = len(full) > CRITICAL_PATH_ROWS
     return out
 
 
@@ -242,7 +244,10 @@ def parse_sta(text: str, period_ns: float) -> dict:
 _PATH_ROW_RE = re.compile(r"^\s*(-?[0-9]+\.[0-9]+)\s+(-?[0-9]+\.[0-9]+)\s+([\^v])\s+(\S+)\s+\(([^)]+)\)\s*$")
 
 
-def critical_path_rows(block: str) -> List[dict]:
+CRITICAL_PATH_ROWS = 60
+
+
+def critical_path_rows(block: str, limit: Optional[int] = CRITICAL_PATH_ROWS) -> List[dict]:
     """The data path of one OpenSTA path block, one row per pin, up to the data arrival time."""
     rows: List[dict] = []
     for line in block.split("data arrival time")[0].splitlines():
@@ -251,7 +256,9 @@ def critical_path_rows(block: str) -> List[dict]:
             cell = m.group(5).replace("sky130_fd_sc_hd__", "")
             rows.append({"point": m.group(4), "cell": cell, "edge": "rise" if m.group(3) == "^" else "fall",
                          "incr_ns": round(float(m.group(1)), 4), "arrival_ns": round(float(m.group(2)), 4)})
-    return rows[:60]
+    if limit and len(rows) > limit:          # keep the start and always the endpoint; the middle is omitted
+        rows = rows[:limit - 1] + rows[-1:]
+    return rows
 
 
 def sta_errors(text: str) -> List[str]:
@@ -375,12 +382,20 @@ def run_timing(rtl_code: str, module_name: str, work_dir: Path, target_mhz: Opti
             errs = sta_errors(sta_out)
             result.error = "OpenSTA reported no constrained path." + (" " + " ".join(errs) if errs else "")
         if os.environ.get("EQUIVALENCE_ENABLED", "1") != "0":
-            try:      # the numbers above describe this netlist: prove it is the design that was simulated
-                eq = prove_equivalence(work_dir, module_name, str(LIBERTY), params, env=_env())
-                result.equivalence, result.equivalence_method = eq["status"], eq["method"]
-            except Exception:
-                logger.exception("equivalence check failed")
-                result.equivalence_method = "The equivalence check could not be run on this design."
+            max_cells = int(os.environ.get("EQUIVALENCE_MAX_CELLS", "600"))
+            if (stats.get("cell_count") or 0) > max_cells:
+                # SAT on large arithmetic (multipliers) can run for minutes: say so instead of stalling the run.
+                result.equivalence_method = (f"Not attempted: {stats['cell_count']} cells is above the {max_cells}-cell "
+                                             "limit for the in-app proof")
+            else:
+                try:      # the numbers above describe this netlist: prove it is the design that was simulated
+                    eq = prove_equivalence(work_dir, module_name, str(LIBERTY), params, env=_env(),
+                                           timeout=int(os.environ.get("EQUIVALENCE_TIMEOUT", "20")))
+                    result.equivalence, result.equivalence_method = eq["status"], eq["method"]
+                except Exception:
+                    logger.exception("equivalence check failed")
+                    result.equivalence_method = "The equivalence check could not be run on this design."
+        result.seconds = round(time.time() - started, 2)     # includes the proof
         return result
     except subprocess.TimeoutExpired:
         return report(available=True, error="Timing analysis timed out.")
@@ -392,6 +407,8 @@ def run_timing(rtl_code: str, module_name: str, work_dir: Path, target_mhz: Opti
 def timing_message(r: TimingReport) -> str:
     if not r.available or r.slack_ns is None:
         return f"Timing: {r.error or 'not available'}"
+    if r.equivalence == "different":
+        return "Timing: the mapped netlist does NOT match the RTL, so its timing and area are invalid."
     verdict = "meets" if r.met else "misses"
     fmax = f", max about {r.fmax_mhz:g} MHz" if r.fmax_mhz else ""
     area = f"; {r.area_um2:g} um^2 in {r.cell_count} cells" if r.area_um2 else ""
