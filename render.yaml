@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: siliconscribe-backend
+    env: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    branch: production-readiness
+    healthCheckPath: /health
+    envVars:
+      - key: OFFLINE_MODE
+        value: "0"
+      - key: OPENCODE_API_KEY
+        sync: false
+      - key: TRUST_PROXY_HEADERS
+        value: "1"   # Render terminates TLS in front of the app, so X-Forwarded-For is trustworthy
+      - key: PYTHONUNBUFFERED
+        value: "1"

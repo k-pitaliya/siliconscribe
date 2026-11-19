@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SiliconScribe wireframes</title>
+<style>
+  /* Low-fidelity wireframes: structure only. Greys, one marker colour for notes. */
+  :root { --ink:#1f1f1f; --line:#8a8a8a; --soft:#d9d9d9; --fill:#efefef; --note:#c2410c; }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 32px; background: #fafafa; color: var(--ink); font: 13px/1.4 ui-monospace, Menlo, monospace; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  p.lead { margin: 0 0 28px; color: #555; max-width: 900px; }
+  .frame { width: 1200px; height: 720px; border: 2px solid var(--ink); background: #fff; margin: 0 0 12px; display: grid;
+           grid-template-rows: 44px 1fr; position: relative; }
+  .cap { margin: 0 0 40px; max-width: 1200px; color: #444; }
+  .cap b { color: var(--ink); }
+  .top { border-bottom: 2px solid var(--ink); display: flex; align-items: center; gap: 14px; padding: 0 14px; }
+  .logo { font-weight: 700; }
+  .pill { border: 1.5px solid var(--line); border-radius: 999px; padding: 2px 10px; }
+  .sp { flex: 1; }
+  .btn { border: 1.5px solid var(--ink); padding: 4px 10px; }
+  .btn.primary { background: var(--ink); color: #fff; }
+  .body { display: grid; grid-template-columns: 320px 1fr; min-height: 0; }
+  .side { border-right: 2px solid var(--ink); padding: 14px; display: flex; flex-direction: column; gap: 12px; min-height: 0; }
+  .lbl { font-size: 12px; color: #666; }
+  .box { border: 1.5px solid var(--line); background: var(--fill); }
+  .ta { height: 110px; padding: 8px; }
+  .chips span { display: inline-block; border: 1.5px dashed var(--line); padding: 2px 8px; margin: 0 4px 4px 0; }
+  .step { display: flex; gap: 8px; align-items: center; padding: 3px 0; }
+  .dot { width: 12px; height: 12px; border: 1.5px solid var(--ink); border-radius: 50%; flex: none; }
+  .dot.done { background: var(--ink); }
+  .dot.run { border-style: dashed; }
+  .t { margin-left: auto; color: #666; }
+  .main { display: grid; grid-template-rows: 40px auto 1fr; min-height: 0; }
+  .tabs { border-bottom: 2px solid var(--ink); display: flex; align-items: end; gap: 18px; padding: 0 16px; }
+  .tabs span { padding: 0 2px 8px; }
+  .tabs .on { border-bottom: 3px solid var(--ink); font-weight: 700; }
+  .strip { border-bottom: 1.5px solid var(--soft); padding: 10px 16px; min-height: 40px; display: flex; gap: 22px; align-items: center; }
+  .verdict { border: 2px solid var(--ink); padding: 2px 10px; font-weight: 700; }
+  .area { padding: 16px; min-height: 0; overflow: hidden; display: grid; gap: 12px; }
+  .row { height: 22px; border-bottom: 1px solid var(--soft); display: grid; grid-template-columns: 40px 110px 1fr 90px 90px 90px 70px; gap: 8px; align-items: center; }
+  .row.h { font-weight: 700; border-bottom: 1.5px solid var(--line); }
+  .row.f { background: repeating-linear-gradient(45deg, #fff, #fff 4px, #eee 4px, #eee 8px); }
+  .note { position: absolute; color: var(--note); font-size: 12px; max-width: 230px; }
+  .note::before { content: "\2192 "; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .card { border: 1.5px solid var(--line); padding: 10px; }
+  .code { background: #e6e6e6; border: 1.5px solid var(--line); height: 100%; padding: 10px; }
+  .code i { display: block; height: 9px; margin: 8px 0; background: #c9c9c9; }
+  .wave i { display: block; height: 28px; border-bottom: 1px solid var(--soft); background: linear-gradient(90deg, transparent 0 8%, #bbb 8% 9%, transparent 9% 20%, #bbb 20% 21%, transparent 21%); }
+  .empty { display: grid; place-items: center; text-align: center; color: #555; }
+  kbd { border: 1px solid var(--line); padding: 0 4px; border-radius: 3px; }
+</style>
+</head>
+<body>
+<h1>SiliconScribe: wireframes (structure only)</h1>
+<p class="lead">Two zones everywhere: a 320 px <b>sidebar</b> for what you ask (prompt, examples, model) and what the agent is doing (run timeline),
+and a full-height <b>workspace</b> with five tabs. No chat bubbles, no glass cards, one primary action. Orange text = design notes.</p>
+
+<!-- 1. First visit -->
+<div class="frame" id="w1">
+  <div class="top"><span class="logo">SiliconScribe</span><span class="pill">Live · deepseek</span><span class="sp"></span>
+    <span class="btn">Projects</span><span class="btn">Export UVM</span><span class="btn">Theme</span></div>
+  <div class="body">
+    <div class="side">
+      <span class="lbl">Describe the block</span>
+      <div class="box ta">e.g. 4-bit counter with async reset and enable…</div>
+      <div style="display:flex;gap:8px;align-items:center"><span class="btn primary">Generate</span><span><kbd>⌘</kbd> <kbd>↵</kbd></span><span class="sp"></span><span>100 MHz ▾</span></div>
+      <span class="lbl">Examples</span>
+      <div class="chips"><span>4-bit ALU</span><span>Up-counter</span><span>4:1 mux</span><span>Sync FIFO</span></div>
+      <span class="lbl">Model</span><div class="box" style="padding:6px">deepseek-v4.1-flash-free ▾</div>
+    </div>
+    <div class="main"><div class="tabs"><span class="on">Design</span><span>Results</span><span>Test cases</span><span>Waveform</span><span>Schematic</span></div><div></div>
+      <div class="area empty"><div><b>Describe a block, get verified RTL</b><br/><br/>1 · Spec&nbsp;&nbsp;→&nbsp;&nbsp;2 · RTL + independent testbench&nbsp;&nbsp;→&nbsp;&nbsp;3 · Simulate, repair, report<br/><br/>Recent projects: counter · ALU · FIFO</div></div></div>
+  </div>
+  <div class="note" style="left:20px;top:330px">One primary button. Examples fill the prompt, they don't run it.</div>
+  <div class="note" style="left:760px;top:520px">Empty state teaches the flow and offers recent work.</div>
+</div>
+<p class="cap"><b>1 · First visit.</b> The only loud element is Generate. Tabs are visible but empty, so the layout never jumps after the first run.</p>
+
+<!-- 2. Running -->
+<div class="frame" id="w2">
+  <div class="top"><span class="logo">SiliconScribe</span><span class="pill">Live · deepseek</span><span class="sp"></span><span class="btn">Projects</span><span class="btn">Export UVM</span><span class="btn">Theme</span></div>
+  <div class="body">
+    <div class="side">
+      <span class="lbl">Describe the block</span><div class="box ta" style="height:70px">4-bit synchronous up-counter…</div>
+      <div style="display:flex;gap:8px"><span class="btn">Cancel</span><span class="sp"></span><span>2m 14s</span></div>
+      <span class="lbl">Run</span>
+      <div><div class="step"><span class="dot done"></span>Specification<span class="t">12s</span></div>
+        <div class="step"><span class="dot done"></span>RTL<span class="t">48s</span></div>
+        <div class="step"><span class="dot run"></span><b>Testbench</b><span class="t">1m 14s</span></div>
+        <div class="step" style="color:#999"><span class="dot"></span>Simulate</div>
+        <div class="step" style="color:#999"><span class="dot"></span>Repair (if needed)</div>
+        <div class="step" style="color:#999"><span class="dot"></span>Synthesis · Strength</div></div>
+      <div class="box" style="padding:8px">Free models can take a few minutes per step.</div>
+    </div>
+    <div class="main"><div class="tabs"><span class="on">Design</span><span>Results</span><span>Test cases</span><span>Waveform</span><span>Schematic</span></div>
+      <div class="strip"><span>counter.v</span><span style="color:#999">tb_counter.sv</span><span class="sp"></span><span class="btn">Copy</span></div>
+      <div class="area"><div class="code"><i style="width:40%"></i><i style="width:70%"></i><i style="width:55%"></i><i style="width:62%"></i><i style="width:30%"></i></div></div></div>
+  </div>
+  <div class="note" style="left:20px;top:560px">Timeline replaces the chat log: one line per stage, time per stage, the current one emphasised.</div>
+  <div class="note" style="left:860px;top:110px">RTL appears in Design as soon as it exists.</div>
+</div>
+<p class="cap"><b>2 · Running.</b> The run is a checklist, not a conversation. Diagnoses from a repair expand under their step.</p>
+
+<!-- 3. Results PASS -->
+<div class="frame" id="w3">
+  <div class="top"><span class="logo">SiliconScribe</span><span class="pill">Live · deepseek</span><span class="sp"></span><span class="btn">Projects</span><span class="btn">Export UVM</span><span class="btn">Re-run</span><span class="btn">Theme</span></div>
+  <div class="body">
+    <div class="side"><span class="lbl">Describe the block</span><div class="box ta" style="height:70px">4-bit synchronous up-counter…</div>
+      <span class="btn primary" style="align-self:start">Generate</span><span class="lbl">Run · 3m 05s</span>
+      <div><div class="step"><span class="dot done"></span>Specification</div><div class="step"><span class="dot done"></span>RTL</div><div class="step"><span class="dot done"></span>Testbench</div><div class="step"><span class="dot done"></span>Simulate · PASS 57/57</div><div class="step"><span class="dot done"></span>Strength · 7 of 8</div></div>
+      <div class="box" style="padding:8px">A 4-bit up-counter with async active-low reset…</div></div>
+    <div class="main"><div class="tabs"><span>Design</span><span class="on">Results</span><span>Test cases 57</span><span>Waveform</span><span>Schematic</span></div>
+      <div class="strip"><span class="verdict" style="font-size:20px">PASS</span><span><b>57/57</b><br/><small>checks passed</small></span><span><b>0</b><br/><small>repairs</small></span><span><b>7 of 8</b><br/><small>injected bugs caught</small></span><span><b>10</b><br/><small>cells, 4 flip-flops</small></span></div>
+      <div class="area"><div class="grid2"><div class="card"><b>Testbench strength</b><br/>■■■■■■■□ 7 of 8<br/>Missed: line 10 posedge→negedge<br/><small>survivors may be equivalent</small></div>
+        <div class="card"><b>Synthesis (Yosys, generic cells)</b><br/>10 cells · 4 FF · 0 latches<br/>DFFE ×4 · XOR ×2 · AND ×1 …<br/><small>relative proxy, not µm²</small></div></div>
+        <div class="card"><b>Test types</b>&nbsp;&nbsp; reset 8/8 · directed 16/16 · hold 32/32 · corner 1/1 &nbsp;→ open Test cases</div>
+        <div class="card" style="height:140px"><b>Simulation log</b> (collapsed by default)</div></div></div>
+  </div>
+  <div class="note" style="left:900px;top:160px">Verdict band: the only bold element on the page.</div>
+</div>
+<p class="cap"><b>3 · Results (PASS).</b> A summary strip answers "did it pass and how much do I trust it" before any detail. Cards are flat, bordered, same radius.</p>
+
+<!-- 4. Test cases -->
+<div class="frame" id="w4">
+  <div class="top"><span class="logo">SiliconScribe</span><span class="pill">Live · deepseek</span><span class="sp"></span><span class="btn">Projects</span><span class="btn">Export UVM</span><span class="btn">Re-run</span><span class="btn">Theme</span></div>
+  <div class="body"><div class="side"><span class="lbl">(sidebar unchanged)</span></div>
+    <div class="main"><div class="tabs"><span>Design</span><span>Results</span><span class="on">Test cases 57</span><span>Waveform</span><span>Schematic</span></div>
+      <div class="strip"><span>[All] Failed Passed</span><span>reset 8/8 · directed 0/16 · hold 2/32</span><span class="sp"></span><span class="box" style="padding:2px 60px 2px 6px">Search</span><span>hex ▾</span></div>
+      <div class="area" style="align-content:start;gap:0">
+        <div class="row h"><span>#</span><span>Type</span><span>Test</span><span>Time</span><span>Expected</span><span>Actual</span><span>Result</span></div>
+        <div class="row f"><span>4</span><span>directed</span><span>count_up_to_1</span><span>20 ns</span><span>0x1</span><span>0x2</span><span>FAIL</span></div>
+        <div class="row f"><span>5</span><span>hold</span><span>enable_low_holds</span><span>30 ns</span><span>0x1</span><span>0x2</span><span>FAIL</span></div>
+        <div class="row"><span>1</span><span>reset</span><span>power_up_reset</span><span>1 ns</span><span>0x0</span><span>0x0</span><span>pass</span></div>
+        <div class="row"><span>2</span><span>reset</span><span>held_in_reset</span><span>10 ns</span><span>0x0</span><span>0x0</span><span>pass</span></div>
+        <div class="card" style="margin-top:16px"><b>#4 count_up_to_1 · FAIL at 20 ns</b><br/>expected 0001&nbsp;&nbsp;actual 0010 (bits 1, 0 differ)&nbsp;&nbsp;<span class="btn">Show in waveform</span></div></div></div></div>
+  <div class="note" style="left:860px;top:300px">Full height: ~18 rows visible instead of 6. Failures sort first by default when the run failed.</div>
+</div>
+<p class="cap"><b>4 · Test cases.</b> Filters and type chips in one toolbar row; the selected failure explains itself and links to the waveform.</p>
+
+<!-- 5. Waveform -->
+<div class="frame" id="w5">
+  <div class="top"><span class="logo">SiliconScribe</span><span class="pill">Live · deepseek</span><span class="sp"></span><span class="btn">Projects</span><span class="btn">Export UVM</span><span class="btn">Re-run</span><span class="btn">Theme</span></div>
+  <div class="body"><div class="side"><span class="lbl">(sidebar unchanged)</span></div>
+    <div class="main"><div class="tabs"><span>Design</span><span>Results</span><span>Test cases</span><span class="on">Waveform</span><span>Schematic</span></div>
+      <div class="strip"><span>560 ns · 14 signals</span><span>A 20 ns · B 60 ns · Δ 40 ns</span><span class="sp"></span><span>hex ▾</span><span class="btn">−</span><span class="btn">Fit</span><span class="btn">+</span></div>
+      <div class="area" style="grid-template-columns:200px 1fr;gap:0;align-content:start"><div><div class="lbl">Clock &amp; reset</div><div>clk&nbsp;&nbsp;0</div><div>rst_n&nbsp;&nbsp;1</div><div class="lbl" style="margin-top:8px">Outputs</div><div>count[3:0]&nbsp;&nbsp;0x2</div></div>
+        <div class="wave"><i></i><i></i><i></i><i></i><i></i></div></div></div></div>
+  <div class="note" style="left:860px;top:330px">Same viewer as today, now using the whole height; dark "instrument" surface in both themes.</div>
+</div>
+<p class="cap"><b>5 · Waveform.</b> No Expand button needed any more: every tab is already full size.</p>
+</body>
+</html>
