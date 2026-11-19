@@ -125,3 +125,18 @@ describe('TestCasesView keyboard (self-review finding)', () => {
     await waitFor(() => expect(document.activeElement?.getAttribute('data-idx')).toBe('300'))
   })
 })
+
+describe('TestCasesView for a run stopped before its summary', () => {
+  it('counts the logged checks and labels them as progress, not a verdict', () => {
+    render(<TestCasesView result={result({ status: 'TIMEOUT', test_count: 0, pass_count: 0, fail_count: 0 })} />)
+    expect(screen.getByText('3 passed')).toBeInTheDocument()
+    expect(screen.getByText(/of 4 checks/)).toBeInTheDocument()
+    expect(screen.getByTestId('unfinished-note').textContent).toMatch(/stopped before the testbench finished/)
+    expect(screen.queryByTestId('inconsistent-note')).not.toBeInTheDocument()
+  })
+
+  it('does not show the note for a finished run', () => {
+    render(<TestCasesView result={result()} />)
+    expect(screen.queryByTestId('unfinished-note')).not.toBeInTheDocument()
+  })
+})

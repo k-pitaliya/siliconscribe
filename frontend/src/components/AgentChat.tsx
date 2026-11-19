@@ -19,6 +19,8 @@ interface Props {
   messages: ChatMessage[]
   running: boolean
   explanation: string
+  /** Repairs applied after the explanation was written (history entries after iteration 0). */
+  repairs?: number
 }
 
 function stageIcon(stage?: string, status?: string) {
@@ -72,7 +74,7 @@ function RunTimer({ messageCount }: { messageCount: number }) {
   )
 }
 
-export default function AgentChat({ messages, running, explanation }: Props) {
+export default function AgentChat({ messages, running, explanation, repairs = 0 }: Props) {
   const endRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: 'end' })
@@ -123,7 +125,17 @@ export default function AgentChat({ messages, running, explanation }: Props) {
       </div>
       <div ref={endRef} aria-hidden="true" />
       {explanation && messages.length > 0 && messages[messages.length - 1]?.text !== explanation && (
-        <p className="explanation-box" aria-label="Design explanation">{explanation}</p>
+        <div className="explanation-box" aria-label="Design explanation">
+          <p>{explanation}</p>
+          {/* The model explains its FIRST draft; repairs do not rewrite it (live finding, 20 Nov: the text described
+              NOR gates after the repair had switched the latch to NAND gates). */}
+          {repairs > 0 && (
+            <p className="muted explanation-stale" data-testid="explanation-stale">
+              Written for the first draft. The self-correction loop changed the code {repairs === 1 ? 'once' : `${repairs} times`} afterwards,
+              so parts of this may not match the final design; the Design tab shows the final code.
+            </p>
+          )}
+        </div>
       )}
     </section>
   )

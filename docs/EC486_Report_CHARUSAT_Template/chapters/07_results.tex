@@ -17,8 +17,8 @@ they are kept because they are still true records of what happened.
 \toprule
 \textbf{Check} & \textbf{Command} & \textbf{Result} & \textbf{Status} \\
 \midrule
-Backend suite & \code{python3 -m pytest} & 589 passed (35 files) & \textcolor{passgreen}{\textbf{PASS}} \\
-Frontend unit tests & \code{npx vitest run} & 259 passed (18 files) & \textcolor{passgreen}{\textbf{PASS}} \\
+Backend suite & \code{python3 -m pytest} & 591 passed (35 files) & \textcolor{passgreen}{\textbf{PASS}} \\
+Frontend unit tests & \code{npx vitest run} & 267 passed (18 files) & \textcolor{passgreen}{\textbf{PASS}} \\
 TypeScript and build & \code{npx tsc -b}, \code{npm run build} & 0 errors; build succeeds & \textcolor{passgreen}{\textbf{PASS}} \\
 Mutation sweep & \code{python3 tools/mutation_sweep.py} & 27 of 27 injected bugs caught & \textcolor{passgreen}{\textbf{PASS}} \\
 Gate-level mapping & \code{python3 tools/verify_mapping.py} & 19 of 19 designs give the same results in gate-level simulation & \textcolor{passgreen}{\textbf{PASS}} \\
@@ -592,6 +592,7 @@ Two runs of the same design at once & wrong verdict in 25 of 25 tries & one run 
 Compile timeout & compiler child left at 100\% CPU & whole process group stopped; compile under CPU and memory limits \\
 Quota error during a repair & whole run lost & run kept, with the reason \\
 Partly unknown value shown in decimal & whole page blank & formatter never fails; error boundary around the results \\
+Live run after the review: correct SR latch, testbench releases the forbidden input on both pins at once (zero-delay oscillation, simulated time stops) & TIMEOUT shown as ``0 checks, 0\%''; last output lost to \texttt{SIGKILL} & still TIMEOUT, but ``552 checks before stop'', no pass rate, and the likely cause named; \texttt{SIGTERM} first so the output is kept \\
 \bottomrule
 \end{tabularx}
 \end{table}

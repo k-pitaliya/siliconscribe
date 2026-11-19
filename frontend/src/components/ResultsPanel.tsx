@@ -111,8 +111,8 @@ export default function ResultsPanel({
                 tabIndex={tab === id ? 0 : -1}
               >
                 <Icon size={15} aria-hidden="true" /> {label}
-                {id === 'tests' && result && result.test_count > 0 && (
-                  <span className="tab-badge" data-testid="tests-badge"> {result.test_count}</span>
+                {id === 'tests' && result && (result.test_count || result.checks_total_logged || 0) > 0 && (
+                  <span className="tab-badge" data-testid="tests-badge"> {result.test_count || result.checks_total_logged}</span>
                 )}
               </button>
             )
@@ -174,7 +174,15 @@ function ResultsView({
 }) {
   if (!result) return <div className="empty-state">No simulation yet. Generate a design to see results.</div>
 
-  const passRate = (result.coverage || {}).pass_rate
+  const groups = result.check_groups ?? []
+  const compiled = result.status === 'PASS' || result.status === 'FAIL'
+  // A run stopped at the time limit has no verdict counts, but the checks it printed before then are kept (live
+  // finding, 20 Nov: an SR latch showed "0 checks, 0%" after passing 552 checks and then hanging).
+  const ranBeforeStop = !compiled && result.test_count === 0 ? groups.reduce((n, g) => n + g.total, 0) : 0
+  const stoppedPass = groups.reduce((n, g) => n + g.passed, 0)
+  const stoppedFail = groups.reduce((n, g) => n + g.failed, 0)
+  // A pass rate is only meaningful for a run that finished (TIMEOUT/ERROR showed "0%", which reads as "all failed").
+  const passRate = compiled ? (result.coverage || {}).pass_rate : undefined
   let passTone: 'ok' | 'warn' | 'bad' | undefined
   if (passRate != null) passTone = passRate === 100 ? 'ok' : passRate >= 70 ? 'warn' : 'bad'
 
@@ -182,12 +190,10 @@ function ResultsView({
   const derivedIterations = iterations ?? Math.max(...history.map((h) => h.iteration), 0)
   const showTimeline = derivedIterations > 0 && history.length > 1 && history.some((h) => h.iteration > 0)
   const StatusIcon = result.status === 'PASS' ? CircleCheck : result.status === 'FAIL' ? CircleX : TriangleExclamationPoint
-  const groups = result.check_groups ?? []
   const strengthShown = strength && (strength.status === 'ok' || strength.status === 'partial')
   const toggle = result.measured_toggle
   const timingShown = !!timing && timing.available
   const mappedArea = timingShown && timing?.area_um2 != null
-  const compiled = result.status === 'PASS' || result.status === 'FAIL'
 
   return (
     <div className="results-view">
@@ -204,11 +210,32 @@ function ResultsView({
           <StatusIcon size={28} aria-hidden="true" />
           {disputed && result.status === 'PASS' ? 'PASS, disputed' : result.status}
         </div>
-        <Metric label="Checks" value={String(result.test_count)} />
-        <Metric label="Passed" value={String(result.pass_count)} tone="ok" />
-        <Metric label="Failed" value={String(result.fail_count)} tone={result.fail_count ? 'bad' : undefined} />
-        <Metric label="Pass rate" value={passRate != null ? `${passRate}%` : '—'} tone={passTone} />
+        {ranBeforeStop > 0 ? (
+          <>
+            <Metric label="Checks before stop" value={String(ranBeforeStop)} />
+            <Metric label="Passed" value={String(stoppedPass)} tone="ok" />
+            <Metric label="Failed" value={String(stoppedFail)} tone={stoppedFail ? 'bad' : undefined} />
+            <Metric label="Pass rate" value="—" />
+          </>
+        ) : (
+          <>
+            <Metric label="Checks" value={String(result.test_count)} />
+            <Metric label="Passed" value={String(result.pass_count)} tone="ok" />
+            <Metric label="Failed" value={String(result.fail_count)} tone={result.fail_count ? 'bad' : undefined} />
+            <Metric label="Pass rate" value={passRate != null ? `${passRate}%` : '—'} tone={passTone} />
+          </>
+        )}
       </div>
+      {ranBeforeStop > 0 && (
+        <div className="notice caution" role="note" data-testid="stopped-early">
+          <TriangleExclamationPoint size={16} aria-hidden="true" />
+          <span>
+            The simulation was stopped {result.status === 'TIMEOUT' ? 'at the time limit' : 'by an error'} before the
+            testbench finished, so there is no verdict. It had run {ranBeforeStop} check(s) by then
+            ({stoppedFail} failed); they are listed under Test cases, and the likely cause is under Errors below.
+          </span>
+        </div>
+      )}
       {disputed && result.status === 'PASS' && (
         <div className="notice caution critical" role="alert" data-testid="disputed-tag">
           <TriangleExclamationPoint size={16} aria-hidden="true" />

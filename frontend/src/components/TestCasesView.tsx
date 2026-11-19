@@ -74,9 +74,13 @@ export default function TestCasesView({ result, timescalePs = null, onShowInWave
     return out
   }, [checks, status, cats, query, sortBy])
 
-  const total = result.test_count
-  const passed = result.pass_count
-  const failed = result.fail_count
+  const loggedPass = groups.reduce((n, g) => n + g.passed, 0)
+  const loggedFail = groups.reduce((n, g) => n + g.failed, 0)
+  // Stopped before the summary (TIMEOUT): there are no verdict counts, only the checks printed before the stop.
+  const unfinished = result.status !== 'PASS' && result.status !== 'FAIL' && result.test_count === 0 && loggedPass + loggedFail > 0
+  const total = unfinished ? loggedPass + loggedFail : result.test_count
+  const passed = unfinished ? loggedPass : result.pass_count
+  const failed = unfinished ? loggedFail : result.fail_count
   const passPct = total > 0 ? (100 * passed) / total : 0
 
   if (source === 'none' && checks.length === 0 && groups.length === 0) {
@@ -95,8 +99,6 @@ export default function TestCasesView({ result, timescalePs = null, onShowInWave
     )
   }
 
-  const loggedPass = groups.reduce((n, g) => n + g.passed, 0)
-  const loggedFail = groups.reduce((n, g) => n + g.failed, 0)
   const toggleCat = (c: string) =>
     setCats((prev) => {
       const next = new Set(prev)
@@ -181,6 +183,12 @@ export default function TestCasesView({ result, timescalePs = null, onShowInWave
         </div>
       )}
 
+      {unfinished && (
+        <div className="tcv-note" data-testid="unfinished-note">
+          The simulation was stopped before the testbench finished, so these are only the checks it ran before then.
+          They are progress, not a verdict.
+        </div>
+      )}
       {source === 'legacy' && (
         <div className="tcv-note" data-testid="legacy-note">
           This testbench does not use the standard check lines, so only the failing checks are listed

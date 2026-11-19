@@ -40,6 +40,7 @@ What looks different since the 19 Nov self-review: a PASS whose original testben
 2. **Show a finished live result first** (Projects, Load): it appears instantly, so the audience sees the product before any waiting.
 3. **Start a live run** (type the prompt, Generate). A live run takes about 2-11 minutes. Talk over the run timeline in the sidebar: specification, RTL, testbench, simulation, synthesis, testbench strength, timing. The clock under "Working…" proves it is not stuck.
    Good moment for the Target clock slider: set 500 MHz before generating and show whether timing is met.
+   Pick a clocked or plain combinational block (counter, ALU, FIFO, FSM, shift register). **Avoid gate-level latches and ring oscillators** (for example "SR latch"): with zero gate delay a testbench that releases the forbidden input on both pins at once oscillates forever at one simulated time and ends in TIMEOUT (viva Q26). If it happens anyway, it is a good teaching moment: the Results tab shows how many checks ran before the stop and names the likely cause.
 4. **While it runs, tour the loaded result:**
    - *Results tab*: the verdict band, then four sections: **Testbench strength** ("caught N of M injected bugs"), **Timing and area** ("meets 100 MHz with +X ns slack", real area in µm² on sky130; a design with no clock, like the ALU, shows its longest input-to-output path instead), **Synthesis**, and **Toggle coverage (measured)**.
    - *Test cases tab*: every executed check with its type; filter to a type; click a row.

@@ -276,6 +276,8 @@ textarea::placeholder, input::placeholder { color: var(--ink-3); }
 .run-timer { color: var(--ink-2); }
 .run-timer .slow { display: block; color: var(--ink-3); font-size: 12px; margin-top: 2px; }
 .explanation-box { margin-top: 12px; font-size: 13px; color: var(--ink-2); line-height: 1.55; }
+.explanation-box p { margin: 0; }
+.explanation-box .explanation-stale { margin-top: 8px; font-size: 12px; font-style: italic; }
 .spin { animation: spin 0.9s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 

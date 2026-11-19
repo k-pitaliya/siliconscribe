@@ -73,7 +73,7 @@ The browser never talks to the AI provider and never runs tools. All secrets (AP
 \file{backend/tools/build_opensta.sh} & Builds OpenSTA from source into \file{~/.local/opensta} (no Homebrew). \\
 \file{backend/evaluation/} & Recorded live results: \file{results.jsonl}, \file{summary.md}, the final designs and testbenches in \file{artifacts/}. \\
 \file{backend/evaluation/independent/} & Hand-written reference testbenches (\file{tb_c1.v} \ldots\ \file{tb_s6.v}), \file{run.py} that checks each evaluated design against them, and \file{strength.py} that checks the references themselves with every mutant. \\
-\file{backend/tests/} & 589 automated backend tests in 35 test files, plus \file{conftest.py} (shared test set-up) and two fake servers (\file{cf_fake.py}, \file{nim_fake.py}) so Cloudflare and NIM code is tested without the internet. \\
+\file{backend/tests/} & 591 automated backend tests in 35 test files, plus \file{conftest.py} (shared test set-up) and two fake servers (\file{cf_fake.py}, \file{nim_fake.py}) so Cloudflare and NIM code is tested without the internet. \\
 \file{backend/workspace/} & Runtime files: one folder per design (\file{design.sv}, \file{testbench.sv}, \file{transcript.log}, \file{design.vcd}) and \file{projects.db}. \\
 \file{frontend/src/App.tsx} & The page: holds all state and connects the components. \\
 \file{frontend/src/api.ts} & Every call to the backend, including the SSE stream reader. \\
@@ -919,6 +919,30 @@ Found by changing one line at a time: the real streaming client had no test (eve
 \subsection*{Release engineer: ``will the demo run on the day?''}
 Found: the backend listened on every network interface without a login; \code{.env.example} had active lines that override the command line; Vite silently moved to another port when 5173 was busy, leaving an old build on the expected address; preflight called a backend left in offline mode ``responding''. \emph{Lesson:} check what is actually running, not that something answers.
 
+\section{After the review: a latch that stopped time}
+\label{sec:latch-timeout}
+
+A live run on 20 November, after the review, showed a gap that none of the nine roles had found. The prompt was simply ``design sr latch''. The run ended in \textbf{TIMEOUT} with ``0 checks, 0\%'', which looked like total failure. In fact:
+\begin{enumerate}
+  \item The model's first RTL used cross-coupled NOR gates, although its own truth table (active-low inputs: hold at 1,1; set at 0,1; reset at 1,0) needs NAND gates. The repair loop diagnosed this correctly and switched to \code{q = ~(s_n & q_n)}, \code{q_n = ~(r_n & q)}, the textbook latch.
+  \item The repaired design then passed all 552 checks the testbench printed. After the last one, the testbench drove the forbidden input $s\_n = r\_n = 0$ (both outputs become 1) and released \emph{both} inputs to 1 in the same time step.
+  \item In a real chip one gate would be slightly faster and the latch would settle (possibly after a metastable moment). A simulator without gate delays has no ``slightly faster'': both NANDs see 1,1 and switch to 0 together, then both see 0 and switch back to 1, forever. Every switch is a new \emph{delta cycle} at the \emph{same} simulated time, so time never advances.
+  \item The testbench's watchdog (\texttt{\#20000; \$finish;}) waits for simulated time, so it never fired. Only SiliconScribe's 30-second wall-clock limit stopped the run.
+\end{enumerate}
+
+The verdict was right (the run never finished, so it is not a PASS), but the screen hid the evidence. Three fixes followed, each pinned by a test that fails when the fix is removed:
+\begin{itemize}
+  \item \textbf{The checks that ran are kept.} On a timeout the simulator now sends \code{SIGTERM} first and gives \code{vvp} two seconds to exit; \code{vvp} flushes its output on \code{SIGTERM}, whereas the old \code{SIGKILL} lost the last few kilobytes (466 of 553 lines survived). The result stays TIMEOUT with no verdict counts, but the header reads ``Checks before stop: 552'', the pass rate is shown as ``---'' (not ``0\%''), and the Test cases tab lists the checks as progress, not a verdict.
+  \item \textbf{The likely cause is stated.} The timeout message now says that no watchdog fired, that simulated time therefore stopped or the run needs far longer, and that the usual cause of stopped time is a zero-delay feedback loop (cross-coupled gates, an \code{assign} that feeds itself, an \code{always} block that retriggers itself). The repair model reads the same text, and the testbench prompt now says: leave a forbidden input state one input at a time.
+  \item \textbf{A stale explanation is labelled.} The model writes its explanation for the first draft, and repairs do not rewrite it, so the Run panel still described NOR gates. When a repair has changed the code, a note now says the explanation was written for the first draft.
+\end{itemize}
+
+\emph{Lesson:} a verdict can be correct and still mislead if the evidence behind it is thrown away. ``0 checks'' and ``552 checks, then the simulator stalled'' are both TIMEOUT, but only the second tells you what to fix.
+
+\begin{viva}
+\emph{``Why did the SR latch time out if the design was correct?''} Because the testbench released the forbidden 0,0 input on both pins in the same time step. With zero gate delay the two NAND gates switch together forever in delta cycles, so simulated time stops, and a \texttt{\#delay} watchdog cannot fire; only the wall-clock limit ends the run. Real hardware would settle because one gate is always slightly faster. The fix belongs in the testbench: release one input at a time.
+\end{viva}
+
 \section{Numbers to remember}
 
 \begin{center}
@@ -928,7 +952,7 @@ Findings reported by the nine roles & about 110 \\
 Each fix pinned by a test that fails without it & yes (sabotage-checked) \\
 Defects found by the independent verifier in the fixes & 1 bypass, 1 slowdown, 3 regressions \\
 Saved runs with identical verdicts, old vs new code & 123 of 123 (and 14 of 14 evaluation designs) \\
-Automated tests after the review & 589 backend + 259 frontend \\
+Automated tests after the review & 591 backend + 267 frontend \\
 \bottomrule
 \end{tabularx}
 \end{center}

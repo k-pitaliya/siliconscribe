@@ -614,3 +614,39 @@ describe('ResultsPanel: review findings on the proof line and the critical path'
     expect(p).toContain('middle pins omitted')
   })
 })
+
+describe('ResultsPanel run stopped before the testbench finished (live finding, 20 Nov)', () => {
+  const stopped: SimulationResult = {
+    ...passResult,
+    status: 'TIMEOUT',
+    test_count: 0,
+    pass_count: 0,
+    fail_count: 0,
+    coverage: { pass_rate: 0 },
+    errors: [{ file: '', line: null, message: 'Simulation exceeded 30s timeout (no $finish reached).' }],
+    log_excerpt: 'Simulation exceeded 30s timeout (no $finish reached).',
+    checks: [],
+    checks_source: 'structured',
+    checks_total_logged: 552,
+    check_groups: [
+      { category: 'random', total: 402, passed: 402, failed: 0 },
+      { category: 'hold', total: 150, passed: 150, failed: 0 },
+    ],
+  } as SimulationResult
+
+  it('shows the checks that ran before the stop, not "0 checks, 0%", and says there is no verdict', () => {
+    render(<ResultsPanel result={stopped} waveform={null} schematic={null} history={[]} />)
+    expect(screen.getByText('Checks before stop')).toBeInTheDocument()
+    expect(screen.getAllByText('552').length).toBeGreaterThan(0)
+    expect(screen.queryByText('0%')).not.toBeInTheDocument()
+    expect(screen.getByTestId('stopped-early').textContent).toMatch(/at the time limit.*no verdict.*552 check/s)
+    expect(screen.getByTestId('verdict-badge').textContent).toContain('TIMEOUT')
+  })
+
+  it('shows no pass rate for a TIMEOUT that printed nothing', () => {
+    render(<ResultsPanel result={{ ...stopped, check_groups: [], checks_total_logged: 0, checks_source: 'none' }} waveform={null} schematic={null} history={[]} />)
+    expect(screen.queryByText('0%')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('stopped-early')).not.toBeInTheDocument()
+    expect(screen.getByText('Checks')).toBeInTheDocument()
+  })
+})

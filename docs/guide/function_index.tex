@@ -83,7 +83,8 @@
 {\small } & \texttt{\small generate\_\allowbreak{}testbench} & Module-level wrapper: forwards to the active provider. \\
 {\small } & \texttt{\small explain\_\allowbreak{}design} & Module-level wrapper: forwards to the active provider. \\
 {\small } & \texttt{\small fix\_\allowbreak{}design} & Module-level wrapper: forwards to the active provider. \\
-{\small \nolinkurl{simulator.py}} & \texttt{\small run\_\allowbreak{}tool} & subprocess.run that kills the WHOLE process group on timeout. \\
+{\small \nolinkurl{simulator.py}} & \texttt{\small run\_\allowbreak{}tool} & subprocess.run that kills the WHOLE process group on timeout; with a grace period it sends SIGTERM first so \texttt{vvp} can flush its output. \\
+{\small } & \texttt{\small \_\allowbreak{}timeout\_\allowbreak{}result} & A run stopped by the wall clock: still TIMEOUT with no verdict counts, but the checks printed before the stop are kept, and the likely cause (a zero-delay feedback loop) is named. \\
 {\small } & \texttt{\small \_\allowbreak{}scan} & The text rules, applied to one piece of source (original or preprocessed). \\
 {\small } & \texttt{\small preprocess} & The sources after macro expansion by Icarus' own preprocessor, in compile order (macros defined in an earlier file apply to later ones). \\
 {\small } & \texttt{\small sandbox\_\allowbreak{}violations} & Policy violations in the sources: raw-text and comment-stripped rules, then the same rules on the macro-expanded source when macros are used. \\

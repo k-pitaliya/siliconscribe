@@ -63,6 +63,9 @@ export default function App() {
   const [schematic, setSchematic] = useState<Schematic | null>(null)
   const [history, setHistory] = useState<IterationRecord[]>([])
   const [iterations, setIterations] = useState<number>(0)
+  // Repairs made after the explanation was written; kept across a Re-run, which clears the history but not the
+  // first-draft explanation (live finding, 20 Nov).
+  const [staleRepairs, setStaleRepairs] = useState<number>(0)
   const [designId, setDesignId] = useState<string>('')
   const [passDisputed, setPassDisputed] = useState('')
   const [serverUnreachable, setServerUnreachable] = useState(false)
@@ -201,6 +204,7 @@ export default function App() {
     setWaveform(null)
     setSchematic(null)
     setHistory([])
+    setStaleRepairs(0)
     setIterations(0)
     setSynthesis(null)
     setStrength(null)
@@ -317,6 +321,7 @@ export default function App() {
       // waveform, repair timeline or warning on screen would show them next to a new PASS/FAIL.
       setResult(res)
       setWaveform(freshWaveform ?? null)
+      setStaleRepairs((n) => Math.max(n, history.filter((h) => h.iteration > 0).length))
       setHistory([])
       setIterations(0)
       setStrength(null) // scored the previous code, not what was just re-run
@@ -337,7 +342,15 @@ export default function App() {
         text:
           res.status === 'PASS'
             ? `Simulation passed: ${res.pass_count} of ${res.test_count} checks.`
-            : `Simulation ${res.status}: ${res.fail_count} of ${res.test_count} checks failed.`,
+            : res.status === 'FAIL'
+              ? `Simulation FAIL: ${res.fail_count} of ${res.test_count} checks failed.`
+              : (() => {
+                  // TIMEOUT/ERROR have no verdict counts ("0 of 0 checks failed" after 552 had passed, live finding 20 Nov).
+                  const ran = (res.check_groups ?? []).reduce((n, g) => n + g.total, 0)
+                  return ran > 0
+                    ? `Simulation ${res.status} after ${ran} checks (stopped before the testbench finished).`
+                    : `Simulation ${res.status}: no checks completed.`
+                })(),
       })
     } catch (err) {
       const e = err as Error
@@ -392,6 +405,7 @@ export default function App() {
       setWaveform(proj.waveform)
       setSchematic(proj.schematic)
       setHistory(proj.iteration_history)
+      setStaleRepairs(0)
       setIterations(proj.iterations ?? (proj.iteration_history.length > 0 ? Math.max(...proj.iteration_history.map((h) => h.iteration)) : 0))
       setLintInfo(null) // lint is not saved with a project; the previous run's lint must not show next to it
       setPassDisputed(proj.pass_disputed ?? '')
@@ -548,7 +562,7 @@ export default function App() {
             onThinkingChange={setSelectedThinking}
             offline={provider?.offline ?? false}
           >
-            {(messages.length > 0 || running) && <AgentChat messages={messages} running={running} explanation={explanation} />}
+            {(messages.length > 0 || running) && <AgentChat messages={messages} running={running} explanation={explanation} repairs={Math.max(staleRepairs, history.filter((h) => h.iteration > 0).length)} />}
           </PromptPanel>
         </aside>
 

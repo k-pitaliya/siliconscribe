@@ -173,3 +173,21 @@ describe('App: self-review findings (19 Nov)', () => {
     expect(screen.queryByText('Server not reachable')).toBeNull()
   })
 })
+
+describe('App: SR latch live finding (20 Nov)', () => {
+  it('keeps the first-draft note through a Re-run and reports a stopped re-run by the checks it ran', async () => {
+    const hist = [0, 1].map((i) => ({ iteration: i, status: 'TIMEOUT', fix_summary: 'f', pass_count: 0, fail_count: 0 }))
+    vi.mocked(api.streamDesign).mockImplementation(async (_p, onEvent) => {
+      onEvent({ stage: 'done', message: 'done', status: 'TIMEOUT', response: done({ explanation: 'Built from two NOR gates.', iteration_history: hist, iterations: 1 }) } as never)
+    })
+    const stopped = { ...sim(), status: 'TIMEOUT', test_count: 0, pass_count: 0, fail_count: 0, coverage: {},
+      check_groups: [{ category: 'random', total: 552, passed: 552, failed: 0 }], checks: [], checks_source: 'structured', checks_total_logged: 552 }
+    vi.mocked(api.reSimulate).mockResolvedValue({ ...stopped, waveform: null } as never)
+    render(<App />); await ready(); type(); generate()
+    expect(await screen.findByTestId('explanation-stale')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /Re-run/ }))
+    expect(await screen.findByText('Simulation TIMEOUT after 552 checks (stopped before the testbench finished).')).toBeInTheDocument()
+    expect(screen.queryByText(/0 of 0 checks failed/)).toBeNull()
+    expect(screen.getByTestId('explanation-stale').textContent).toMatch(/changed the code once/)
+  })
+})

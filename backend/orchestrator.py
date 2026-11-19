@@ -1026,9 +1026,11 @@ def _sim_message(iteration: int, result) -> str:
         return f"Simulation passed: {result.pass_count}/{result.test_count} tests."
     if result.status == "FAIL":
         return f"Simulation failed: {result.fail_count} of {result.test_count} tests failed."
+    ran = sum(g.total for g in (result.check_groups or []))   # checks printed before a stop are progress, not a verdict
+    after = f" after {ran} checks (stopped before the testbench finished)" if ran else ""
     if result.status == "TIMEOUT":
-        return "Simulation timed out."
-    return "Simulation error (compile or runtime)."
+        return f"Simulation timed out{after}."
+    return f"Simulation error (compile or runtime){after}."
 
 
 def _final_message(result, iterations: int, disputed: str | None = None) -> str:

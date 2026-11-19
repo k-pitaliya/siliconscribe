@@ -154,17 +154,46 @@ def test_rtl_with_hash_delays_is_not_a_false_fail(tmp_path):
 
 @needs_iverilog
 def test_timeout_reports_the_hang_and_keeps_flushed_output_for_the_fixer(tmp_path):
-    """A testbench with no $finish used to give the fixer nothing at all.
-
-    Only output the simulator has already flushed survives the kill (stdio buffers
-    are lost with SIGKILL), so the test prints enough to force a flush before hanging.
-    """
+    """A testbench with no $finish used to give the fixer nothing at all."""
     tb = ('module testbench; reg a; wire y; integer i; dut u(.a(a), .y(y));\n'
           ' initial begin for (i = 0; i < 600; i = i + 1) $display("progress line %0d", i);\n'
           "  forever #1 a = ~a; end endmodule\n")
     res = IcarusSimulator(workspace=str(tmp_path)).simulate("hang1", RTL, tb, timeout=2)
     assert res.status == "TIMEOUT"
     assert "no $finish" in res.log_excerpt and "progress line" in res.log_excerpt
+
+
+_SR_LATCH = ("module sr_latch(input s_n, input r_n, output q, output q_n);\n"
+             "  assign q = ~(s_n & q_n);\n  assign q_n = ~(r_n & q);\nendmodule\n")
+
+
+@needs_iverilog
+def test_zero_delay_latch_hang_keeps_the_checks_that_ran_and_explains_the_stall(tmp_path):
+    """Live finding (20 Nov): a correct NAND SR latch passed 552 checks, then the testbench released the forbidden
+    s_n=r_n=0 input on both pins at once; the outputs oscillated inside one time step, the #20000 watchdog never fired,
+    and the page said "0 checks, 0%". Now: still TIMEOUT with no verdict counts, but the checks printed before the stop
+    are kept, and the log explains the stall. Only three short lines are printed, well under one stdio buffer, so this
+    also proves the SIGTERM grace: a bare SIGKILL loses them."""
+    tb = ("module testbench; reg s_n, r_n; wire q, q_n; integer pass_count = 0; integer fail_count = 0;\n"
+          " sr_latch dut(.s_n(s_n), .r_n(r_n), .q(q), .q_n(q_n));\n"
+          " initial begin\n"
+          "  s_n = 0; r_n = 1; #5; $display(\"CHK|PASS|directed|set q|5|1|%0h|\", q);\n"
+          "  s_n = 1; r_n = 0; #5; $display(\"CHK|PASS|directed|reset q|10|0|%0h|\", q);\n"
+          "  s_n = 1; r_n = 1; #5; $display(\"CHK|PASS|hold|hold q|15|0|%0h|\", q);\n"
+          "  s_n = 0; r_n = 0; #5; s_n = 1; r_n = 1; #5;\n"
+          "  $display(\"Passed: %0d\", 3); $display(\"Failed: %0d\", 0); $finish;\n"
+          " end\n"
+          " initial begin #20000; $display(\"FAIL: watchdog timeout\"); $finish; end\n"
+          "endmodule\n")
+    res = IcarusSimulator(workspace=str(tmp_path)).simulate("srl1", _SR_LATCH, tb, timeout=2)
+    assert res.status == "TIMEOUT"
+    assert (res.test_count, res.pass_count, res.fail_count) == (0, 0, 0)       # progress, never a verdict
+    assert res.checks_total_logged == 3 and res.checks_consistent
+    assert sum(g.passed for g in res.check_groups) == 3
+    assert "ran 3 check(s): 3 passed, 0 failed" in res.log_excerpt
+    assert "the last one printed was 'hold q'" in res.log_excerpt
+    assert "zero-delay feedback loop" in res.log_excerpt                        # the fixer sees the likely cause
+    assert any("zero-delay feedback loop" in e.message for e in res.errors)    # and so does the user
 
 
 def test_comments_mentioning_final_or_display_are_not_rejected():
@@ -279,3 +308,11 @@ def test_the_scanners_stay_fast_on_adversarial_input(src):
 def _rtl_text_rules(src):
     from simulator import _rtl_integrity_text
     return _rtl_integrity_text(src)
+
+
+def test_timeline_message_for_a_stopped_run_counts_the_checks_that_ran():
+    from models import CheckGroup, SimulationResult
+    from orchestrator import _sim_message
+    stopped = SimulationResult(status="TIMEOUT", module_name="", check_groups=[CheckGroup(category="random", total=552, passed=552, failed=0)])
+    assert _sim_message(1, stopped) == "Simulation timed out after 552 checks (stopped before the testbench finished)."
+    assert _sim_message(0, SimulationResult(status="TIMEOUT", module_name="")) == "Simulation timed out."

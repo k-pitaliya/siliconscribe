@@ -125,12 +125,16 @@ def _dir_lock(path: Path) -> threading.Lock:
         return _DIR_LOCKS.setdefault(str(path), threading.Lock())
 
 
-def run_tool(cmd: List[str], timeout: float, **kwargs) -> subprocess.CompletedProcess:
+def run_tool(cmd: List[str], timeout: float, grace: float = 0, **kwargs) -> subprocess.CompletedProcess:
     """subprocess.run that kills the WHOLE process group on timeout.
 
     `iverilog` is a driver that starts `ivl` as a grandchild; subprocess.run(timeout=) killed only the driver and
     left `ivl` spinning at 100% CPU after "Compilation timeout" (self-review finding, reproduced). The same holds
     for any tool that forks. Raises subprocess.TimeoutExpired like subprocess.run.
+
+    With `grace` > 0 the group first gets SIGTERM and that many seconds to exit, then SIGKILL. `vvp` flushes its
+    output on SIGTERM; SIGKILL lost the last few kilobytes the testbench printed (an SR-latch run that hung after
+    552 passing checks kept only 466 of them).
     """
     kwargs.setdefault("stdin", subprocess.DEVNULL)
     capture = kwargs.pop("capture_output", False)
@@ -141,6 +145,12 @@ def run_tool(cmd: List[str], timeout: float, **kwargs) -> subprocess.CompletedPr
         try:
             out, err = proc.communicate(timeout=timeout)
         except subprocess.TimeoutExpired:
+            if grace > 0:
+                try:
+                    os.killpg(proc.pid, signal.SIGTERM)
+                    proc.communicate(timeout=grace)
+                except (ProcessLookupError, PermissionError, subprocess.TimeoutExpired):
+                    pass
             try:
                 os.killpg(proc.pid, signal.SIGKILL)
             except (ProcessLookupError, PermissionError):
@@ -465,6 +475,47 @@ def _finish_time_ns(log: str) -> float:
     return float(m.group(1)) * (int(m.group(2)) if m.group(2) else 1) * _UNIT_TO_NS[m.group(3)]
 
 
+_STOP_GRACE_SECONDS = 2   # time vvp gets after SIGTERM to flush what the testbench printed
+
+# Said whenever a run hits the wall-clock limit. A testbench watchdog (#delay, then $finish) only helps while simulated
+# time advances; a zero-delay feedback loop oscillates inside one time step, so the watchdog never fires. Seen live
+# (20 Nov): an SR latch made of cross-coupled NANDs passed 552 checks, then the testbench released the forbidden
+# s_n=r_n=0 input on both pins at once and the outputs flipped 1,1 -> 0,0 -> 1,1 forever at the same time.
+_TIMEOUT_HINT = (
+    "No $finish was reached, so any watchdog in the testbench never fired either: simulated time stopped advancing, "
+    "or the simulation needs far longer than the limit. Simulated time stops when a zero-delay feedback loop "
+    "oscillates within one time step: cross-coupled gates (for example an SR latch whose forbidden input is released "
+    "on both pins at the same instant), an assign that feeds itself, or an always block that retriggers itself. "
+    "Release such inputs one at a time, and check the design for an unintended combinational loop.")
+
+
+def _timeout_result(log_file: Path, timeout: int) -> SimulationResult:
+    """A run stopped by the wall clock: still TIMEOUT with no verdict counts, but the checks the testbench printed
+    before it stopped are kept for display (the UI showed "0 checks" for a run that had passed 552 of them)."""
+    try:
+        log = log_file.read_text(errors="replace")   # bounded by the ulimit -f output cap
+    except OSError:
+        log = ""
+    msg = f"Simulation exceeded {timeout}s timeout (no $finish reached)."
+    logged = parse_checks(log, 0, 0)
+    ran = ""
+    if logged.get("checks_source") == "structured":
+        groups = logged["check_groups"]
+        passed, failed = sum(g.passed for g in groups), sum(g.failed for g in groups)
+        lasts = re.findall(r"^CHK\|(?:PASS|FAIL)\|[^|\n]*\|([^|\n]{1,60})", log[-4000:], re.M)
+        ran = (f" Before it was stopped, the testbench ran {passed + failed} check(s): {passed} passed, {failed} failed"
+               + (f"; the last one printed was '{lasts[-1].strip()}'." if lasts else "."))
+        logged["checks_consistent"] = True   # no summary exists to disagree with; these are progress, not a verdict
+    else:
+        logged = {}
+    tail = log[-1500:]
+    return SimulationResult(status="TIMEOUT", module_name="",
+                            simulation_time_ns=0.0,   # unknown: the run was stopped by the wall clock (was seconds*1000)
+                            errors=[SimError(message=msg + ran), SimError(message=_TIMEOUT_HINT)],
+                            log_excerpt=msg + ran + "\n" + _TIMEOUT_HINT + (f"\nLast output:\n{tail}" if tail else ""),
+                            **logged)
+
+
 def _excerpt(log: str, head: int = 1000, tail: int = 1500) -> str:
     """Head+tail of the transcript, never just the tail.
 
@@ -592,20 +643,11 @@ class IcarusSimulator:
                 limits = (f'ulimit -f {_MAX_OUTPUT_BLOCKS} 2>/dev/null; '
                           f'ulimit -t {timeout + _CPU_SECONDS_SLACK} 2>/dev/null; '
                           f'ulimit -v {_MAX_MEMORY_KB} 2>/dev/null; exec "$@"')
-                proc = subprocess.run(
-                    ["/bin/sh", "-c", limits, "sh", "vvp", str(vvp_file)],
-                    cwd=design_dir, stdout=log, stderr=subprocess.STDOUT,
-                    stdin=subprocess.DEVNULL, timeout=timeout, env=clean_env())
+                proc = run_tool(
+                    ["/bin/sh", "-c", limits, "sh", "vvp", str(vvp_file)], timeout, grace=_STOP_GRACE_SECONDS,
+                    cwd=design_dir, stdout=log, stderr=subprocess.STDOUT, env=clean_env())
         except subprocess.TimeoutExpired:
-            try:  # keep what the testbench printed so the fixer can see where it hung
-                tail = log_file.read_text(errors="replace")[-1500:]
-            except OSError:
-                tail = ""
-            msg = f"Simulation exceeded {timeout}s timeout (no $finish reached)."
-            return SimulationResult(status="TIMEOUT", module_name="",
-                                    simulation_time_ns=0.0,   # unknown: the run was stopped by the wall clock (was seconds*1000)
-                                    errors=[SimError(message=msg)],
-                                    log_excerpt=msg + (f"\nLast output:\n{tail}" if tail else ""))
+            return _timeout_result(log_file, timeout)
         except FileNotFoundError:
             return SimulationResult(status="ERROR", module_name="",
                                     errors=[SimError(message="vvp runtime not found")],

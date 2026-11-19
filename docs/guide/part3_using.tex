@@ -315,24 +315,24 @@ These are the checks behind the numbers in this guide (final run: 19 Nov 2026). 
 
 \begin{lstlisting}[style=plain]
 cd backend
-PATH="$HOME/.local/bin:$PATH" OFFLINE_MODE=1 python3 -m pytest tests/ -q   # 589 passed
+PATH="$HOME/.local/bin:$PATH" OFFLINE_MODE=1 python3 -m pytest tests/ -q   # 591 passed
 python3 tools/mutation_sweep.py                       # 27 of 27 injected bugs caught
 PATH="$HOME/.local/bin:$PATH" python3 tools/verify_mapping.py   # 19 of 19 equivalent
 python3 evaluation/independent/run.py                 # every evaluated design vs. its reference
 PATH="$HOME/.local/bin:$PATH" python3 evaluation/independent/strength.py   # the references' own strength
 
 cd ../frontend
-npm test                                              # 259 passed (Vitest)
+npm test                                              # 267 passed (Vitest)
 npm run build                                         # TypeScript check + production build
 \end{lstlisting}
 
 \begin{description}
-  \item[pytest] 589 backend tests in 35 test files. They use a temporary workspace (the \code{_isolated_workspace} fixture in \file{tests/conftest.py}), so they never touch your real \file{projects.db}. Tests that need Icarus, Yosys or OpenSTA are skipped automatically if the tool is missing; Cloudflare and NIM are tested against small fake servers, not the internet.
+  \item[pytest] 591 backend tests in 35 test files. They use a temporary workspace (the \code{_isolated_workspace} fixture in \file{tests/conftest.py}), so they never touch your real \file{projects.db}. Tests that need Icarus, Yosys or OpenSTA are skipped automatically if the tool is missing; Cloudflare and NIM are tested against small fake servers, not the internet.
   \item[Mutation sweep] Injects 27 known bugs into the built-in designs and checks that the built-in testbenches catch every one.
   \item[Mapping verification] The checks of Chapter~\ref{ch:timing}: gate-level simulation agrees with the RTL, area and cells recount, minimum period independent of the target. Each design says OK or REFUSED (with a reason).
   \item[Equivalence proof] Runs inside every timing estimate, so it has no separate command; \file{tests/test_equivalence.py} checks it on small designs. Measured on the 14 evaluated and 4 built-in designs: 16 proven, 2 not proven (the FSMs f1 and f2), 0 different.
   \item[Independent references] Hand-written reference testbenches, not written by any model, for the 14 evaluated designs. All 14 final designs were correct (no false PASS). \file{strength.py} runs \emph{every} mutant (not a sample of 12) against each reference; the references caught every mutant except equivalent ones, unreachable code, or behaviour the prompt does not define.
-  \item[Frontend] 259 Vitest tests in 18 files; \code{npm run build} runs the TypeScript compiler (clean) and the production build.
+  \item[Frontend] 267 Vitest tests in 18 files; \code{npm run build} runs the TypeScript compiler (clean) and the production build.
   \item[Accessibility] An automated axe-core audit of every tab, both themes, for a passing and a failing run: 0 violations. Its structural rules also run in the test suite. This is an automated audit, not a user study.
   \item[Tests of the tests] The newest components were broken on purpose, one behaviour at a time, and the tests had to fail.
 \end{description}

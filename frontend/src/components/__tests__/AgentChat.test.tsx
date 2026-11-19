@@ -77,3 +77,16 @@ describe('AgentChat diagnosis (self-review UX finding)', () => {
     expect(d.textContent).not.toContain('`')
   })
 })
+
+describe('AgentChat explanation after repairs (live finding, 20 Nov)', () => {
+  it('marks the explanation as written for the first draft once a repair changed the code', () => {
+    render(<AgentChat messages={msgs(1)} running={false} explanation="Built from NOR gates." repairs={1} />)
+    expect(screen.getByText('Built from NOR gates.')).toBeInTheDocument()
+    expect(screen.getByTestId('explanation-stale').textContent).toMatch(/first draft.*changed the code once/s)
+  })
+
+  it('shows no note when no repair happened', () => {
+    render(<AgentChat messages={msgs(1)} running={false} explanation="Built from NAND gates." />)
+    expect(screen.queryByTestId('explanation-stale')).not.toBeInTheDocument()
+  })
+})

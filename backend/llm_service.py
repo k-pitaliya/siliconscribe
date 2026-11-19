@@ -123,7 +123,10 @@ REQUIRED:
    state, and reset applied while other inputs are active.
 5. Sampling discipline: for sequential DUTs change inputs and sample outputs on the FALLING clock edge
    (@(negedge clk)); for combinational DUTs wait #5 after changing inputs before comparing. Never compare
-   in the same time step in which an input changed.
+   in the same time step in which an input changed. For a latch or any feedback loop with a forbidden input
+   combination (e.g. an SR latch with both inputs asserted), never release both inputs in the same time step:
+   a zero-delay simulator then oscillates forever within one time step, so even the watchdog cannot fire.
+   Leave the forbidden state one input at a time.
 6. EVERY comparison goes through the check task below. Copy it verbatim into the module. It counts the
    result and prints ONE machine-readable line per check. Call it as
    chk("category", "descriptive_name", expected_value, actual_value);
