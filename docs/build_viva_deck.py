@@ -314,7 +314,35 @@ fit_picture(s, A("diagram_timing_flow"), 0.6, 1.6, 7.9, 5.25)
 bullets(s, 8.85, 1.75, 3.9, 5.0, [
     "**Yosys 0.71** maps to sky130 cells; **OpenSTA 3.2.0** times the netlist",
     "Refuses tri-states, latches, loops and derived clocks",
-    "Netlist = RTL in gate-level simulation on **19 / 19** designs"], size=17, label="tim bullets", space_after=12)
+    "Netlist **formally proven** equal to the RTL on **16 / 18** designs"], size=17, label="tim bullets", space_after=12)
+
+# 11a -------------------------------------------------------------- schematic views
+SHOTS = "/Users/kushalpitaliya/Kushal_Master/Projects/VLSI/ai-eda-playground/docs/screenshots/v2"
+s = slide("See the gates: the Schematic tab", "New in the tool: every run can be drawn as RTL cells, adders, multiplexers and "
+          "flip-flops, or as individual gates, straight from the Yosys netlist of that run. This is the built-in counter at "
+          "gate level: four flip-flops with asynchronous reset and the gates that compute the next count.", kicker="New")
+fit_picture(s, f"{SHOTS}/schematic_counter_gate_full.png", 0.6, 1.55, 7.2, 5.35)
+bullets(s, 8.15, 1.75, 4.6, 5.0, [
+    "Three views: **Block diagram**, **RTL cells**, **Gate level**",
+    "Drawn from the **Yosys netlist of each run** with the open-source netlistsvg",
+    "Gate level uses generic gates; designs over 400 cells are not drawn",
+    "Shown: the built-in 4-bit counter (offline demo design)"], size=17.5, label="sch bullets", space_after=12)
+
+# 11b -------------------------------------------------------------- formal proof and critical path
+s = slide("A proven netlist and its critical path", "The timing numbers describe the sky130 netlist, so I prove that netlist is the "
+          "design that was simulated. Yosys' SAT solver checks every input value for combinational designs; induction handles "
+          "registers. Sixteen of eighteen designs are proven. The two state machines are honestly not proven, because synthesis "
+          "re-encoded their states. A netlist I broke on purpose is caught. The table shows the ALU's slowest path: seven majority "
+          "cells, the ripple-carry chain.", kicker="New")
+fit_picture(s, f"{SHOTS}/s20_timing_proof_critical_path.png", 0.6, 1.5, 5.6, 5.4)
+box(s, 6.6, 1.65, 6.15, 1.3, fillc=T_GREEN, line=GREEN, lw=1.25,
+    paras=[{"runs": parse("**16 / 18 proven**"), "size": 28, "color": GREEN}, "netlist = RTL (Yosys SAT / induction), 0 different"],
+    size=15.5, label="proof kpi")
+bullets(s, 6.6, 3.15, 6.15, 3.7, [
+    "Combinational: **SAT over every input value**; sequential: **induction**",
+    "2 FSMs **not proven** (state re-encoded), never shown as a pass; a sabotaged netlist is caught",
+    "ALU critical path: **seven maj3 cells** = the ripple-carry chain, 2.69 ns",
+    "Proves netlist = RTL, not that the RTL is correct"], size=16.5, label="proof bullets", space_after=10)
 
 # 12 --------------------------------------------------------------- live evaluation
 s = slide("Live evaluation: 15 prompts", "Fifteen prompts: seven combinational, six sequential and two state machines, with a free "
@@ -332,14 +360,14 @@ for k, (big, small, c, bc) in enumerate(kp):
 # 13 --------------------------------------------------------------- timing, area, tools
 s = slide("Timing, area, repair and tool checks", "Left: timing per design. Combinational designs get a longest path, never a clock "
           "rate. Area grows with flip-flops, the FIFO is largest. A seeded counter bug was found from the log alone and repaired "
-          "from 1 of 20 to 20 of 20 checks. The tool itself has 436 backend and 211 frontend tests.", kicker="Results")
+          "from 1 of 20 to 20 of 20 checks. The tool itself has 453 backend and 222 frontend tests.", kicker="Results")
 fit_picture(s, A("chart_timing_area_repair"), 0.6, 1.5, 6.6, 5.4)
 bullets(s, 7.55, 1.75, 5.2, 5.0, [
     "Combinational designs report a **longest path**, never a clock rate",
     "Seeded counter bug: **1 / 20 → 20 / 20** checks after the live repair",
-    "**436** backend + **211** frontend automated tests pass",
+    "**453** backend + **222** frontend automated tests pass",
     "**27 / 27** injected bugs caught in the built-in designs",
-    "**19 / 19** mapped netlists match the RTL"], size=17.5, label="t13 bullets", space_after=11)
+    "**16 / 18** netlists formally proven equal to the RTL"], size=17.5, label="t13 bullets", space_after=11)
 
 # 14 --------------------------------------------------------------- related work
 s = slide("Comparison with related work", "Earlier work mostly builds better generators or benchmarks. AutoChip feeds compiler errors "
@@ -370,13 +398,13 @@ s = slide("Limitations and future work", "I want to be clear about the limits. T
 cw2 = (W - 1.2 - 0.35) / 2
 for k, (t, c, bc, items) in enumerate([
         ("Limitations", RED, T_RED, ["Small designs (under about 100 lines), one run each, mainly one model",
-                                     "Only toggle coverage is measured; no assertions or formal checks",
+                                     "Only toggle coverage is measured; no assertions",
                                      "Timing is pre-layout on one corner; strength samples up to 12 mutants",
                                      "The sandbox is defence in depth, not a jail"]),
-        ("Future work", GREEN, T_GREEN, ["Compare several models on the 15 prompts",
-                                         "SVA assertions and formal equivalence checks",
-                                         "Line and branch coverage with a suitable simulator",
-                                         "OpenROAD place and route for post-layout timing"])]):
+        ("Future work", GREEN, T_GREEN, ["Power from the simulation's own activity",
+                                         "Testbench hardening from the bugs it missed",
+                                         "OpenROAD place and route for post-layout timing",
+                                         "SVA assertions, and a Tiny Tapeout chip"])]):
     x = 0.6 + k * (cw2 + 0.35)
     box(s, x, 1.7, cw2, 4.6, fillc=bc, line=c, lw=1.5)
     box(s, x, 1.7, cw2, 0.62, fillc=c, line=c, paras=[t], size=20, color=WHITE, bold=True, label="lf " + t)
@@ -389,8 +417,8 @@ box(s, 0, 0, W, 7.0, fillc=NAVY, line=None)
 text(s, 1.0, 1.05, W - 2.0, 0.5, ["CONCLUSION"], size=15, color=RGBColor(0x93, 0xC5, 0xFD), bold=True, label="c kick")
 text(s, 1.0, 1.55, W - 2.0, 1.9, ["Only the simulator decides, and every PASS states how much it is worth."], size=36,
      color=WHITE, bold=True, label="c main")
-for k, (big, small) in enumerate([("14 / 14", "live runs PASS"), ("102 / 111", "bugs caught"), ("19 / 19", "netlists match RTL"),
-                                  ("436 + 211", "automated tests")]):
+for k, (big, small) in enumerate([("14 / 14", "live runs PASS"), ("102 / 111", "bugs caught"), ("16 / 18", "netlists formally proven"),
+                                  ("453 + 222", "automated tests")]):
     x = 1.0 + k * 2.88
     text(s, x, 3.75, 2.7, 0.75, [big], size=32, color=WHITE, bold=True, label="c big")
     text(s, x, 4.45, 2.7, 0.45, [small], size=15, color=RGBColor(0xCB, 0xD5, 0xE1), label="c small")

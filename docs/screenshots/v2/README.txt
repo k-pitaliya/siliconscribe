@@ -43,3 +43,12 @@ s17_independent_testbench_fail.png  REAL live run, 19 Nov 2026: "Design a 4-bit 
                          mistakes (no reset edge at time 0, reset never released before the exhaustive section); fixing only those
                          two testbench lines gives 108/108 with the unchanged RTL. "A separate testbench model disagreed; the app
                          reported FAIL instead of rewriting the checks; the testbench was the side at fault."
+
+Added 19 Nov 2026 (new features; runs of the BUILT-IN offline designs, the header says "Offline demo"; caption accordingly):
+s18_schematic_rtl_cells.png        Schematic tab, "RTL cells" view of the built-in 8-bit ALU: subtractor, adder, XOR/AND/OR,
+                                   multiplexer and bus splits, drawn with netlistsvg from the Yosys netlist of the run.
+s19_schematic_gate_level.png       Schematic tab, "Gate level" view of the built-in 4-bit counter: 4 enabled flip-flops with
+                                   asynchronous reset and the XOR/NAND next-state logic (Yosys generic gates, not sky130 cells).
+s20_timing_proof_critical_path.png Results tab, timing section of the built-in 8-bit ALU: longest path 2.69 ns, "Netlist formally
+                                   proven equal to the RTL (SAT proof over every input value)", and the critical path pin by pin:
+                                   b[0] -> nor2b -> seven maj3 (the ripple-carry chain) -> o21ai -> o22ai -> overflow.

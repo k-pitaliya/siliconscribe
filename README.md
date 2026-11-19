@@ -1,6 +1,6 @@
 # SiliconScribe
 
-**AI-driven RTL design and verification: a per-run model menu, an independent testbench, measured testbench strength and toggle coverage, and a pre-layout timing and area estimate.** Type a hardware design in plain English and the system generates synthesizable Verilog RTL and a self-checking testbench, simulates both with Icarus Verilog 12.0, and **runs a self-correction loop** that feeds simulation failures back to the model until the design passes. The simulator decides PASS or FAIL, never the model. Results, a real VCD waveform, every executed check, a schematic, lint and synthesis metrics, testbench strength, toggle coverage, timing and area, and a step-by-step agent trace are shown in the browser. Projects persist in SQLite; UVM bundles export for Questa.
+**AI-driven RTL design and verification: a per-run model menu, an independent testbench, measured testbench strength and toggle coverage, a pre-layout timing and area estimate with a formal netlist proof, and gate-level schematics.** Type a hardware design in plain English and the system generates synthesizable Verilog RTL and a self-checking testbench, simulates both with Icarus Verilog 12.0, and **runs a self-correction loop** that feeds simulation failures back to the model until the design passes. The simulator decides PASS or FAIL, never the model. Results, a real VCD waveform, every executed check, a schematic, lint and synthesis metrics, testbench strength, toggle coverage, timing and area, and a step-by-step agent trace are shown in the browser. Projects persist in SQLite; UVM bundles export for Questa.
 
 ```
 Natural language ─▶ Specification ─▶ RTL gen ─▶ Testbench gen ─▶ Lint
@@ -38,7 +38,9 @@ Natural language ─▶ Specification ─▶ RTL gen ─▶ Testbench gen ─▶
   - **Limits (also stated in the app)**: one typical corner, no wire delay (no place and route), ideal clock, zero I/O delays, setup only. Not sign-off. Power is not reported.
   - **Refuses with a reason** instead of printing a number: tri-states (Yosys would silently turn them into wires), latches, combinational loops, derived or gated clocks, designs with no logic cells.
   - **Needs** `yosys`, OpenSTA's `sta` on `PATH`, and `backend/pdk/sky130hd_tt.lib`. The library is git-ignored (12 MB); fetch it as described in [`backend/pdk/README.md`](backend/pdk/README.md). Without them the app shows timing and area as "not available" and never invents numbers. `TIMING_ENABLED=0` skips the step.
-  - **Checked** by `backend/tools/verify_mapping.py` on 19 designs: the mapped gate netlist, simulated with the SAME testbench, gives identical pass counts to the RTL; area and cell count recomputed from netlist + liberty match; the minimum period does not change with the target. Example: the built-in 4-bit counter is 11 cells, 150.144 µm², minimum period 0.727 ns (meets 100 MHz with +9.27 ns slack).
+  - **Formally proven** (`backend/equivalence.py`): after mapping, Yosys' built-in SAT solver proves the sky130 netlist equals the RTL. Combinational designs: a miter plus SAT over every defined input value. Sequential designs: registers paired by name, temporal induction. If induction cannot decide (for example synthesis re-encoded FSM state) the app says **not proven**, never passed; a mismatch is an alert that invalidates the timing and area. On the 14 evaluation designs and the 4 built-in ones: **16 proven, 2 not proven (the two FSMs), 0 different**; a deliberately sabotaged netlist is reported as different. This proves netlist = RTL, not that the RTL is correct.
+  - **Critical path, pin by pin**: the worst path from OpenSTA with each sky130 cell, edge and delay. Example: the built-in 8-bit ALU's path is its ripple-carry chain (`b[0]` → nor2b → seven maj3 → o21ai → o22ai → `overflow`, 2.69 ns).
+  - **Also checked** by `backend/tools/verify_mapping.py` on 19 designs: the mapped gate netlist, simulated with the SAME testbench, gives identical pass counts to the RTL; area and cell count recomputed from netlist + liberty match; the minimum period does not change with the target. Example: the built-in 4-bit counter is 11 cells, 150.144 µm², minimum period 0.727 ns (meets 100 MHz with +9.27 ns slack).
 - **UVM Export (Questa style)**: `POST /api/uvm/export` generates a 16-file Questa/ModelSim bundle (`logic`/`always_ff`, `uvm_*`, `uvm_config_db#(virtual *_if)`, `run_test()`, `Makefile`/`filelist.f`/`README`). Export-only, never simulated with Icarus.
 - **Projects**: SQLite `backend/workspace/projects.db` persists every design/run. `GET /api/projects` (paginated), `GET /api/projects/{id}`, `DELETE`. Frontend drawer with Load/Delete.
 - **Editable code**: CodeMirror with Verilog highlighting, Copy per tab, `Ctrl+Enter` to generate; edit and **Re-run** (`POST /api/simulation/run`).
@@ -142,13 +144,13 @@ Full table (checks, strength, toggle coverage, timing, area per design): [`backe
 
 ```bash
 cd backend
-PATH="$HOME/.local/bin:$PATH" OFFLINE_MODE=1 python3 -m pytest tests/ -q   # 436 passed (31 test files)
+PATH="$HOME/.local/bin:$PATH" OFFLINE_MODE=1 python3 -m pytest tests/ -q   # 453 passed (32 test files)
 PATH="$HOME/.local/bin:$PATH" python3 tools/mutation_sweep.py            # 27 of 27 injected bugs caught
 PATH="$HOME/.local/bin:$PATH" python3 tools/verify_mapping.py            # 19 of 19 designs equivalent at gate level (about 30 s)
 PATH="$HOME/.local/bin:$PATH" python3 tools/preflight.py                 # demo readiness, free checks only
 #   add --live to preflight.py for ONE tiny live model call (uses a little quota)
 cd ../frontend
-npm test                  # 211 passed (vitest)
+npm test                  # 222 passed (vitest)
 npm run build             # tsc -b && vite build
 ```
 
@@ -164,18 +166,27 @@ The backend suite runs with **no API key** (`OFFLINE_MODE=1`); the model catalog
 ## Limitations
 
 - One model writes both the design and the testbench unless a separate testbench model is chosen; the specification is written by a model unless you review it.
-- Testbench strength is a sample of up to 12 syntactic mutants; only toggle coverage is measured (no line or branch coverage); there are no assertions or formal checks.
+- Testbench strength is a sample of up to 12 syntactic mutants; only toggle coverage is measured (no line or branch coverage); there are no assertions. The formal check covers netlist = RTL only, and FSMs whose state is re-encoded stay "not proven".
 - Timing and area are pre-layout on one corner: no wires, setup only, no power. Not sign-off.
 - Free models are slow and quota-limited; GitHub Copilot `auto` cannot name the model it used.
 - The sandbox is defence in depth, not a jail.
 - Evaluated on small blocks (under about 100 lines of RTL), one run each, mainly one model.
+
+## Future work
+
+- Power estimate from the run's own simulation activity (OpenSTA reads the VCD).
+- Mutation-guided testbench hardening: bugs the testbench missed go back to the model to add checks.
+- Coverage-driven test generation from toggle-coverage gaps.
+- Physical layout with OpenROAD place and route, for post-layout timing.
+- SVA assertions with formal property checking; a multi-model comparison on the 15 prompts.
+- Export to a Tiny Tapeout shuttle: from a prompt to fabricated silicon.
 
 ## Design notes / honest scope
 
 - **Two kinds of area**: `/api/synthesis/run` runs `yosys synth` **without a liberty file**, so its area is a **dimensionless relative proxy** (`cells × 5`), flagged by `liberty_mapped:false` / `area_units:"relative_proxy"` / `tech_node:null`. The µm² area shown in *Timing and area* comes from mapping to the sky130 library and is a pre-layout estimate.
 - **Independent TB, residual model risk**: the testbench generator is given the **specification only** and the RTL body is withheld, so it cannot simply mirror the implementation. The remaining risk is that the same model misreads the spec in *both* artifacts. Specification review, a separate testbench model and the second opinion reduce this; the app does not decide automatically which side is wrong when they disagree, a person compares the first failing check with the specification.
 - **Timing is an estimate**: no SDC beyond the target clock, no place and route, no hold analysis. `backend/openroad.py` is still a stub (`openroad -version` check only) and is not wired into the pipeline.
-- **Schematic is hybrid**: port-level block diagram via `spec` when `yosys` is absent; gate-level `write_json` metrics (`cell_count`, `area_estimate`) when `yosys` is available.
+- **Schematic views**: *Block diagram* (ports, from the spec), *RTL cells* (word-level cells after Yosys `proc; opt`) and *Gate level* (single-bit generic gates after `synth`; generic cells, not sky130 cells), drawn in the browser with [netlistsvg](https://github.com/nturley/netlistsvg) from the Yosys netlist of the run. The netlists are reduced to ports and cells (no server paths), the SVG is shown as an image so signal names cannot run script, and designs over 400 cells are not drawn (use RTL cells). Zoom, fit and SVG download.
 - **Coverage**: toggle coverage is measured from the VCD. Any other coverage number (`COV:` bins, `Toggle/Branch/Line/Functional` lines a testbench prints about itself) is parsed from the log and labelled as testbench-reported. Verilator was tried for line and branch coverage and rejected: only 3 of 12 designs built with the pip wheel.
 - **UVM is export-only**: the generated bundle needs the UVM class library, which Icarus Verilog does not implement, so it targets Questa/ModelSim and is never simulated by `simulator.py`.
 - **Lint is best-effort**: `verilator --lint-only` preferred, `iverilog -g2012 -Wall` fallback, heuristic regex last resort. Non-blocking.
@@ -191,12 +202,13 @@ backend/
   model_catalog.py   live model lists for the menu (OpenCode, Cloudflare, NVIDIA NIM)
   checks.py          CHK| per-check line parser
   mutation.py        testbench strength (mutation testing)
-  timing.py          Yosys sky130 mapping + OpenSTA timing and area
+  timing.py          Yosys sky130 mapping + OpenSTA timing, area and the critical path
+  equivalence.py     formal proof that the sky130 netlist equals the RTL (Yosys SAT / induction)
   offline_designs.py curated designs (ALU/counter/adder/mux + buggy) + // [offline:key] marker
   simulator.py       Icarus compile/run, sandbox policy, $dumpvars injection, limits
   vcd_parser.py      VCD → waveform JSON (MAX 40/2000), toggle coverage
   cov_metrics.py     testbench-reported coverage parsing
-  schematic.py       port-level + synthesize_with_yosys (yosys -p synth -top, stat, write_json)
+  schematic.py       port-level + synthesize_with_yosys (stat, RTL-cell and gate-level JSON netlists for the schematic)
   synthesis.py       YosysSynthesizer hybrid (available/cell_count/area/json)
   linter.py          VerilogLinter (verilator→iverilog→heuristic, benign filter)
   uvm_templates.py   UVM bundle generator (16 files, Questa style)
@@ -205,7 +217,7 @@ backend/
   pdk/               sky130hd_tt.lib goes here (git-ignored, see pdk/README.md)
   tools/             mutation_sweep.py, verify_mapping.py, evaluate_live.py, preflight.py, build_opensta.sh
   evaluation/        live evaluation: summary.md, results.jsonl, artifacts/, independent/
-  tests/             pytest suite (436 tests, 31 files; offline, no key)
+  tests/             pytest suite (453 tests, 32 files; offline, no key)
 frontend/
   src/App.tsx        layout + streaming + Projects drawer + UVM export → zip download
   src/components/    PromptPanel, ModelPicker, TestbenchModelSelect, SpecReview, SpecSummary, CodeEditor, AgentChat,

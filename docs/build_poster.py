@@ -247,7 +247,7 @@ text(ix, dy + 3.6, iw, h - 3.6 - 1.05, [
 ], size=21, space_after=7, label="intro bullets")
 
 # ---- Experimental Setup & Implementation
-y = y + h + GAP; h = 6.35
+y = y + h + GAP; h = 5.8
 ix, iy, iw = panel(x0, y, CW, h, "Experimental Setup & Implementation")
 rows = [
     ("Simulator", "Icarus Verilog 12.0 (iverilog -g2012, vvp)"),
@@ -258,9 +258,9 @@ rows = [
     ("Frontend", "React 18, TypeScript, Vite, SVG waveform"),
     ("Evaluation model", "DeepSeek V4.1 Flash (free), OpenCode app"),
     ("Other sources", "Cloudflare Workers AI (40), NVIDIA NIM (15)"),
-    ("Platform, tests", "Apple M4, macOS; 436 pytest + 211 Vitest"),
+    ("Platform, tests", "Apple M4, macOS; 453 pytest + 222 Vitest"),
 ]
-rh = 0.56
+rh = 0.5
 for k, (a, b) in enumerate(rows):
     yy = iy + k * rh
     fill = T_NAVY if k % 2 == 0 else WHITE
@@ -271,12 +271,15 @@ for k, (a, b) in enumerate(rows):
 
 # ---- The tool in use (real screenshot)
 y = y + h + GAP; h = BOTTOM - y
-ix, iy, iw = panel(x0, y, CW, h, "The Tool in Use")
-ph = picture(f"{SHOTS}/s08_second_opinion.png", ix, iy, iw)
-text(ix, iy + ph + 0.08, iw, h - (iy - y) - ph - 0.15, [
-    "Real results panel of a live FIFO run: PASS 4134/4134 after one repair, the model that wrote it, the second "
-    "opinion that agrees, and the warning that the original testbench still fails on the final design."],
-    size=15, color=SLATE, label="shot caption", line=1.0, space_after=0)
+ix, iy, iw = panel(x0, y, CW, h, "Gate-Level Schematic View")
+gh = (y + h - 0.25) - iy
+_im = Image.open(f"{SHOTS}/schematic_counter_gate_full.png"); gw = gh * _im.size[0] / _im.size[1]
+picture(f"{SHOTS}/schematic_counter_gate_full.png", ix, iy, gw, gh)
+text(ix + gw + 0.3, iy, iw - gw - 0.3, gh, [
+    "The **Schematic tab** draws every run as RTL cells and as gates, from its own Yosys netlist.",
+    "Shown: the built-in 4-bit counter, four flip-flops with asynchronous reset and the next-state gates.",
+    "The sky130 netlist behind the timing numbers is also **formally proven** equal to the RTL.",
+], size=16, label="schematic caption", space_after=6)
 
 # ================================================================ COLUMN 2
 x0 = COLX[1]
@@ -387,7 +390,7 @@ card(mx, yy, mw, ev_h, "6  EVIDENCE FOR EACH PASS", [
     "second opinion: a fresh testbench",
     "strength: up to 12 injected bugs",
     "toggle coverage from the VCD",
-    "synthesis, timing and area (sky130)"],
+    "timing, area + netlist proof (sky130)"],
      head_fill=GREEN, body_fill=T_GREEN, title_size=15, body_size=15.5, head_h=0.44, label="evidence")
 e = yy + ev_h
 arrow(cxm, e, cxm, e + 0.3); yy = e + 0.3
@@ -478,8 +481,8 @@ for k, (a, b) in enumerate(exs):
     box(ix + k * (ew + 0.2), ty, ew, 1.3, fill=WHITE, line=BORDER, paras=[{"runs": parse(f"**{a}**"), "color": NAVY}, b],
         size=16, label="tex " + a, inset=0.08)
 text(ix, ty + 1.42, iw, h - (ty - y) - 1.5, [
-    "**Checked:** the mapped gate netlist, simulated with the same testbench, gives the same results as the RTL on "
-    "**19 of 19** designs, and area recounted from the netlist matches.",
+    "**Proven:** Yosys' SAT solver proves the netlist equals the RTL on **16 of 18** designs (the 2 FSMs: not proven, "
+    "state re-encoded; 0 different). Gate-level simulation matches on 19 of 19.",
     {"runs": parse("Estimate only: one typical corner, no wire delay, ideal clock, setup only, no power. Not sign-off."),
      "color": AMBER, "italic": True},
 ], size=17, space_after=3, label="timing checked")
@@ -591,8 +594,8 @@ text(ix, sy + 1.62, iw, 0.4, ["Diagnosis from the simulator log alone: root caus
      size=13, color=SLATE, label="seed note")
 # KPI tiles
 ky = sy + 2.12
-kpis = [("436 + 211", "automated tests pass"), ("27 / 27", "injected bugs caught (built-in designs)"),
-        ("19 / 19", "netlists match RTL at gate level"), ("0", "accessibility violations (axe-core)")]
+kpis = [("453 + 222", "automated tests pass"), ("27 / 27", "injected bugs caught (built-in designs)"),
+        ("16 / 18", "netlists formally proven equal to RTL"), ("0", "accessibility violations (axe-core)")]
 kw = (iw - 3 * 0.18) / 4
 kh = (y + h - 0.25) - ky
 for k, (big, small) in enumerate(kpis):
@@ -608,8 +611,8 @@ rows = [("Metric", "Target", "Measured result"),
         ("Testbench strength", "Catch injected bugs", "102/111 caught (92%)"),
         ("Live fault repair", "Correct root cause", "1/20 to 20/20 checks"),
         ("Mutation sweep (built-in)", "Testbench must fail bugs", "27/27 caught"),
-        ("Gate-level check", "Netlist matches RTL", "19/19 designs"),
-        ("Automated tests", "All passing", "436 backend + 211 frontend")]
+        ("Netlist vs RTL", "Formal proof", "16/18 proven, 0 different"),
+        ("Automated tests", "All passing", "453 backend + 222 frontend")]
 cws = [3.55, 3.05, iw - 3.55 - 3.05]; trh = 0.6
 for r, row in enumerate(rows):
     xx = ix
@@ -624,7 +627,7 @@ text(ix, ty2, iw, (y + h - 0.2) - ty2, [
     "**Key takeaway:** a PASS is evidence, not proof, so SiliconScribe also shows how much each PASS is worth and lets "
     "a separate model write the testbench.",
     "**Limits:** small designs, one run each, mainly one model, toggle coverage only, timing before layout. "
-    "**Next:** compare models on the 15 prompts, SVA and formal checks, line and branch coverage, OpenROAD place and route.",
+    "**Next:** power from simulation activity, testbench hardening by mutation, OpenROAD layout, SVA, a Tiny Tapeout chip.",
 ], size=17.5, space_after=5, label="takeaway")
 
 # ---- Prepared By / Guided By (wording kept from the earlier poster)
