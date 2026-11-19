@@ -20,7 +20,14 @@ specification panel before any code is generated. The Results tab shows the
 verdict, which model wrote the design, the testbench strength, the timing and area
 estimate, the measured toggle coverage and any verification warning. The waveform viewer is a native
 SVG renderer with a time ruler, hexadecimal bus values, zoom, and reset. It avoids
-an external GTKWave dependency.
+an external GTKWave dependency. The Schematic tab has three views of the same run:
+\emph{Block diagram} (the ports of the module), \emph{RTL cells} (word-level cells
+such as adders, multiplexers, comparators and flip-flops, taken from the Yosys netlist
+after \code{proc} and \code{opt}) and \emph{Gate level} (single-bit generic gates and
+flip-flops after Yosys \code{synth}; these are Yosys' generic cells, not sky130
+cells). The two netlist views are drawn in the browser with netlistsvg~\cite{netlistsvg},
+with zoom, fit and SVG download; a netlist with more than 400 cells is not drawn and
+the tab says so.
 
 \begin{figure}[H]
 \centering
@@ -103,14 +110,15 @@ found during screenshot validation (Section~\ref{sec:discussion}).
   \node[tier,text width=15.0cm] (fe) {\textbf{FRONTEND}: React 18 + Vite + TypeScript\\
     \scriptsize Prompt panel \textbullet\ model menu and testbench-model select \textbullet\ specification review
     \textbullet\ CodeMirror RTL/TB editors \textbullet\ SSE agent timeline\\
-    \scriptsize Results and test-case tabs \textbullet\ SVG waveform viewer \textbullet\ project
-    history \textbullet\ UVM export button};
+    \scriptsize Results and test-case tabs \textbullet\ SVG waveform viewer \textbullet\ schematic
+    (block, RTL cells, gate level) \textbullet\ project history \textbullet\ UVM export};
   \node[tier,text width=8.3cm,below=7mm of fe,xshift=-1.75cm] (be) {\textbf{BACKEND}: FastAPI + Python\\
     \scriptsize Intent parser $\rightarrow$ \textbf{RTL generator} $\parallel$
     \textbf{spec-only TB generator}\\
     \scriptsize Orchestrator: structured diagnosis loop \textbullet\ compiler repairs\\
     \scriptsize Anti-cheat guards \textbullet\ second opinion \textbullet\ strength (mutation)\\
-    \scriptsize VCD parser and toggle coverage \textbullet\ linter \textbullet\ timing stage\\
+    \scriptsize VCD parser and toggle coverage \textbullet\ linter \textbullet\ synthesis\\
+    \scriptsize Timing stage with formal equivalence proof\\
     \scriptsize Model routing \textbullet\ SQLite \textbullet\ UVM bundle generator};
   \node[tier,text width=3.6cm,right=15mm of be] (llm) {\textbf{LLM PROVIDERS}\\
     \scriptsize OpenCode app\\
@@ -153,7 +161,7 @@ All interfaces are typed with Pydantic (Table~\ref{tab:datamodel}); invalid requ
 \code{IterationRecord} & iteration, status, fix summary, fix type, structured diagnosis, counts, log excerpt \\
 \code{RunResponse} & spec, RTL, testbench, explanation, final result, iteration history, waveform, schematic, synthesis, strength, timing, second opinion, design and testbench model, fallback notice, verification warning \\
 \code{StrengthReport} & mutants run, caught, did not compile, survivors with line and description \\
-\code{TimingReport} & library, clock, target and period, worst slack, met, maximum frequency, critical path, area, cell count, flip-flops, note, refusal reason \\
+\code{TimingReport} & library, clock, target and period, worst slack, met, maximum frequency, critical path (one row per pin), area, cell count, flip-flops, equivalence status and method, note, refusal reason \\
 \code{SecondOpinion} & status (agrees / disagrees / unavailable), counts, model, note \\
 \bottomrule
 \end{tabularx}
@@ -235,12 +243,17 @@ are applied first, so the circuit timed is the circuit simulated.
 \item \textbf{Timing.} OpenSTA 3.2.0 (built from source) reads the mapped netlist and
 the liberty file. Clocks are read from the netlist (the nets the flip-flops are
 really wired to), so any port name and several clocks are handled.
+\item \textbf{Equivalence proof.} \code{equivalence.py} checks with Yosys' built-in
+SAT solver that the mapped netlist computes the same function as the RTL
+(Section~\ref{sec:equiv}). The result is ``proven'', ``not proven'' or
+``different''; a ``different'' result is shown as an alert and the timing and area
+are declared invalid, because they describe another circuit.
 \end{enumerate}
 
 For a clocked design the report gives the worst setup slack at the target clock and
 the minimum clock period (maximum frequency). A design with no clock is reported by
 its longest input-to-output path, never as a clock rate. Every report also gives the
-critical path, the mapped area in \textmu m$^2$, the cell count and the number of
+critical path pin by pin (Section~\ref{sec:critpath}), the mapped area in \textmu m$^2$, the cell count and the number of
 flip-flops. The limits are stated in the app: one typical corner, no placement or
 routing (so no wire delay), an ideal clock, zero input/output delays and setup
 analysis only. It is not sign-off, and power is not reported. Instead of printing

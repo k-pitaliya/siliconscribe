@@ -10,14 +10,18 @@ line-level diagnosis that is patched and re-simulated. The simulator decides PAS
 FAIL, never the model. Around that loop the system measures how much a PASS is worth:
 testbench strength by mutation testing, measured toggle coverage, a second-opinion
 testbench after a testbench-changing repair, an optional separate model for the
-testbench, and a pre-layout timing and area estimate on the SkyWater 130\,nm library.
+testbench, and a pre-layout timing and area estimate on the SkyWater 130\,nm library,
+with the critical path listed pin by pin and a formal check that the mapped netlist
+is the circuit that was simulated.
 
 In a live evaluation with one free model, 14 of 15 prompts completed: 8 passed on the
 first attempt and 6 after one self-repair, and hand-written reference testbenches
 confirmed that all 14 final designs are correct. The fifteenth prompt timed out three
-times and is reported as no result. The tool itself is checked by 436 backend and 211
-frontend tests, a 27-of-27 mutation sweep, a gate-level equivalence check of the
-timing stage on 19 designs, and an accessibility audit with no violations.
+times and is reported as no result. The tool itself is checked by 453 backend and 222
+frontend tests, a 27-of-27 mutation sweep, a gate-level simulation check of the
+timing stage on 19 designs, and an accessibility audit with no violations. The mapped
+netlist was formally proven equivalent to the RTL (Yosys SAT) for 16 of 18 designs;
+the two FSMs were reported as not proven, and none as different.
 
 Because the pipeline is model-agnostic, its quality is expected to rise with better models (a larger model already turned an incorrect priority encoder into a first-attempt PASS), and the remaining work is mostly infrastructure and stronger verification rather than redesign (Section~\ref{sec:scale}).
 
@@ -45,8 +49,11 @@ prove the testbench complete.
 \item \textbf{Only toggle coverage is measured.} Line and branch coverage are not
 measured; Verilator could not build most of the generated testbenches. Any other
 coverage figure is what the testbench reports about itself and is labelled as such.
-\item \textbf{No assertions or formal checks.} There are no SVA properties and no
-formal equivalence check; the only oracle is the simulated testbench.
+\item \textbf{No assertions; the formal check covers the mapping only.} There are no
+SVA properties, so the only oracle for the behaviour of the RTL is the simulated
+testbench. The formal equivalence check proves only that the netlist matches the RTL,
+not that the RTL is correct, and it cannot decide FSMs whose state synthesis
+re-encoded (``not proven'', as for f1 and f2).
 \item \textbf{Timing is a pre-layout estimate.} One typical corner, no placement or
 routing (no wire delay), an ideal clock, zero I/O delays and setup analysis only.
 Power is not reported. Designs with tri-states, latches, loops or derived clocks are
@@ -70,14 +77,20 @@ available. It is a structural export, not a verified UVM testbench.
 \begin{enumerate}[label=\textbf{\arabic*.}]
 \item \textbf{Multi-model comparison} on the fifteen evaluation prompts, with the
 reference check and the strength score reported per model.
-\item \textbf{Assertions and formal checks:} SVA properties as a second oracle
-alongside the self-checking testbench, and formal equivalence where a reference
-exists.
+\item \textbf{SVA assertions with formal property checks} as a second oracle
+alongside the self-checking testbench.
+\item \textbf{Power estimate} from the simulation activity: OpenSTA can read the
+VCD of the run.
+\item \textbf{Mutation-guided testbench hardening:} the bugs the testbench missed are
+fed back to the model to add the missing checks.
+\item \textbf{Coverage-driven test generation}, aimed at the signals and cases that
+the measured coverage shows are not exercised.
 \item \textbf{Line and branch coverage} with a simulator that supports the generated
 testbenches.
-\item \textbf{Place and route with OpenROAD} for post-layout timing with real wire
-delay.
-\item \textbf{Gate-level visualisation} of the mapped netlist in the schematic tab.
+\item \textbf{Physical layout with OpenROAD} place and route, for post-layout timing
+with real wire delay.
+\item \textbf{Export to a Tiny Tapeout shuttle}, so that a small design that passed its
+checks can be submitted for fabrication.
 \item \textbf{Production runtime:} container isolation per simulation and a job queue
 for multi-user use, with PostgreSQL and authentication (Section~\ref{sec:scale}).
 \item \textbf{Code structure:} split the pipeline function (about 500 lines) into

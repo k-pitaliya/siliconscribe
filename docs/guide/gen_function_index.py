@@ -12,6 +12,7 @@ BACKEND = ROOT / "backend"
 
 # Descriptions for functions that have no docstring (written from reading the code).
 DESC = {
+    "equivalence._script": "Build the Yosys proof script: RTL (gold) vs sky130 netlist (gate); SAT on a miter, or induction for registers.",
     "cov_metrics.compute_coverage": "Summarise what the testbench exercised: vectors run, passed, failed, pass rate, any COV: bins and any printed toggle/branch/line coverage figures.",
     "db._db_path": "Return the path of projects.db inside the workspace.",
     "db._ensure_table": "Create the projects table (and add missing columns to older databases) plus an index on created_at.",
@@ -174,7 +175,7 @@ DESC = {
 FILES = ["main.py", "orchestrator.py", "llm_service.py", "simulator.py", "models.py",
          "linter.py", "cov_metrics.py", "checks.py", "vcd_parser.py", "schematic.py", "synthesis.py",
          "db.py", "offline_designs.py", "cleanup.py", "openroad.py", "uvm_templates.py",
-         "model_catalog.py", "mutation.py", "timing.py",
+         "model_catalog.py", "mutation.py", "timing.py", "equivalence.py",
          "tools/mutation_sweep.py", "tools/verify_mapping.py", "tools/preflight.py", "tools/evaluate_live.py",
          "evaluation/independent/run.py", "evaluation/independent/strength.py"]
 

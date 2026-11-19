@@ -23,6 +23,8 @@ and after a while (a short wait with the built-in offline designs; with a free l
   \item \textbf{If something failed}: a diagnosis of why, a minimal fix, and the evidence that the fix worked.
   \item \textbf{How much the PASS is worth}: how many deliberately injected bugs the testbench catches, how much of the design's wiring the test actually exercised, and (after some repairs) a second opinion from a fresh testbench.
   \item \textbf{An early size and speed estimate}: the design mapped onto real chip cells (SkyWater 130 nm), with its area and whether it meets the target clock. This is a pre-layout estimate, not a final chip measurement.
+  \item \textbf{A proof about the mapped circuit}: a formal check that the gate netlist used for the estimate computes exactly what your RTL computes (or an honest ``not proven'' when the tool cannot decide), and the slowest path through it listed gate by gate.
+  \item \textbf{Drawings of the circuit}: a block diagram of the ports, the design as word-level blocks (adders, multiplexers, flip-flops), and the design as single gates.
 \end{enumerate}
 
 The words ``RTL'', ``Verilog'', ``testbench'' and ``simulator'' are all explained in the next chapters. For now, the important point is the idea behind the project.
@@ -85,17 +87,18 @@ These safeguards stop the system from fooling itself or its user:
 \section{Results in numbers}
 
 \begin{center}
-\begin{tabular}{@{}lr@{}}
+\begin{tabularx}{\textwidth}{@{}X>{\raggedleft\arraybackslash}p{6.4cm}@{}}
 \toprule
 Live evaluation, 15 prompts (DeepSeek V4.1 Flash) & 14 done: 8 PASS at once, 6 after repair \\
 Median time per live run & 360 s (3 to 13 minutes) \\
 Injected bugs caught by the live testbenches & 102 of 111 (92\%) \\
 Evaluated designs correct against hand-written references & 14 of 14 \\
 Mutation sweep of the built-in designs & 27 of 27 caught \\
-Timing netlists equal to the RTL at gate level & 19 of 19 designs \\
-Automated tests & 436 backend + 211 frontend, all passing \\
+Timing netlists equal to the RTL in gate-level simulation & 19 of 19 designs \\
+Timing netlists formally proven equal to the RTL & 16 of 18 (2 FSMs not proven, 0 different) \\
+Automated tests & 453 backend (32 files) + 222 frontend (15 files), all passing \\
 \bottomrule
-\end{tabular}
+\end{tabularx}
 \end{center}
 
 The 15th prompt (a 4-bit counter) did not complete: testbench generation timed out three times. It is reported as ``no result'', never as a pass or a failure. Chapter~\ref{ch:testing} lists the commands behind every number.
@@ -145,6 +148,17 @@ The \textbf{counter} used throughout this guide is sequential: on every rising c
 \section{RTL: the level designers work at}
 
 Engineers do not draw millions of gates. They describe hardware at the \textbf{register-transfer level (RTL)}: which registers exist and how values move between them on each clock edge. A tool called a \textbf{synthesizer} later converts RTL into gates. ``Generating RTL'' therefore means writing the design description, not drawing the circuit.
+
+\section{Netlists and schematics}
+\label{sec:netlist}
+
+When the synthesizer has turned RTL into gates, the result is a \textbf{netlist}: a plain list of every part (a gate or a flip-flop, called a \textbf{cell}) and of the wires (\textbf{nets}) that connect their pins. A \textbf{gate-level netlist} is one where every cell is a single small gate (AND, OR, XOR, NOT, a multiplexer) or a one-bit flip-flop. It is text, made for tools, not for people.
+
+A \textbf{schematic} is a drawing of a netlist: each cell becomes a symbol and each net a line between symbols. The same design can be drawn at different levels of detail. A \textbf{block diagram} shows only the module and its ports. An \textbf{RTL-level} drawing shows word-wide blocks such as ``8-bit adder'' or ``multiplexer''. A \textbf{gate-level} drawing shows every single gate and flip-flop. SiliconScribe can draw all three (Section~\ref{sec:schematictab}).
+
+\begin{analogy}
+A netlist is like the parts list and wiring list of a radio kit: ``resistor R3 goes between pin 2 of the chip and the battery''. A schematic is the picture printed on the box that shows the same thing at a glance.
+\end{analogy}
 
 % ---------------------------------------------------------------------------
 \chapter{Describing Hardware with Verilog}
@@ -305,6 +319,24 @@ If the same model, looking at the same RTL, writes the testbench, it tends to en
 One common-mode risk remains: by default the \emph{same} model reads the \emph{same} specification for both. If it misreads the spec, both can be wrong in the same way. SiliconScribe offers three answers: you can review and correct the specification before generation; you can choose a \emph{different} model to write the testbench; and after a repair that rewrote the testbench, a fresh testbench gives a second opinion (Chapter~\ref{ch:trust}). For the evaluation, hand-written reference testbenches were used as an outside check.
 \end{warnbox}
 
+\section{Formal equivalence checking: a proof instead of examples}
+\label{sec:formalbasics}
+
+Simulation tries many input values and checks the answers. It can never try them all for a big design, so a PASS is strong evidence, not proof. \textbf{Formal verification} is different: instead of running examples, a program reasons about \emph{every} possible input at once and either proves a statement or finds a counter-example.
+
+SiliconScribe uses one formal check, \textbf{equivalence checking}: it compares two versions of the same design and proves that they always give the same outputs. The two versions are the RTL you simulated and the gate netlist the synthesizer produced from it for the timing estimate (Chapter~\ref{ch:timing}). Two words appear in this check:
+
+\begin{description}
+  \item[SAT.] Short for \emph{satisfiability}. A \textbf{SAT solver} is a program that answers one question: ``is there any set of 0/1 input values that makes this logic formula true?''. To compare two circuits, both are fed the same inputs and their outputs are compared with XOR gates; the solver is asked whether any input makes an output differ. If the answer is ``no such input exists'', the two circuits are proven equal for every input.
+  \item[Induction.] Circuits with flip-flops have memory, so the outputs depend on the whole history, which can be endless. \textbf{Induction} handles this the way a maths proof does: show that the two designs start out matching, then show that \emph{if} they match at one clock edge they \emph{must} still match at the next. Together these prove they match at every clock edge, forever.
+\end{description}
+
+\begin{keyidea}
+``The netlist equals the RTL'' and ``the design is correct'' are two different statements. The equivalence proof shows only the first: synthesis did not change what the design does, so the timing and area numbers describe the circuit that was simulated. If the RTL itself has a bug, the netlist has exactly the same bug and the proof still succeeds. Whether the RTL is right is what the testbench, the strength score and the reference checks are for.
+\end{keyidea}
+
+Sometimes induction cannot decide. A common reason is that the synthesizer stored a state machine's state in a different code (for example one flip-flop per state instead of a 2-bit number). Both versions still behave the same, but their flip-flops no longer pair up one to one, so this simple form of induction cannot finish the proof. SiliconScribe then says ``not proven'': not a pass and not a failure.
+
 % ---------------------------------------------------------------------------
 \chapter{EDA Tools Used}
 \label{ch:tools}
@@ -346,10 +378,11 @@ Each signal gets a short code (\code{!}, \code{"}); \texttt{\#5} means ``time 5'
 
 \section{Yosys: synthesis}
 
-\textbf{Yosys} is an open-source synthesizer: it converts RTL into a \textbf{netlist} of gates and reports how many cells (gates and flip-flops) the design needs. SiliconScribe uses it twice:
+\textbf{Yosys} is an open-source synthesizer: it converts RTL into a \textbf{netlist} of gates and reports how many cells (gates and flip-flops) the design needs. SiliconScribe uses it in three ways:
 \begin{itemize}
-  \item \textbf{Generic synthesis}, without a cell library: a count of Yosys' own generic cells, flip-flops and latches. Its area figure is only a \emph{relative proxy} (cells $\times$ 5), not square micrometres, and the app labels it so.
+  \item \textbf{Generic synthesis}, without a cell library: a count of Yosys' own generic cells, flip-flops and latches. Its area figure is only a \emph{relative proxy} (cells $\times$ 5), not square micrometres, and the app labels it so. The same run gives the netlists that the Schematic tab draws.
   \item \textbf{Mapping to real cells} for the timing and area estimate: the design is mapped onto the cells of a real chip library (next section), which gives a real area in square micrometres (\umsq{}).
+  \item \textbf{Proving equivalence}: Yosys contains its own SAT solver, which proves that the mapped netlist computes the same function as the RTL (Section~\ref{sec:formalbasics}).
 \end{itemize}
 SiliconScribe uses Yosys 0.71 as a WebAssembly build (\code{yowasp-yosys}), so it installs with pip. If Yosys is missing, the app says ``Synthesis not available'' instead of inventing numbers.
 
@@ -358,6 +391,8 @@ SiliconScribe uses Yosys 0.71 as a WebAssembly build (\code{yowasp-yosys}), so i
 A real chip is built from a foundry's library of small pre-designed blocks called \textbf{standard cells} (NAND gates, inverters, flip-flops\ldots). For each cell, a \textbf{liberty file} gives its area and how long a signal takes to pass through it. SiliconScribe uses the open \textbf{SkyWater 130 nm} library (\textbf{sky130}), at its typical operating point (25\,\textdegree C, 1.8 V).
 
 \textbf{OpenSTA} is an open-source \textbf{static timing analysis} tool. Instead of simulating, it adds up the cell delays along every path between flip-flops (or from inputs to outputs) and compares the slowest one with the clock period. The time left over is the \textbf{slack}: positive means the design is fast enough for the target clock, negative means it is too slow.
+
+The slowest path is called the \textbf{critical path}. It is the chain of gates that a signal must pass through one after another, and it decides how fast the whole design can run: speeding up any other path does not help. Listing the critical path gate by gate shows \emph{where} the time goes. For example, in an adder built as a \emph{ripple-carry} chain each bit must wait for the carry from the bit below, so the carry chain is usually the critical path.
 
 \begin{warnbox}
 These numbers are a \textbf{pre-layout estimate}: the cells are not yet placed on a chip, so the delay of the wires between them is not included, the clock is ideal, and only one operating point is checked. They answer ``is this anywhere near the target clock, and roughly how big is it?''. They are not the final timing checks done before a chip is made, and not the area of a manufactured chip. Chapter~\ref{ch:timing} explains the details.

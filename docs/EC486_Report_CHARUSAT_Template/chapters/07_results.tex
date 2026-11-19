@@ -17,11 +17,12 @@ they are kept because they are still true records of what happened.
 \toprule
 \textbf{Check} & \textbf{Command} & \textbf{Result} & \textbf{Status} \\
 \midrule
-Backend suite & \code{python3 -m pytest} & 436 passed (31 files) & \textcolor{passgreen}{\textbf{PASS}} \\
-Frontend unit tests & \code{npx vitest run} & 211 passed (14 files) & \textcolor{passgreen}{\textbf{PASS}} \\
+Backend suite & \code{python3 -m pytest} & 453 passed (32 files) & \textcolor{passgreen}{\textbf{PASS}} \\
+Frontend unit tests & \code{npx vitest run} & 222 passed (15 files) & \textcolor{passgreen}{\textbf{PASS}} \\
 TypeScript and build & \code{npx tsc -b}, \code{npm run build} & 0 errors; build succeeds & \textcolor{passgreen}{\textbf{PASS}} \\
 Mutation sweep & \code{python3 tools/mutation_sweep.py} & 27 of 27 injected bugs caught & \textcolor{passgreen}{\textbf{PASS}} \\
-Gate-level mapping & \code{python3 tools/verify_mapping.py} & 19 of 19 designs equivalent & \textcolor{passgreen}{\textbf{PASS}} \\
+Gate-level mapping & \code{python3 tools/verify_mapping.py} & 19 of 19 designs give the same results in gate-level simulation & \textcolor{passgreen}{\textbf{PASS}} \\
+Formal equivalence & \code{equivalence.py} in the timing stage & 16 of 18 designs proven; 2 not proven (FSM state re-encoded); 0 different & see Table~\ref{tab:equiv} \\
 Independent references & \code{python3 evaluation/independent/run.py} & 14 of 14 evaluated designs correct & \textcolor{passgreen}{\textbf{PASS}} \\
 Accessibility & automated axe-core audit & 0 violations (both themes, passing and failing runs, every tab) & \textcolor{passgreen}{\textbf{PASS}} \\
 Demo readiness & \code{python3 tools/preflight.py --live} & 0 failures, 0 warnings; all three fallback rungs ready & \textcolor{passgreen}{\textbf{PASS}} \\
@@ -159,6 +160,58 @@ show that the estimate times the right circuit; it is still a pre-layout estimat
 \includegraphics[width=0.65\textwidth]{s07_timing_section.png}
 \caption[Timing and area section of the results panel]{Timing and area section of the results panel for a live FIFO run by \texttt{opencode/hy4-flash-free} (a different run from s6 in Table~\ref{tab:eval}): meets 100 MHz with +7.76 ns slack, 1749.2\,\textmu m$^2$ in 114 cells, with the limits of the estimate stated under the numbers and the testbench parameters that were applied.}
 \label{fig:timing}
+\end{figure}
+
+\subsection{Formal equivalence and critical path}
+\label{sec:equivres}
+The formal check of Section~\ref{sec:equiv} was run on the 14 evaluation designs and
+four built-in designs (the 4-bit counter, the 8-bit ALU, the adder and the 4:1 multiplexer). Table~\ref{tab:equiv} gives the result. All combinational and
+sequential designs were formally proven equivalent (Yosys SAT). The two FSMs, f1 and
+f2, were reported as ``not proven'': synthesis re-encoded their state, so the
+registers could not be paired by name and induction could not decide. Both still pass
+the gate-level simulation check. No design was reported as different. To see that the
+check can fail, the netlist of the built-in 4-bit ALU was sabotaged on purpose (one
+\code{nand2} cell replaced by a \code{nor2} cell, which has the same pins); the check
+reported it as different. This sabotage case is an automated test.
+
+\begin{table}[H]
+\centering
+\caption{Formal equivalence of the sky130 netlist and the RTL (19 November 2026).}
+\label{tab:equiv}
+\footnotesize
+\begin{tabularx}{\textwidth}{@{}p{4.2cm}c l X@{}}
+\toprule
+\textbf{Designs} & \textbf{Count} & \textbf{Method} & \textbf{Result} \\
+\midrule
+Evaluation, combinational (c1--c7) & 7 & miter + SAT & 7 proven \\
+Evaluation, sequential (s2--s6) & 5 & temporal induction & 5 proven \\
+Evaluation, FSM (f1, f2) & 2 & temporal induction & 2 not proven (state re-encoded by synthesis) \\
+Built-in (counter, 8-bit ALU, adder, mux) & 4 & SAT or induction & 4 proven \\
+\midrule
+\textbf{Total} & \textbf{18} & & \textbf{16 proven, 2 not proven, 0 different} \\
+\midrule
+Built-in 4-bit ALU, one \code{nand2} changed to \code{nor2} & 1 & miter + SAT & reported as different (sabotage check) \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+``Proven'' here means that the mapped netlist computes the same function as the RTL.
+It does not mean that the RTL is correct; that is shown, as far as it can be, by the
+testbench, the strength score and the reference testbenches of
+Section~\ref{sec:eval}.
+
+Figure~\ref{fig:critpath} shows the timing section of the built-in 8-bit ALU, which
+has no clock. The longest input-to-output path is 2.69\,ns, from \code{b[0]} to
+\code{overflow}. The critical path table explains why: after one \code{nor2b_1} cell
+the path goes through six \code{maj3_1} cells, the ripple-carry chain of the adder,
+at about 0.36 to 0.39\,ns each, then through \code{o21ai_0} and \code{o22ai_1} to the output.
+A carry-lookahead or carry-select adder is the change that would shorten this path.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.45\textwidth]{s20_timing_proof_critical_path.png}
+\caption[Timing section with the equivalence result and the critical path]{Results panel of the \emph{built-in} 8-bit ALU (offline demo design, not an AI result): longest path 2.69\,ns, the line ``Netlist formally proven equal to the RTL (SAT proof over every input value)'' and the critical path pin by pin, with the sky130 cell, edge, delay and arrival of each stage.}
+\label{fig:critpath}
 \end{figure}
 
 \section{Trust Features in Live Runs}
@@ -388,12 +441,28 @@ The counter testbench gained an enable-hold phase, an asynchronous-reset phase a
 The sweep uses hand-picked bugs on the built-in designs. Since then the same idea runs automatically inside the application on every PASS, with up to 12 generated one-token mutants (Section~\ref{sec:trustimpl}). On the built-in counter it catches 7 of 8; the survivor, \code{posedge} changed to \code{negedge}, is a genuine small blind spot of the counter testbench, whose sampling cannot tell the two clock edges apart (Figure~\ref{fig:degraded}).
 
 \section{Supporting Outputs}
-The application also produces a port-level schematic, a three-tier lint report,
+The application also produces a schematic in three views, a three-tier lint report,
 Yosys generic-cell counts, the sky130 timing and area estimate, a bounded VCD
 waveform, and a 16-file UVM 1.2 export. The UVM bundle is export-only: Icarus cannot
 compile UVM, so it is never simulated. Figure~\ref{fig:cwave} shows the waveform viewer.
-The schematic tab is a port-level block diagram, and the interface itself states that
-a gate-level view is future work.
+Figures~\ref{fig:schrtl} and~\ref{fig:schgate} show the RTL-cell and gate-level
+schematic views; the block diagram view shows only the ports. Both netlist views are
+drawn from the Yosys netlist of the run that is on screen. The gate-level view uses
+Yosys' generic gates, not the sky130 cells that are timed.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.7\textwidth]{s18_schematic_rtl_cells.png}
+\caption[RTL cells view of the schematic tab]{Schematic tab, ``RTL cells'' view of the \emph{built-in} 8-bit ALU (offline demo design, labelled ``Offline demo'' in the header): subtractor, adder, XOR, AND and OR cells, a multiplexer and bus splits (12 cells), drawn with netlistsvg from the Yosys netlist of the run.}
+\label{fig:schrtl}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.7\textwidth]{s19_schematic_gate_level.png}
+\caption[Gate level view of the schematic tab]{Schematic tab, ``Gate level'' view of the \emph{built-in} 4-bit counter (offline demo design): four enabled flip-flops with asynchronous reset and the XOR/NAND next-state logic. These are Yosys generic gates, not sky130 cells.}
+\label{fig:schgate}
+\end{figure}
 
 \begin{figure}[htbp]
 \centering
@@ -475,11 +544,11 @@ The same review added a \emph{Test cases} tab to the results panel. It lists eve
 
 \subsection{Third review round: timing stage and model access}
 \label{sec:review3}
-When the timing stage was added, it was attacked in the same way, by giving it designs chosen to break it. Table~\ref{tab:review3} lists what was found and fixed. The model menu was hardened at the same time: the API accepts browser calls from this machine only (extra exact origins are opt-in through \code{CORS_ALLOW_ORIGINS}), and every model id is validated before it can reach a subprocess or a URL (Section~\ref{sec:trustimpl}).
+When the timing stage was added, it was attacked in the same way, by giving it designs chosen to break it. Table~\ref{tab:review3} lists what was found and fixed; its last two rows are defects of the later equivalence check, found when it was run on the evaluation designs, and each is now a regression test. The model menu was hardened at the same time: the API accepts browser calls from this machine only (extra exact origins are opt-in through \code{CORS_ALLOW_ORIGINS}), and every model id is validated before it can reach a subprocess or a URL (Section~\ref{sec:trustimpl}).
 
 \begin{table}[H]
 \centering
-\caption{Defects found by trying to break the timing stage on purpose, and their fixes.}
+\caption{Defects found in the timing stage and its equivalence check, and their fixes.}
 \label{tab:review3}
 \footnotesize
 \begin{tabularx}{\textwidth}{@{}p{4.0cm}p{4.6cm}X@{}}
@@ -491,8 +560,10 @@ Clock not named \code{clk} & not recognised as a clock & clocks read from the ma
 Tri-state output & silently turned into a wire and reported as meeting 100 MHz & refused with a reason \\
 Combinational loop & a meaningless maximum frequency & refused with a reason \\
 Testbench overrides a parameter & a different circuit timed from the one simulated & numeric overrides applied before mapping \\
+Equivalence check with \code{x} allowed on inputs & SAT ``disproved'' the correct ALU c7 with an input value containing \code{x} & inputs restricted to defined 0/1 values \\
+Design built from an initialised array (c5) & equivalence check could not run (SAT cannot model memory initialisation) & RTL passed through Yosys \code{memory} first, as synthesis does \\
 \bottomrule
 \end{tabularx}
 \end{table}
 
-\paragraph{What this does not establish.} The verdict is still only as strong as the testbench that prints it. Model-written testbenches are now measured on every PASS (strength, toggle coverage and, after a testbench-changing repair, a second opinion), but these measures are evidence, not proof: the strength score is a sample of up to 12 syntactic mutants and only toggle coverage is measured. The sandbox remains defence in depth on a developer machine, not a multi-tenant jail.
+\paragraph{What this does not establish.} The verdict is still only as strong as the testbench that prints it. Model-written testbenches are now measured on every PASS (strength, toggle coverage and, after a testbench-changing repair, a second opinion), but these measures are evidence, not proof: the strength score is a sample of up to 12 syntactic mutants and only toggle coverage is measured. The formal equivalence check covers only the step from RTL to netlist, not the RTL itself. The sandbox remains defence in depth on a developer machine, not a multi-tenant jail.

@@ -66,5 +66,5 @@ That the sky130 gate netlist the timing numbers describe computes exactly the sa
 Synthesis re-encodes FSM states (for example to one-hot), so the registers of the netlist no longer pair up with the RTL's by name, and induction cannot decide. The honest answer is "not proven", which the app shows; it never turns an undecided proof into a pass. The gate-level simulation check still passes for both. A proof that matches re-encoded states would need a state-mapping step or keeping the original encoding.
 
 **22. What does the critical path table tell you?**
-The slowest path pin by pin, with each sky130 cell's delay: where the time goes. For the 8-bit ALU it is the ripple-carry chain: seven maj3 (majority = carry) cells at about 0.39 ns each, 2.69 ns in total. That is exactly the case a carry-lookahead or carry-select adder would shorten, so the table shows what to change to make the design faster.
+The slowest path pin by pin, with each sky130 cell's delay: where the time goes. For the 8-bit ALU it is the ripple-carry chain: six maj3 (majority = carry) cells at about 0.36 to 0.39 ns each, 2.69 ns in total. That is exactly the case a carry-lookahead or carry-select adder would shorten, so the table shows what to change to make the design faster.
 

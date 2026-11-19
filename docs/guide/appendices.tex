@@ -19,23 +19,27 @@
   \item[Component (React)] A reusable piece of the user interface.
   \item[CORS] Browser rule listing which websites may call an API (here: this machine only).
   \item[Coverage] A measure of how much of a design or its behaviour the tests exercised.
-  \item[Critical path] The slowest path through the logic; it sets the highest clock frequency.
+  \item[Critical path] The slowest path through the logic; it sets the highest clock frequency. The app lists it pin by pin.
   \item[Degraded mode] Running on built-in designs because the AI provider is unavailable, clearly labelled.
   \item[Design id] A random UUID naming one run's workspace folder and saved project.
   \item[Directed test] A hand-chosen test case, usually a corner case.
   \item[DUT] Device under test: the design being verified.
   \item[EDA] Electronic design automation: software for designing chips.
+  \item[Equivalence checking] A formal proof that two versions of a design (here the RTL and its mapped netlist) give the same outputs for every input.
   \item[Equivalent mutant] A changed design that behaves exactly like the original, so no testbench can catch it.
   \item[Endpoint] One address of a web API, such as \code{POST /api/design/stream}.
   \item[Event (SSE)] One streamed JSON message describing a pipeline stage.
+  \item[Formal verification] Proving a property for every possible input by reasoning, instead of trying examples in simulation.
   \item[Flatten] Merge all sub-modules into one, so area and timing cover the whole design.
   \item[Flip-flop] A one-bit memory element that updates on a clock edge.
   \item[FPGA] A chip that can be reconfigured to implement any digital circuit.
   \item[Frontend] The browser half of the app (React, TypeScript).
+  \item[Gate-level netlist] A netlist in which every cell is a single small gate or a one-bit flip-flop.
   \item[Generator (Python)] A function that yields values one at a time; used to stream events.
   \item[Hallucination] An AI stating something false with confidence.
   \item[HDL] Hardware description language, such as Verilog.
   \item[Icarus Verilog] The free simulator SiliconScribe uses (\code{iverilog} + \code{vvp}).
+  \item[Induction (temporal)] Proving two sequential designs match by showing they match at the start, and that matching at one clock edge forces matching at the next.
   \item[Instantiate] Place a copy of a module inside another module and connect its ports.
   \item[JSON] A text format of named fields used for data exchange.
   \item[Latch] A memory element that is transparent while its enable is active; usually an accident in combinational code.
@@ -43,8 +47,11 @@
   \item[LLM] Large language model: an AI that writes text, including code.
   \item[Module] One hardware block in Verilog, from \code{module} to \code{endmodule}.
   \item[Mutant / mutation testing] A deliberately broken copy of a design, used to check that tests catch bugs.
+  \item[Miter] A circuit that feeds the same inputs to two designs and raises a flag if any output differs; used for equivalence proofs.
   \item[Model menu] The sidebar control that chooses the AI model per run, from OpenCode, Cloudflare or NVIDIA NIM.
-  \item[Netlist] A list of gates and their connections, produced by synthesis.
+  \item[Netlist] A list of cells (gates and flip-flops) and the wires connecting them, produced by synthesis.
+  \item[netlistsvg] An open-source (MIT) program that lays out a Yosys netlist as an SVG drawing; the Schematic tab uses it in the browser.
+  \item[Not proven] The equivalence result when the proof could not decide (for example re-encoded FSM state); neither a pass nor a failure.
   \item[No-op guard] Stops the loop when a fix changes nothing.
   \item[Non-blocking assignment] \code{<=} in Verilog: all registers update together at the clock edge.
   \item[Offline provider] Built-in designs used without an AI service.
@@ -66,7 +73,9 @@
   \item[Register] A group of flip-flops holding a value.
   \item[Reset] A signal that forces registers to a known value; active-low resets act at 0.
   \item[RTL] Register-transfer level: hardware described as registers and the logic between them.
+  \item[SAT solver] A program that decides whether any set of 0/1 inputs makes a logic formula true; used to prove two circuits equal.
   \item[Sandbox policy] Rules that reject Verilog constructs able to access files or run programs.
+  \item[Schematic] A drawing of a circuit: cells as symbols, wires as lines.
   \item[Second opinion] A fresh testbench written from the same specification and run on the final design after a repair changed the first one.
   \item[Self-checking testbench] A testbench that compares results itself and prints a verdict.
   \item[Sequential logic] Logic with memory, updated by a clock.
@@ -135,7 +144,10 @@ data: {"stage": "strength", "message": "Testbench strength: caught N of M inject
        "strength": {"status": "ok", "total": M, "killed": N, "survivors": [...], ...}}
 
 data: {"stage": "timing", "message": "Timing: meets 100 MHz (slack +9.27 ns, ...); 150.144 um^2 in 11 cells.",
-       "timing": {"available": true, "slack_ns": 9.27, "area_um2": 150.144, ...}}
+       "timing": {"available": true, "slack_ns": 9.27, "area_um2": 150.144,
+                  "critical_path": [{"point": "...", "cell": "...", "edge": "rise",
+                                     "incr_ns": ..., "arrival_ns": ...}, ...],
+                  "equivalence": "proven", "equivalence_method": "...", ...}}
 
 data: {"stage": "done", "status": "PASS", "message": "Design passes on the first attempt.",
        "response": {"design_id": "3f9c...", "status": "PASS", "iterations": 0,
@@ -226,8 +238,11 @@ GET /api/models
 \file{CodeEditor.tsx} & tab switch, copy & RTL/testbench tabs with Verilog highlighting and copy-to-clipboard. \\
 \file{AgentChat.tsx} & \code{stageIcon}, \code{formatElapsed}, \code{RunTimer} & Pick an icon for each stage and status; the ``Working\ldots'' timer. \\
 \file{ResultsPanel.tsx} & \code{ResultsView}, \code{Metric}, \code{describeUntoggled} & Verdict and metrics, Written by, second opinion, warnings, strength, synthesis, timing, toggle coverage, test types, lint, repair timeline, specification. \\
+ & \code{EquivalenceLine} & The proof line: proven (green), not proven (grey), or a red alert that the netlist differs and the timing and area are invalid. \\
+ & \code{CriticalPath} & The fold-out ``Critical path, pin by pin'' table: pin, cell, edge, delay, arrival. \\
 \file{WaveformViewer.tsx}, \file{waveformUtils.ts} & \code{zoomAt}, \code{resetView}, \code{groupSignals}, \code{valueAt}, \code{formatValue} & Zoom and fit the SVG waveform; group signals by role; value at the cursor in hex, binary or decimal. \\
-\file{SchematicView.tsx} & (component) & Draw the module box with ports and widths, e.g.\ \code{count[3:0]}. \\
+\file{SchematicView.tsx} & \code{BlockDiagram}, \code{cellCount}, \code{SchematicView} & Block diagram of the ports (e.g.\ \code{count[3:0]}); RTL cells and Gate level views of the run's netlists with zoom, fit to panel and Download SVG; no drawing above 400 cells (\code{MAX_DRAWN_CELLS}). \\
+\file{netlistRender.ts} & \code{renderNetlist} & Lay out a Yosys JSON netlist as SVG text with netlistsvg; loaded on demand; an empty result is reported as a failure. \\
 \bottomrule
 \end{longtable}
 \end{center}

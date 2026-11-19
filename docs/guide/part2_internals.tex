@@ -21,6 +21,7 @@
      \file{llm_service.py} + \file{model_catalog.py}: providers, model menu, prompts\\
      \file{simulator.py}: Icarus Verilog and sandbox\\
      \file{mutation.py}: testbench strength \textbullet\ \file{timing.py}: timing and area\\
+     \file{equivalence.py}: proof that the netlist equals the RTL\\
      linter, checks, VCD parser and toggle coverage, schematic, synthesis, UVM export, SQLite};
   \node[hbox,right=4mm of be,minimum width=3.9cm] (llm) {LLM PROVIDERS};
   \node[box,below=3mm of llm.south west,anchor=north west,minimum width=3.9cm,text width=3.6cm,align=left,font=\scriptsize] (llmd)
@@ -52,7 +53,8 @@ The browser never talks to the AI provider and never runs tools. All secrets (AP
 \file{backend/model_catalog.py} & Builds the Model menu: reads the OpenCode app's model list and the live Cloudflare and NVIDIA NIM catalogues, caches them, and checks every model id before it is used. \\
 \file{backend/simulator.py} & Runs Icarus Verilog safely: sandbox policy, file writing, compile, run, verdict. \\
 \file{backend/mutation.py} & Testbench strength: injects small bugs into a passing design and counts how many the testbench catches. \\
-\file{backend/timing.py} & Pre-layout timing and area: Yosys maps the design to sky130 cells, OpenSTA times the netlist. \\
+\file{backend/timing.py} & Pre-layout timing and area: Yosys maps the design to sky130 cells, OpenSTA times the netlist and gives the critical path pin by pin. \\
+\file{backend/equivalence.py} & Formal equivalence: proves with Yosys' built-in SAT solver that the sky130 netlist computes the same function as the RTL. \\
 \file{backend/pdk/} & The sky130 cell library file (\file{sky130hd_tt.lib}) that timing needs, with a README saying where to fetch it. \\
 \file{backend/models.py} & The data contracts (Pydantic models) for every request, response and record. \\
 \file{backend/offline_designs.py} & Built-in designs (counter, 4- and 8-bit ALU, full adder, 4:1 mux) with their testbenches, used offline and for the mutation sweep. \\
@@ -60,7 +62,7 @@ The browser never talks to the AI provider and never runs tools. All secrets (AP
 \file{backend/cov_metrics.py} & Builds the coverage summary from the simulation result. \\
 \file{backend/checks.py} & Turns the testbench's \code{CHK|...} lines into per-check rows and exact per-type counters for the Test cases tab (display only; never decides the verdict). \\
 \file{backend/vcd_parser.py} & Reads the VCD waveform into JSON for the browser, and measures toggle coverage from the same file. \\
-\file{backend/schematic.py}, \file{synthesis.py} & Port-level block diagram; generic (unmapped) Yosys synthesis with honest labelling. \\
+\file{backend/schematic.py}, \file{synthesis.py} & Port-level block diagram; generic (unmapped) Yosys synthesis with honest labelling, which also produces the two reduced netlists for the RTL-cells and gate-level schematic views. \\
 \file{backend/uvm_templates.py} & Generates the 16-file UVM export bundle. \\
 \file{backend/db.py}, \file{cleanup.py} & SQLite project storage; deletion of old workspace folders. \\
 \file{backend/openroad.py} & A stub for a future physical-design flow (reports ``not available''). \\
@@ -71,13 +73,14 @@ The browser never talks to the AI provider and never runs tools. All secrets (AP
 \file{backend/tools/build_opensta.sh} & Builds OpenSTA from source into \file{~/.local/opensta} (no Homebrew). \\
 \file{backend/evaluation/} & Recorded live results: \file{results.jsonl}, \file{summary.md}, the final designs and testbenches in \file{artifacts/}. \\
 \file{backend/evaluation/independent/} & Hand-written reference testbenches (\file{tb_c1.v} \ldots\ \file{tb_s6.v}), \file{run.py} that checks each evaluated design against them, and \file{strength.py} that checks the references themselves with every mutant. \\
-\file{backend/tests/} & 436 automated backend tests in 31 test files, plus \file{conftest.py} (shared test set-up) and two fake servers (\file{cf_fake.py}, \file{nim_fake.py}) so Cloudflare and NIM code is tested without the internet. \\
+\file{backend/tests/} & 453 automated backend tests in 32 test files, plus \file{conftest.py} (shared test set-up) and two fake servers (\file{cf_fake.py}, \file{nim_fake.py}) so Cloudflare and NIM code is tested without the internet. \\
 \file{backend/workspace/} & Runtime files: one folder per design (\file{design.sv}, \file{testbench.sv}, \file{transcript.log}, \file{design.vcd}) and \file{projects.db}. \\
 \file{frontend/src/App.tsx} & The page: holds all state and connects the components. \\
 \file{frontend/src/api.ts} & Every call to the backend, including the SSE stream reader. \\
 \file{frontend/src/types.ts} & TypeScript copies of the backend data shapes. \\
 \file{frontend/src/theme.ts} & Light, dark or system theme; an explicit choice is remembered in the browser. \\
 \file{frontend/src/components/} & PromptPanel, ModelPicker, TestbenchModelSelect, SpecReview, SpecSummary, AgentChat, CodeEditor, ResultsPanel, TestCasesView, WaveformViewer, SchematicView (plus their tests). \\
+\file{frontend/src/netlistRender.ts} & Lays out a Yosys netlist as an SVG drawing with netlistsvg; loaded only when a schematic view needs it. \\
 \file{docs/} & Report, presentation, poster, screenshots, live evidence, this guide. \\
 \file{run.sh}, \file{Dockerfile}, \file{docker-compose.yml}, \file{render.yaml}, \file{vercel.json} & Ways to run and deploy (Chapter~\ref{ch:running}). \\
 \bottomrule
@@ -135,7 +138,7 @@ This chapter follows a single prompt from the moment you press Generate RTL to t
   \item \textbf{Explanation.} \code{explain_design} writes 2--3 sentences. If this cosmetic step fails, a placeholder is used and the run continues. Event \code{explanation}.
   \item \textbf{First simulation.} \code{simulator.simulate} scans the code against the sandbox policy, writes the two files, compiles, runs and parses the transcript. The result is recorded as iteration 0. Event \code{simulate}.
   \item \textbf{Self-correction loop} (only if FAIL, ERROR or TIMEOUT): compiler repair or LLM diagnosis, guards, re-simulation, up to \code{max_iterations} times (Chapter~\ref{ch:pipeline}). Events \code{fixing}, \code{fix}, \code{simulate}.
-  \item \textbf{Post-processing.} Coverage summary, VCD parsed into a waveform, port-level schematic, generic synthesis (event \code{synthesis}). If the run passed only after the testbench was changed, the original testbench is run again on the final design, and a fresh second-opinion testbench is requested (event \code{second_opinion}). Then, for a PASS only, testbench strength (event \code{strength}) and the timing and area estimate (event \code{timing}). Chapters~\ref{ch:trust} and~\ref{ch:timing} explain these.
+  \item \textbf{Post-processing.} Coverage summary, VCD parsed into a waveform, port-level schematic, generic synthesis (event \code{synthesis}, which also carries the two netlists the Schematic tab draws). If the run passed only after the testbench was changed, the original testbench is run again on the final design, and a fresh second-opinion testbench is requested (event \code{second_opinion}). Then, for a PASS only, testbench strength (event \code{strength}) and the timing and area estimate with its critical path and equivalence proof (event \code{timing}). Chapters~\ref{ch:trust} and~\ref{ch:timing} explain these.
   \item \textbf{Done.} A full \code{RunResponse} is built and sent in the \code{done} event. It records which model wrote the design and, if different, which wrote the testbench. \code{design_stream} saves it to SQLite before forwarding it.
   \item \textbf{The page updates.} For each event, \code{startRun} adds a message to the run timeline in the sidebar and fills the editors and result panels; on \code{done} it loads the final response, switches to the Results tab and refreshes the Projects list.
 \end{enumerate}
@@ -267,10 +270,10 @@ Even an accepted testbench change leaves a trace. At the end of the run, if the 
 After the loop, in this order, the orchestrator:
 \begin{enumerate}
   \item adds the coverage summary (\code{compute_coverage}), the parsed waveform (\code{parse_vcd}) and the port-level schematic (\code{build_schematic});
-  \item runs generic Yosys synthesis if Yosys is installed (if not, the \code{synthesis} event says so; nothing is invented);
+  \item runs generic Yosys synthesis if Yosys is installed (if not, the \code{synthesis} event says so; nothing is invented); this also gives the RTL-cell and gate-level netlists for the Schematic tab (Section~\ref{sec:schematicnetlists});
   \item if the run passed but the testbench was changed during repair, re-runs the original testbench and asks for a second opinion (Section~\ref{sec:secondopinion});
   \item for a PASS, measures testbench strength (Section~\ref{sec:strength});
-  \item for a PASS, when Yosys, OpenSTA and the cell library are all present, runs the timing and area estimate (Chapter~\ref{ch:timing});
+  \item for a PASS, when Yosys, OpenSTA and the cell library are all present, runs the timing and area estimate, which ends with the equivalence proof (Chapter~\ref{ch:timing});
   \item joins every warning (too few checks, weak testbench, original testbench still failing, second opinion disagrees, the two models disagree) into one \code{verification_warning} shown on the result.
 \end{enumerate}
 Each extra check is wrapped so that if it fails it only disappears from the result; it can never break a run that already has a verdict. Measured toggle coverage is not a separate stage: the simulator computes it every time it parses a result (Section~\ref{sec:toggle}).
@@ -405,7 +408,8 @@ A clock period is the time between two drum beats. Every signal must finish its 
   \item \textbf{Read what was really built} (\code{analyze_netlist}): which input ports drive the flip-flops' clock pins, whether any unmapped cell, latch or clock-gating cell is present.
   \item \textbf{Refuse instead of guessing} (next section).
   \item \textbf{Time with OpenSTA}: write a small script that reads the library and netlist, creates one clock per clock port found in the netlist at the target period, sets input and output delays to zero, and reports the worst setup path. A design with no flip-flops is timed against a virtual clock, so the answer is its longest input-to-output path.
-  \item \textbf{Parse the report} (\code{parse_mapped_stats}, \code{parse_sta}): area, sequential area, cell count, flip-flops, the most common cell types, worst slack, maximum frequency ($1000 / (\text{period} - \text{slack})$ MHz), and the critical path's start, end and delay.
+  \item \textbf{Parse the report} (\code{parse_mapped_stats}, \code{parse_sta}): area, sequential area, cell count, flip-flops, the most common cell types, worst slack, maximum frequency ($1000 / (\text{period} - \text{slack})$ MHz), the critical path's start, end and delay, and its pin-by-pin rows (\code{critical_path_rows}, Section~\ref{sec:critpath}).
+  \item \textbf{Prove the netlist equals the RTL} (\code{prove_equivalence} in \file{equivalence.py}, Section~\ref{sec:equivalence}). This runs unless \code{EQUIVALENCE_ENABLED=0}. If the proof itself crashes, the timing numbers stay and the line says the check could not be run.
 \end{enumerate}
 
 \section{Clocks come from the netlist}
@@ -432,6 +436,41 @@ The app prints this with every result: one typical corner; no placement or routi
 
 Examples from the built-in designs: the 4-bit counter maps to 11 cells, 150.144\,\umsq{}, minimum period 0.727 ns (meets 100 MHz with +9.27 ns slack); the 8-bit ALU has no clock, 109 cells, 636.861\,\umsq{}, longest path 2.69 ns. The live-generated FIFO (s6) is 120 cells, 1830.51\,\umsq{}, minimum period 1.845 ns.
 
+\section{The critical path, pin by pin}
+\label{sec:critpath}
+
+OpenSTA's report lists the worst path as a column of rows, one per pin the signal passes. \code{parse_sta} picks the path block with the smallest slack, and \code{critical_path_rows} turns its data part into rows of five fields: the \textbf{pin} (for example \code{_127_/X}, output X of cell number 127), the sky130 \textbf{cell} type with the library prefix removed (\code{maj3_1}), whether the signal \textbf{rises or falls} there, the \textbf{incremental delay} added by that stage, and the \textbf{arrival} time so far. Rows after ``data arrival time'' (the clock side of the check) are not part of the data path and are dropped; at most 60 rows are kept. The rows travel to the browser in \code{TimingReport.critical_path}.
+
+On the built-in 8-bit ALU (no clock) the worst path starts at input \code{b[0]}, goes through one \code{nor2b_1}, then six \code{maj3_1} cells in a row (a 3-input majority gate is exactly the carry logic of a full adder, so this is the ripple-carry chain, about 0.36 to 0.39 ns per stage), then \code{o21ai_0} and \code{o22ai_1}, and ends at the output \code{overflow} after 2.69 ns. Section~\ref{sec:readtiming} shows how to read this in the app.
+
+\section{Formal equivalence: proving the netlist is the RTL}
+\label{sec:equivalence}
+
+The timing and area numbers describe \file{netlist.v}, the mapped netlist. They are only worth something if that netlist is the design that was simulated. \file{backend/equivalence.py} checks this with a formal proof (Section~\ref{sec:formalbasics} explains the ideas). It uses only Yosys and its built-in SAT solver; no external solver is installed.
+
+\code{prove_equivalence(work_dir, module, liberty, params)} runs in the timing stage's own folder, which already holds \file{design.sv} and \file{netlist.v}:
+\begin{enumerate}
+  \item \textbf{Read the RTL as ``gold''}: \code{read_verilog -sv design.sv}, the \emph{same parameter overrides} the netlist was mapped with (\code{hierarchy -chparam}), \code{proc}, \code{flatten}, and \code{memory}. The \code{memory} pass turns arrays and lookup tables into plain logic and registers, as synthesis does, so such designs are proven instead of skipped.
+  \item \textbf{Read the netlist as ``gate''}: first \code{read_liberty} on the sky130 library, so every cell's behaviour comes from the logic function written in the liberty file itself, not from a model someone typed by hand. Then \code{read_verilog netlist.v} and \code{flatten}.
+  \item \textbf{Decide the method}: if the netlist contains a sky130 flip-flop cell, the design is sequential; otherwise it is combinational.
+  \item \textbf{Combinational: miter and SAT.} \code{miter -equiv} builds one circuit that feeds the same inputs to gold and gate and raises a flag if any output differs. \code{sat -prove-asserts -set-def-inputs -enable_undef} asks the solver whether any input can raise the flag. Inputs are limited to real 0 and 1 values (\code{x} is not a value a real input pin carries), and outputs where the RTL itself says ``don't care'' (\code{x}) are not compared. ``SUCCESS'' means proven over every input value; ``FAIL'' means the solver found inputs where they disagree.
+  \item \textbf{Sequential: induction.} \code{equiv_make} pairs the registers of gold and gate by name, \code{async2sync} turns asynchronous resets into a form the prover handles, then \code{equiv_simple -seq 5} and \code{equiv_induct -seq 5} try to prove every pair and every output by temporal induction. \code{equiv_status} reports how many points were proven.
+\end{enumerate}
+
+\code{interpret} turns Yosys' output into one of four results, stored as \code{TimingReport.equivalence} with a plain sentence in \code{equivalence_method}:
+\begin{description}
+  \item[\code{proven}] Combinational: ``SAT proof over every input value''. Sequential: every register and output point proven by induction.
+  \item[\code{different}] The solver found input values where the netlist and the RTL disagree. The app shows a red alert and declares the timing and area invalid.
+  \item[\code{not_proven}] Induction proved only some points. This usually means synthesis re-encoded the state of a state machine, so registers no longer pair by name. It is never shown as a pass.
+  \item[no result] Yosys could not run the check, or it took longer than 60 seconds; the line says so.
+\end{description}
+
+\textbf{Measured result.} On the 14 evaluated designs plus 4 built-in designs (18 in all): 16 \textbf{proven}, 2 \textbf{not proven} (f1 and f2, the two state machines, whose state was re-encoded by synthesis) and 0 different. A deliberately sabotaged netlist, with one NAND gate swapped for a NOR, was reported as different. The proof shows netlist $=$ RTL for those 16 designs; it says nothing about whether their RTL meets the prompt.
+
+\begin{warnbox}[What the proof does not cover]
+It does not prove that the RTL is correct; a bug in the RTL is copied faithfully into the netlist. ``Not proven'' is an honest ``don't know'', not a hidden failure: for f1 and f2 the gate-level simulation check below still passed with the same testbench.
+\end{warnbox}
+
 \section{How the estimate itself was checked}
 
 \file{backend/tools/verify_mapping.py} checks the timing stage with three tests that do not read the number they check from the same place:
@@ -440,7 +479,9 @@ Examples from the built-in designs: the 4-bit counter maps to 11 cells, 150.144\
   \item \textbf{Area recount}: area and cell count are recomputed from \file{netlist.v} and the liberty file and compared with what \code{run_timing} reported.
   \item \textbf{Timing sanity}: the design is timed at a second target; the implied minimum period ($\text{period} - \text{slack}$) must not change.
 \end{enumerate}
-On 19 designs (the 5 built-in ones and the saved evaluation designs) all 19 were equivalent at gate level. A design the estimate refuses on purpose is reported as REFUSED with its reason, not as a failure. The checker was also given deliberately broken netlists and caught them.
+On 19 designs (the 5 built-in ones and the saved evaluation designs) all 19 gave identical pass counts in gate-level simulation. A design the estimate refuses on purpose is reported as REFUSED with its reason, not as a failure. The checker was also given deliberately broken netlists and caught them.
+
+The two checks complement each other: the simulation covers every design, including the state machines, but only the testbench's inputs; the proof covers every input value, but cannot always finish for re-encoded state.
 
 \section{The tool versions}
 
@@ -655,8 +696,16 @@ This is defence in depth, not a jail. A static scan of a language as flexible as
 \code{parse_vcd} reads at most 8 MB of the VCD, the timescale, and every \code{$var} declaration (stripping \code{[3:0]} from names, since width is stored separately). It then walks the value changes: \texttt{\#t} sets the time, \code{0!}/\code{1!} are single-bit changes, \code{b0101 code} are bus changes (converted to hex by \code{_bin_to_hex}; any \code{x} or \code{z} bit makes the whole value \code{x} or \code{z}). Limits: 40 signals and 2000 changes per signal, with flags telling the UI when something was truncated.
 
 \section{Schematic and synthesis}
+\label{sec:schematicnetlists}
 
-\code{build_schematic} groups the specification's ports into inputs, outputs and inouts; the frontend draws a block with ports on each side. \code{YosysSynthesizer} runs \code{read_verilog; hierarchy; proc; opt; synth; check; stat; write_json} with a 30-second limit, \emph{without} a cell library. It reports Yosys' generic (unmapped) cell count, the most common cell types, up to five Yosys warnings (with folder paths reduced to file names), flip-flops and latches (with a warning when a latch was inferred, usually an incomplete \code{if} or \code{case}), and a relative area proxy (cells $\times$ 5), with explicit flags \code{liberty_mapped: false}, \code{area_units: "relative_proxy"} and \code{tech_node: null}. When the timing stage produced a real mapped area, the Results tab hides the proxy and shows the mapped area in \umsq{} instead (Chapter~\ref{ch:timing}).
+\code{build_schematic} groups the specification's ports into inputs, outputs and inouts; the frontend draws a block with ports on each side. \code{YosysSynthesizer} runs \code{read_verilog; hierarchy; proc; opt; write_json; synth; check; stat; write_json} with a 30-second limit, \emph{without} a cell library. The two \code{write_json} steps save two snapshots of the design for the Schematic tab:
+\begin{itemize}
+  \item after \code{proc; opt}: \textbf{word-level RTL cells} such as \code{$add}, \code{$sub}, \code{$mux}, comparators and \code{$adff} flip-flops (field \code{rtl_netlist});
+  \item after \code{synth}: \textbf{single-bit generic gates} such as \code{$_XOR_}, \code{$_NAND_} and \code{$_DFFE_PN0P_} (an enabled flip-flop with an active-low asynchronous reset) (field \code{json_netlist}). These are Yosys' own generic cells, not sky130 standard cells; the sky130 netlist exists only inside the timing stage.
+\end{itemize}
+Before either netlist is sent to the browser, \code{netlist_for_view} reduces it to what a drawing needs: the top module's ports (direction and bit numbers) and its cells (type, pin directions and connections). Attributes, source locations and net names are dropped, because they carry the server's temporary folder paths and most of the size, and cells get short neutral ids (\code{c0}, \code{c1}, \ldots). The result is still valid Yosys JSON.
+
+Generic synthesis also reports Yosys' generic (unmapped) cell count, the most common cell types, up to five Yosys warnings (with folder paths reduced to file names), flip-flops and latches (with a warning when a latch was inferred, usually an incomplete \code{if} or \code{case}), and a relative area proxy (cells $\times$ 5), with explicit flags \code{liberty_mapped: false}, \code{area_units: "relative_proxy"} and \code{tech_node: null}. When the timing stage produced a real mapped area, the Results tab hides the proxy and shows the mapped area in \umsq{} instead (Chapter~\ref{ch:timing}).
 
 \section{UVM export (\texttt{uvm\_templates.py})}
 
@@ -682,7 +731,7 @@ One SQLite table, \code{projects}, with columns for id, prompt, module name, spe
 \code{SimulationResult} & status, counts, coverage, errors, waveform/transcript paths, log excerpt, check rows and groups, \code{measured_toggle}. \\
 \code{ToggleCoverage} & percent, bits toggled and total, signals, up to 12 untoggled signals, a partial flag. \\
 \code{StrengthReport} & status (ok, partial, skipped), mutants run, caught, invalid, survivors (description and line), note. \\
-\code{TimingReport} & available, library, clock, target and period, slack, met, fmax, critical path, area, sequential area, cells, flip-flops, cell types, note, error. \\
+\code{TimingReport} & available, library, clock, target and period, slack, met, fmax, critical path (start, end, delay and the pin-by-pin rows), area, sequential area, cells, flip-flops, cell types, \code{equivalence} (proven, different, not\_proven or empty) with \code{equivalence_method}, note, error. \\
 \code{SecondOpinion} & status (PASS, FAIL, unavailable), counts, the model, a note. \\
 \code{IterationRecord} & one pass of the loop (see Chapter~\ref{ch:pipeline}). \\
 \code{Waveform}, \code{Schematic} & data for the two visual tabs. \\
@@ -777,8 +826,8 @@ The browser's built-in \code{EventSource} cannot send a POST body, so \code{stre
   \item[SpecReview] The specification review panel: module, ports and parameters, editable behaviour and constraints, ``Generate with this specification'' and Cancel.
   \item[AgentChat] The run timeline: one message per event with an icon for its stage and status, the structured diagnosis when present, a ``Working\ldots'' timer while a run is going, and the design explanation.
   \item[CodeEditor] Two tabs (RTL and testbench) using CodeMirror with Verilog highlighting, editable, with a copy button. Edited code can be re-simulated with Re-run. It is shown on the Design tab (before any run, the Design tab shows a welcome page with recent projects instead).
-  \item[ResultsPanel] Five tabs: Design, Results, Test cases, Waveform, Schematic. \emph{Results}: the verdict (status badge, tests, passed, failed, pass rate), ``Written by'', the second opinion, warnings, then sections for testbench strength, synthesis, timing and area, toggle coverage, test types, lint, the self-correction loop, errors and the specification used (SpecSummary).
+  \item[ResultsPanel] Five tabs: Design, Results, Test cases, Waveform, Schematic. \emph{Results}: the verdict (status badge, tests, passed, failed, pass rate), ``Written by'', the second opinion, warnings, then sections for testbench strength, synthesis, timing and area (with the equivalence line, \code{EquivalenceLine}, and the fold-out critical path table, \code{CriticalPath}), toggle coverage, test types, lint, the self-correction loop, errors and the specification used (SpecSummary).
   \item[TestCasesView] Every executed check, with filters, search and a bit-by-bit comparison (Section~\ref{sec:testcases}).
   \item[WaveformViewer] Draws the waveform as SVG: a time ruler, single-bit signals as high/low lines, buses as labelled hex segments, zoom (0.5$\times$ to 4$\times$) and reset, and a notice when data was truncated. No external tool such as GTKWave is needed.
-  \item[SchematicView] Draws the module as a box with input ports on the left, outputs on the right and widths shown as \code{[n:0]}.
+  \item[SchematicView] Three views chosen with buttons: \emph{Block diagram} (the module as a box with input ports on the left, outputs on the right and widths shown as \code{[n:0]}, drawn by the component itself), \emph{RTL cells} and \emph{Gate level} (the two netlists of Section~\ref{sec:schematicnetlists}). A view without a netlist is greyed out, with the reason as a tooltip. The netlist views are laid out by \textbf{netlistsvg} (open source, MIT licence) through \file{netlistRender.ts}, which is \emph{lazy-loaded}: the layout engine is fetched with a dynamic \code{import} only the first time such a view is opened, so the first page load stays fast. The SVG it returns is shown through an \code{<img>} tag from a blob URL, not inserted into the page: an SVG shown as an image cannot run script, whatever names the design's signals carry. Above 400 cells (\code{MAX_DRAWN_CELLS}) nothing is drawn and the tab says why. Zoom (0.5$\times$ to 6$\times$), \emph{Fit to panel} and \emph{Download SVG} work on the drawn view.
 \end{description}

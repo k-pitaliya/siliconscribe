@@ -18,9 +18,10 @@
 \code{simulator.py} & workspace, iverilog/vvp, log parsing, sandbox policy & isolated, timed, policy-screened execution \\
 \code{vcd_parser.py} & VCD $\rightarrow$ JSON waveform; toggle coverage & bounded size; design signals only \\
 \code{mutation.py} & testbench strength by mutation testing & up to 12 one-token bugs per PASS \\
-\code{timing.py} & Yosys mapping to sky130 cells, OpenSTA timing, area & pre-layout estimate; refuses what it cannot time \\
+\code{timing.py} & Yosys mapping to sky130 cells, OpenSTA timing, area, critical path & pre-layout estimate; refuses what it cannot time \\
+\code{equivalence.py} & formal equivalence of the mapped netlist and the RTL & Yosys SAT; ``not proven'' is never a pass \\
 \code{linter.py} & Verilator $\rightarrow$ Icarus $\rightarrow$ regex & graceful degradation \\
-\code{synthesis.py} & Yosys wrapper (generic cell counts) & optional; honest unavailable state \\
+\code{synthesis.py}, \code{schematic.py} & Yosys wrapper (generic cell counts), netlists for the schematic views & optional; honest unavailable state \\
 \code{db.py} & SQLite persistence, project retrieval & zero-dependency storage \\
 \code{uvm_templates.py} & 16-file UVM 1.2 bundle & export-only, CI file-count check \\
 \code{tools/} & mutation sweep, mapping check, preflight, live evaluation & reproducible evidence \\
@@ -29,6 +30,7 @@
 \code{ResultsPanel.tsx} & PASS/FAIL, metrics, strength, coverage, timing, second opinion, tabs & iteration history, expand to full window \\
 \code{TestCasesView.tsx} & per-test-case table & test types, filters, bit-level diff, jump to waveform \\
 \code{WaveformViewer.tsx} & SVG waveform & role groups, value at cursor, two cursors, radix, failed-check flags \\
+\code{SchematicView.tsx} & block, RTL-cell and gate-level schematic & netlistsvg in the browser; at most 400 cells drawn \\
 \bottomrule
 \end{tabularx}
 \end{table}
@@ -41,14 +43,14 @@ are used for the timing and area estimate; if either tool or the cell library is
 missing, the API reports the estimate as not available instead of inventing numbers.
 
 \section{Test Strategy}
-The backend suite has 436 tests in 31 files: data models and validation, linter behaviour,
+The backend suite has 453 tests in 32 files: data models and validation, linter behaviour,
 simulator and VCD parsing, toggle coverage, API edge cases, orchestrator
 repair/fallback/guard paths, LLM response parsing (XML sections, malformed JSON
 salvage, literal newlines), verdict integrity, the sandbox policy, mutation testing,
-the timing and area stage, the model catalogue and model switching, the separate
+the timing and area stage, the formal equivalence check and the critical path, the model catalogue and model switching, the separate
 testbench model, the specification review and the verification tools themselves. The
 suite runs against a throw-away workspace and never touches the developer's
-database. The frontend suite has 211 Vitest tests in 14 files, including an automated
+database. The frontend suite has 222 Vitest tests in 15 files, including an automated
 accessibility audit with axe-core. The mutation tests are the important ones: they take a
 curated design, inject a semantic bug (wrong increment, missing reset, wrong mux
 select, wrong ALU opcode), and assert that the testbench reports FAIL. A testbench
@@ -81,7 +83,7 @@ Operations & Docker multi-stage image, Docker Compose, GitHub Actions CI, Vercel
 \label{sec:trustimpl}
 The design of the newer stages is described in Chapters~\ref{sec:arch}
 and~\ref{sec:method}: model routing (Section~\ref{sec:routing}), timing and area
-(Section~\ref{sec:timingarch}), the separate testbench model and the second opinion
+(Section~\ref{sec:timingarch}) with its equivalence proof (Section~\ref{sec:equiv}), the separate testbench model and the second opinion
 (Section~\ref{sec:secondarch}), and the evidence measures (Section~\ref{sec:evidence}).
 Table~\ref{tab:trustimpl} records where each one lives in the code and the
 implementation details that matter. Every stage after the verdict follows the same
@@ -104,7 +106,10 @@ Separate testbench model, second opinion & \code{orchestrator.py} & \code{testbe
 Specification review & \code{models.py}, \code{SpecReview.tsx} & route \code{/api/spec/parse}; a user spec skips parsing; 1 to 64 ports, at most 16 parameters, behaviour up to 4000 characters, at most 30 constraints, plain identifiers only \\
 Model menu & \code{model_catalog.py}, \code{ModelPicker.tsx} & \code{opencode models} for the OpenCode list (free ones by name first); Cloudflare Workers AI and NVIDIA NIM through their OpenAI-compatible endpoints (NIM ids get a \code{nim/} prefix); catalogues cached; keys only from \code{backend/.env}; every id checked against one strict pattern \\
 CORS & \code{main.py} & fixed \code{localhost}/\code{127.0.0.1} origins plus exact origins from \code{CORS_ALLOW_ORIGINS} (wildcards dropped); credentials off; methods limited to GET, POST, DELETE, OPTIONS \\
-Verification tools & \code{tools/}, \code{evaluation/} & \code{mutation_sweep.py} (27 hand-picked bugs), \code{verify_mapping.py} (gate-level equivalence, area recount, timing sanity), \code{run.py} and \code{strength.py} (hand-written references and their strength), \code{preflight.py} (demo readiness, fallback ladder) \\
+Formal equivalence & \code{equivalence.py}, called from \code{timing.py} & one Yosys script per run; gold design through \code{proc; flatten; memory} (so arrays and lookup tables become logic, as in synthesis); netlist cells from \code{read_liberty}; combinational: \code{miter -equiv} and \code{sat -prove-asserts -set-def-inputs}; sequential (any sky130 flip-flop in the netlist): \code{equiv_make}, \code{equiv_simple -seq 5}, \code{equiv_induct -seq 5}, \code{equiv_status}; 60\,s time limit; a timeout or a Yosys error gives no status, never ``proven'' \\
+Critical path & \code{timing.py} & \code{critical_path_rows} parses the worst OpenSTA path block into pin, cell, edge, incremental delay and arrival (at most 60 rows) \\
+Schematic views & \code{schematic.py}, \code{SchematicView.tsx} & Yosys writes a JSON netlist after \code{proc; opt} (RTL cells) and after \code{synth} (gate level); \code{netlist_for_view} reduces each to ports and cells with short neutral ids, dropping attributes, source locations and net names, so no server path reaches the browser; drawn with netlistsvg; over 400 cells shows a message instead \\
+Verification tools & \code{tools/}, \code{evaluation/} & \code{mutation_sweep.py} (27 hand-picked bugs), \code{verify_mapping.py} (gate-level simulation, area recount, timing sanity), \code{run.py} and \code{strength.py} (hand-written references and their strength), \code{preflight.py} (demo readiness, fallback ladder) \\
 \bottomrule
 \end{tabularx}
 \end{table}
@@ -115,7 +120,7 @@ Verification tools & \code{tools/}, \code{evaluation/} & \code{mutation_sweep.py
 \subsection{Test inventory}
 \begin{table}[H]
 \centering
-\caption{Automated tests (436 backend in 31 files, 211 frontend in 14 files), all passing in the final check of 19 November 2026.}
+\caption{Automated tests (453 backend in 32 files, 222 frontend in 15 files), all passing in the final check of 19 November 2026.}
 \label{tab:tests}
 \footnotesize
 \begin{tabularx}{\textwidth}{@{}p{3.2cm}r X@{}}
@@ -124,12 +129,12 @@ Verification tools & \code{tools/}, \code{evaluation/} & \code{mutation_sweep.py
 \midrule
 Verdict and sandbox & 87 & \code{test_check_parser} (38), \code{test_verdict_integrity} (30), \code{test_sandbox} (19) \\
 Repair loop and trust & 98 & \code{test_spec_review} (19), \code{test_mutation} (18), \code{test_verification_quality} (17), \code{test_trust_signals} (16), \code{test_orchestrator} (15), \code{test_independent_testbench} (13) \\
-Timing, area, coverage & 70 & \code{test_timing} (46), \code{test_toggle_coverage} (9), \code{test_verify_mapping} (8), \code{test_synthesis_metrics} (5), \code{test_yosys_warnings} (2) \\
+Timing, equivalence, coverage & 87 & \code{test_timing} (46), \code{test_equivalence} (16), \code{test_toggle_coverage} (9), \code{test_verify_mapping} (8), \code{test_synthesis_metrics} (5), \code{test_yosys_warnings} (3) \\
 Models and providers & 107 & \code{test_model_catalog} (38), \code{test_model_switching} (32), \code{test_llm_parsing} (15), \code{test_opencode_provider} (8), \code{test_model_routing} (7), \code{test_error_messages} (7) \\
 Parsing and data & 44 & \code{test_models} (14), \code{test_linter} (13), \code{test_vcd_parser} (6), \code{test_vcd_roles} (6), \code{test_simulator} (5) \\
 API and tooling & 30 & \code{test_evaluate_live} (12), \code{test_edge_cases} (6), \code{test_api} (5), \code{test_preflight} (5), \code{test_stream_persistence} (1), \code{test_disconnect} (1) \\
 \midrule
-Frontend (Vitest) & 211 & App (three files), AgentChat, ModelPicker, PromptPanel, ResultsPanel, SpecReview, SpecSummary, TestbenchModelSelect, TestCasesView, WaveformViewer, waveform helpers, accessibility audit \\
+Frontend (Vitest) & 222 & App (three files), AgentChat, ModelPicker, PromptPanel, ResultsPanel, SchematicView, SpecReview, SpecSummary, TestbenchModelSelect, TestCasesView, WaveformViewer, waveform helpers, accessibility audit \\
 \bottomrule
 \end{tabularx}
 \end{table}

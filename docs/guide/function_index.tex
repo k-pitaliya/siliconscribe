@@ -127,6 +127,7 @@
 {\small \nolinkurl{schematic.py}} & \texttt{\small build\_\allowbreak{}schematic} & Group the specification's ports into inputs, outputs and inouts for the port-level diagram. \\
 {\small } & \texttt{\small summarize\_\allowbreak{}netlist} & Count what Yosys produced, from the JSON netlist (stable across Yosys versions). \\
 {\small } & \texttt{\small \_\allowbreak{}yosys\_\allowbreak{}warnings} & Yosys' own `Warning:` lines (multiple drivers, combinational loops, ...), de-duplicated. \\
+{\small } & \texttt{\small netlist\_\allowbreak{}for\_\allowbreak{}view} & The top module of a Yosys JSON netlist, reduced to what a schematic needs: ports and cells. \\
 {\small } & \texttt{\small synthesize\_\allowbreak{}with\_\allowbreak{}yosys} & Try to synthesize ``rtl\_code`` with Yosys. \\
 {\small \nolinkurl{synthesis.py}} & \texttt{\small YosysSynthesizer.\allowbreak \_\allowbreak{}\_\allowbreak{}init\_\allowbreak{}\_\allowbreak{}} & Remember the workspace used for synthesis work folders. \\
 {\small } & \texttt{\small YosysSynthesizer.\allowbreak available} & Return True iff ``yosys`` is on \$PATH. \\
@@ -231,11 +232,15 @@
 {\small } & \texttt{\small \_\allowbreak{}declared\_\allowbreak{}parameter\_\allowbreak{}names} & Names of the design's own `module \textless{}name\textgreater{} \#( ... )` parameter list, in declaration order. \\
 {\small } & \texttt{\small parameter\_\allowbreak{}overrides} & Integer parameter overrides the testbench gives the design under test, e.g. `mux \#(.WIDTH(16)) dut` \\
 {\small } & \texttt{\small parse\_\allowbreak{}sta} & Worst setup slack and the path it belongs to, from OpenSTA's report. \\
+{\small } & \texttt{\small critical\_\allowbreak{}path\_\allowbreak{}rows} & The data path of one OpenSTA path block, one row per pin, up to the data arrival time. \\
 {\small } & \texttt{\small sta\_\allowbreak{}errors} & OpenSTA's error lines only. Warnings (activity propagation, command abbreviation ...) are noise. \\
 {\small } & \texttt{\small \_\allowbreak{}map\_\allowbreak{}with\_\allowbreak{}yosys} & Run Yosys: read, apply parameter overrides, proc and tribuf, flatten and synthesize, map to sky130 cells, write statistics and the netlist. \\
 {\small } & \texttt{\small \_\allowbreak{}constraints} & OpenSTA constraints: one clock per clock port at the target period (asynchronous groups for several clocks) or a virtual clock for combinational designs, zero I/O delays. \\
 {\small } & \texttt{\small run\_\allowbreak{}timing} & Map *rtl\_code* to sky130 cells and time it at *target\_mhz* (default 100). Never raises. \\
 {\small } & \texttt{\small timing\_\allowbreak{}message} & One-line timeline message: meets or misses the target with slack, fmax and area, or the reason timing is not available. \\
+{\small \nolinkurl{equivalence.py}} & \texttt{\small \_\allowbreak{}script} & Build the Yosys proof script: RTL (gold) vs sky130 netlist (gate); SAT on a miter, or induction for registers. \\
+{\small } & \texttt{\small interpret} & Yosys output -\textgreater{} \{status, method\}. status: proven | different | not\_proven | None (could not run). \\
+{\small } & \texttt{\small prove\_\allowbreak{}equivalence} & Run the proof in `work\_dir` (which holds design.sv and netlist.v from the timing stage). \\
 {\small \nolinkurl{tools/mutation_sweep.py}} & \texttt{\small run\_\allowbreak{}sweep} & Run every mutant; return a list of (design, label, killed, golden, mutant, failed, total). \\
 {\small } & \texttt{\small main} & Inject each of the 27 known bugs into the built-in RTL, simulate with the built-in testbench, and print which were caught. \\
 {\small \nolinkurl{tools/verify_mapping.py}} & \texttt{\small declared\_\allowbreak{}modules} & Names of all modules declared in an RTL file. \\

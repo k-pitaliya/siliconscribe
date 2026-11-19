@@ -51,4 +51,4 @@ s19_schematic_gate_level.png       Schematic tab, "Gate level" view of the built
                                    asynchronous reset and the XOR/NAND next-state logic (Yosys generic gates, not sky130 cells).
 s20_timing_proof_critical_path.png Results tab, timing section of the built-in 8-bit ALU: longest path 2.69 ns, "Netlist formally
                                    proven equal to the RTL (SAT proof over every input value)", and the critical path pin by pin:
-                                   b[0] -> nor2b -> seven maj3 (the ripple-carry chain) -> o21ai -> o22ai -> overflow.
+                                   b[0] -> nor2b -> six maj3 (the ripple-carry chain) -> o21ai -> o22ai -> overflow.

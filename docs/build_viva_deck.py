@@ -332,7 +332,7 @@ bullets(s, 8.15, 1.75, 4.6, 5.0, [
 s = slide("A proven netlist and its critical path", "The timing numbers describe the sky130 netlist, so I prove that netlist is the "
           "design that was simulated. Yosys' SAT solver checks every input value for combinational designs; induction handles "
           "registers. Sixteen of eighteen designs are proven. The two state machines are honestly not proven, because synthesis "
-          "re-encoded their states. A netlist I broke on purpose is caught. The table shows the ALU's slowest path: seven majority "
+          "re-encoded their states. A netlist I broke on purpose is caught. The table shows the ALU's slowest path: six majority "
           "cells, the ripple-carry chain.", kicker="New")
 fit_picture(s, f"{SHOTS}/s20_timing_proof_critical_path.png", 0.6, 1.5, 5.6, 5.4)
 box(s, 6.6, 1.65, 6.15, 1.3, fillc=T_GREEN, line=GREEN, lw=1.25,
@@ -341,7 +341,7 @@ box(s, 6.6, 1.65, 6.15, 1.3, fillc=T_GREEN, line=GREEN, lw=1.25,
 bullets(s, 6.6, 3.15, 6.15, 3.7, [
     "Combinational: **SAT over every input value**; sequential: **induction**",
     "2 FSMs **not proven** (state re-encoded), never shown as a pass; a sabotaged netlist is caught",
-    "ALU critical path: **seven maj3 cells** = the ripple-carry chain, 2.69 ns",
+    "ALU critical path: **six maj3 cells** = the ripple-carry chain, 2.69 ns",
     "Proves netlist = RTL, not that the RTL is correct"], size=16.5, label="proof bullets", space_after=10)
 
 # 12 --------------------------------------------------------------- live evaluation

@@ -68,9 +68,9 @@ The pipeline already separates five model calls: specification parsing, RTL gene
 \midrule
 Language models & Per-run model menu (OpenCode, Cloudflare Workers AI, NVIDIA NIM, read live); any OpenAI-compatible endpoint; per-request model and reasoning effort & Frontier and domain-tuned RTL models (for example VeriGen- or ChipNeMo-style) behind the same interface; automatic model selection driven by an evaluation suite \\
 Stage routing & Five stage models by environment variable (implemented, tested) & Cost, latency and accuracy aware routing policy; fallback chains \\
-Verification strength & Specification-only testbench; anti-cheat guard; mutation score and toggle coverage on every PASS; optional separate testbench model; second opinion; specification review & Golden reference models; SVA assertions and formal equivalence; line and branch coverage; coverage-directed stimulus \\
+Verification strength & Specification-only testbench; anti-cheat guard; mutation score and toggle coverage on every PASS; optional separate testbench model; second opinion; specification review; formal equivalence of the mapped netlist with the RTL (Yosys SAT) & Golden reference models; SVA assertions with formal property checks; state mapping so that re-encoded FSMs can be proven; line and branch coverage; coverage-directed stimulus; missed mutants fed back to the model \\
 Machine-learning models beyond LLMs & Clear seams: spec parsing, stimulus, diagnosis & Learned stimulus and coverage-closure agents; retrieval of similar verified designs as examples; learned bug localisers that rank suspicious RTL lines from failing vectors \\
-EDA toolchain & Icarus Verilog; Yosys and OpenSTA on the sky130 library for a pre-layout timing and area estimate; Verilator lint hook; OpenROAD stub & Place and route with OpenROAD for post-layout timing; more corners; line and branch coverage with a simulator that supports the generated testbenches \\
+EDA toolchain & Icarus Verilog; Yosys and OpenSTA on the sky130 library for a pre-layout timing and area estimate with the critical path; block, RTL-cell and gate-level schematics; Verilator lint hook; OpenROAD stub & Place and route with OpenROAD for post-layout timing; more corners; power from the simulation activity; export to a Tiny Tapeout shuttle; line and branch coverage with a simulator that supports the generated testbenches \\
 Runtime & Single FastAPI process; blocking routes in a thread pool; SQLite; in-memory rate limiter & Job queue and worker pool; container or microVM sandbox per simulation; PostgreSQL; authentication and tenancy; object storage; metrics and tracing \\
 Design size & Single blocks; evaluated on blocks under about 100 lines & Hierarchical decomposition: specification to sub-blocks to integration tests \\
 \bottomrule
@@ -100,7 +100,7 @@ Model quality is shown above to matter, and the routing seam is implemented. Sca
 September--November & Specification-only testbenches, structured diagnosis, compiler repairs, honest degraded mode, live validation \\
 6 November & Live evidence captured; final review (sandbox, server freeze, testbench hardening, persistence fix, model routing); final report and presentation \\
 November (after 6 Nov.) & Second review round; testbench strength by mutation, measured toggle coverage, Yosys and OpenSTA timing and area on sky130, model menu (OpenCode, Cloudflare, NVIDIA NIM), specification review, separate testbench model, second opinion, CORS hardening, live evaluation on fifteen prompts \\
-19 November & Final verification of the tool (Table~\ref{tab:verify}) \\
+19 November & Formal equivalence proof of the mapped netlist, critical path report, RTL-cell and gate-level schematic views; final verification of the tool (Table~\ref{tab:verify}) \\
 \bottomrule
 \end{tabularx}
 \end{table}
@@ -112,4 +112,4 @@ A multi-stage Docker image builds the frontend with Node 20 and serves it from a
 Development and validation cost nothing beyond the laptop: open-source tools and free-tier models (free OpenCode models, the Cloudflare Workers AI free allowance of 10,000 neurons a day, and the NVIDIA NIM free queue). The price of free models is time and quota: a live run took a median of 360~s. When scaling, cost is driven by tokens per model call times calls per run, plus hosting. Per-stage routing keeps the expensive model on the testbench and diagnosis stages only, and the deterministic compiler repairs avoid model calls altogether for mechanical errors.
 
 \subsection{Third-party components}
-Icarus Verilog (GPL-2.0), Yosys (ISC), OpenSTA (GPL-3.0), the SkyWater SKY130 library (Apache-2.0), FastAPI and Pydantic (MIT), Uvicorn (BSD-3-Clause), React, Vite and CodeMirror (MIT) and SQLite (public domain). Generated designs belong to the user; no user data leaves the server except the prompt and code sent to the chosen model provider (or two providers when a separate testbench model is chosen).
+Icarus Verilog (GPL-2.0), Yosys (ISC), OpenSTA (GPL-3.0), netlistsvg (MIT), the SkyWater SKY130 library (Apache-2.0), FastAPI and Pydantic (MIT), Uvicorn (BSD-3-Clause), React, Vite and CodeMirror (MIT) and SQLite (public domain). Generated designs belong to the user; no user data leaves the server except the prompt and code sent to the chosen model provider (or two providers when a separate testbench model is chosen).

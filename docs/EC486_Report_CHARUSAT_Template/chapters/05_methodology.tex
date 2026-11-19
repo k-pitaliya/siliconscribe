@@ -229,7 +229,7 @@ for i in 1..max_iterations while result in {FAIL, ERROR}:   # default 5
     seen.add(h); rtl, tb = fix.rtl, fix.tb; result = simulate(rtl, tb)
 if PASS and tb != original_tb:                            # testbench was rewritten
     rerun(original_tb); second = simulate(rtl, generate_testbench(spec))
-if PASS: strength = mutants(rtl, tb); timing = yosys_opensta(rtl)
+if PASS: strength = mutants(rtl, tb); timing = yosys_opensta(rtl)  # + equivalence proof
 return result, history, waveform, schematic, synthesis, strength, timing, second
 \end{lstlisting}
 
@@ -284,8 +284,51 @@ implied minimum period (period minus slack) must not change.
 A design that the stage refuses on purpose (latch, tri-state, derived clock) is
 reported as such and is not a failure. The checker was itself tested on sabotaged
 netlists, which it caught. On the final code all 19 checked designs (the built-in
-designs and the saved evaluation designs) were equivalent at gate level. This is a
-simulation-based check with the project's testbenches, not a formal equivalence proof.
+designs and the saved evaluation designs) gave the same results at gate level. This is a
+simulation-based check with the project's testbenches, so it is only as complete as
+those testbenches. The formal check below does not depend on a testbench.
+
+\subsection{Formal Equivalence of the Mapped Netlist}
+\label{sec:equiv}
+After mapping, \code{equivalence.py} tries to prove that the sky130 netlist and the
+RTL are the same circuit. It uses only Yosys' built-in SAT (Boolean satisfiability)
+solver, so no external solver is installed. The netlist cells are read from the
+liberty file's own logic functions, so the proof is about the real cells and not
+about a hand-written model of them, and the RTL gets the same testbench parameter
+overrides that were used for the mapping.
+
+\begin{itemize}
+\item \textbf{Combinational designs.} The RTL (``gold'') and the netlist (``gate'')
+are placed side by side in a \emph{miter}: both get the same inputs and their outputs
+are compared. The SAT solver is then asked for any input value that makes an output
+differ. If none exists the design is proven equivalent over every defined input
+value. Inputs are restricted to 0 and 1, because \code{x} is not a real hardware
+input; with \code{x} allowed, SAT reported a false mismatch on a correct ALU
+(Table~\ref{tab:review3}). If SAT finds such a value, the result is ``different''.
+\item \textbf{Sequential designs.} The registers of the two designs are paired by
+name (\code{equiv_make}) and each pair is proven equal by temporal
+induction~\cite{sheeran} (\code{equiv_simple} and \code{equiv_induct}): if all
+pairs are equal in one cycle, they stay equal in the next. The design is proven only
+when every register and output point is proven.
+\item \textbf{Undecided cases.} When synthesis re-encodes the state of an FSM, the
+registers no longer pair up by name and induction cannot decide. The result is then
+``not proven'', never a pass and never a failure. The gate-level simulation check
+of Section~\ref{sec:gatelevel} still applies.
+\end{itemize}
+
+What the proof shows is narrow: the netlist that the timing and area numbers describe
+computes the same function as the RTL that was simulated. It says nothing about
+whether the RTL itself does what the prompt asked; that question is answered only by
+the testbench, the strength score and the independent reference testbenches.
+
+\subsection{Critical Path Report}
+\label{sec:critpath}
+The timing section also lists the worst path from OpenSTA's \code{report_checks}
+output pin by pin: the pin, the sky130 cell, rise or fall, the incremental delay and
+the arrival time (\code{critical_path_rows} in \code{timing.py}). Only the data path
+up to the data arrival time is kept, so clock-tree pins are not mixed into it. The
+table shows where the time goes, for example a ripple-carry chain
+(Section~\ref{sec:equivres}).
 
 \subsection{Independent Reference Testbenches}
 \label{sec:reftb}
