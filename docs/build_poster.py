@@ -164,6 +164,70 @@ def bullets(x, y, w, h, items, size=25, label="b", space_after=5, color=BODY):
                 space_after=space_after, color=color)
 
 
+LINE_H = lambda size: size * 1.17 / 72
+CHIP = RGBColor(0xEF, 0xE9, 0xF7); CHIP_LINE = RGBColor(0xC9, 0xB8, 0xE3)
+
+
+def para_h(t, size, w, bold=False):
+    return lines_needed(t.replace("**", ""), size, bold, w - 0.1) * LINE_H(size) + 0.12
+
+
+def steps(x, y, w, items, color=STEEL, size=23, gap=0.2, d=0.6, draw=True, label="steps"):
+    """Numbered circle badges with text beside them (a stepper). Returns the height used."""
+    yy = y; tw = w - d - 0.28
+    for k, t in enumerate(items, 1):
+        th = para_h(t, size, tw); h = max(d, th)
+        if draw:
+            box(x, yy, d, d, fillc=color, line=None, shape=MSO_SHAPE.OVAL, paras=[str(k)], size=size * 0.82,
+                color=WHITE, bold=True, inset=0, label=f"{label} badge {k}")
+            text(x + d + 0.28, yy + max(0.0, (d - LINE_H(size)) / 2 - 0.06), tw, th + 0.05, [t], size=size,
+                 label=f"{label} {k}", inset=0.02, space_after=0)
+        yy += h + gap
+    return yy - y - gap
+
+
+def kv_rows(x, y, w, rows, label_w=2.55, size=22, draw=True):
+    """A two-column label / value table with soft row shading. Returns the height used."""
+    yy = y
+    for k, (lab, val) in enumerate(rows):
+        h = max(para_h(val, size, w - label_w - 0.2), LINE_H(size) + 0.12) + 0.16
+        if draw:
+            box(x, yy, w, h, fillc=ROW_ALT if k % 2 == 0 else WHITE, line=None)
+            box(x, yy, 0.07, h, fillc=PURPLE, line=None)
+            text(x + 0.2, yy + 0.08, label_w - 0.2, h - 0.1, [lab], size=size, bold=True, color=PURPLE, label="kv " + lab, inset=0.02)
+            text(x + label_w, yy + 0.08, w - label_w - 0.1, h - 0.1, [val], size=size, label="kv val " + lab, inset=0.02)
+        yy += h
+    return yy - y
+
+
+def accent_cards(x, y, w, items, size=22, gap=0.22, draw=True):
+    """Finding cards: a coloured side bar on a soft tint, bold lead phrase. items: (bar, tint, text)."""
+    yy = y
+    for k, (bar, tint, t) in enumerate(items):
+        h = para_h(t, size, w - 0.45) + 0.22
+        if draw:
+            box(x, yy, w, h, fillc=tint, line=None, shape=MSO_SHAPE.ROUNDED_RECTANGLE, radius=0.08)
+            box(x, yy, 0.13, h, fillc=bar, line=None)
+            text(x + 0.32, yy + 0.1, w - 0.42, h - 0.12, [t], size=size, label=f"card {k}", inset=0.02, space_after=0)
+        yy += h + gap
+    return yy - y - gap
+
+
+def chips(x, y, w, labels, size=20, gap=0.2, draw=True):
+    """Rounded tag chips that wrap onto new rows. Returns the height used."""
+    f = ImageFont.truetype(_F[True], int(size * 10)); ch = LINE_H(size) + 0.3
+    cx, cy = x, y
+    for lab in labels:
+        cw = f.getlength(lab) / 720 + 0.55
+        if cx + cw > x + w and cx > x:
+            cx, cy = x, cy + ch + gap
+        if draw:
+            box(cx, cy, cw, ch, fillc=CHIP, line=CHIP_LINE, lw=1.0, shape=MSO_SHAPE.ROUNDED_RECTANGLE, radius=0.5,
+                paras=[lab], size=size, bold=True, color=PURPLE, inset=0.05, label="chip " + lab)
+        cx += cw + gap
+    return cy + ch - y
+
+
 def framed(path, x, y, w, h, caption, cap_h=0.7, crop=None):
     """Image centred in a dashed frame, italic caption under it (the reference poster's style)."""
     box(x, y, w, h, fillc=WHITE, line=DASH, lw=1.25, dash=True)
@@ -213,28 +277,28 @@ y = TOP + 9.75 + 0.45
 ix, iy, iw = panel(XA, y, WA, BOTTOM - y, "Introduction")
 _im = Image.open(f"{ASSETS}/diagram_open_vs_closed_loop.png")
 frame_h = (iw - 0.3) * _im.size[1] / _im.size[0] + 0.3 + 0.7 + 0.1
-content = 3 * 0.68 + 3.05 + 1.7 + 2.95
-gap = max(0.0, (BOTTOM - 0.3 - frame_h - (iy - 0.05) - content) / 3)
+BG_TEXT = ("Language models now write Verilog quickly, but they never compile or simulate it. In chip design, "
+           "verification takes most of the effort, and a model told to \u201cmake it pass\u201d may weaken the "
+           "testbench instead of fixing the design.")
+PS_TEXT = ("Build a loop around any language model in which only a real simulator decides PASS or FAIL, failures are "
+           "repaired from evidence, and every PASS states how much it can be trusted.")
+OBJ = ["Testbench written from the specification only, never from the RTL",
+       "The simulator as the only judge, with a guarded repair loop",
+       "Measure each PASS: strength, coverage, second opinion",
+       "Pre-layout timing and area on sky130, with a proven netlist",
+       "Show the circuit as RTL-cell and gate-level schematics"]
+h_bg, h_ps = para_h(BG_TEXT, 25.5, iw), para_h(PS_TEXT, 25.5, iw)
+h_obj = steps(ix, 0, iw, OBJ, color=PURPLE, size=23, draw=False)
+content = 3 * 0.68 + h_bg + h_ps + h_obj
+gap = max(0.15, (BOTTOM - 0.3 - frame_h - (iy - 0.05) - content - 0.25) / 3)
 yy = sub(ix, iy - 0.05, iw, "Background")
-bullets(ix, yy, iw, 3.0, [
-    "Language models now write Verilog quickly, but they never compile or simulate it.",
-    "In chip design, verification takes most of the effort: someone has to prove the design works.",
-    "Told to “make it pass”, a model may weaken the testbench instead of fixing the design.",
-], label="intro bg")
-yy += 3.05 + gap
+text(ix, yy, iw, h_bg + 0.15, [BG_TEXT], size=25.5, label="intro bg")
+yy += h_bg + gap
 yy = sub(ix, yy, iw, "Problem Statement")
-text(ix, yy, iw, 1.65, ["Build a loop around any language model in which only a real simulator decides PASS or FAIL, "
-                        "failures are repaired from evidence, and every PASS states how much it can be trusted."],
-     size=25.5, label="problem")
-yy += 1.7 + gap
+text(ix, yy, iw, h_ps + 0.15, [PS_TEXT], size=25.5, label="problem")
+yy += h_ps + gap
 yy = sub(ix, yy, iw, "Objectives")
-bullets(ix, yy, iw, 2.85, [
-    "Testbench written from the specification only, never from the RTL",
-    "The simulator as the only judge, with a guarded repair loop",
-    "Measure each PASS: strength, coverage, second opinion",
-    "Pre-layout timing and area on sky130, with a proven netlist",
-    "Show the circuit: RTL-cell and gate-level schematics",
-], label="objectives", space_after=4)
+steps(ix, yy + 0.05, iw, OBJ, color=PURPLE, size=23, label="obj")
 yy = BOTTOM - 0.3 - frame_h
 framed(f"{ASSETS}/diagram_open_vs_closed_loop.png", ix, yy, iw, frame_h,
        "Open-loop generation versus the execution-grounded loop")
@@ -242,14 +306,14 @@ framed(f"{ASSETS}/diagram_open_vs_closed_loop.png", ix, yy, iw, frame_h,
 # =========================================================== column B: Methodology, Experimental Setup
 MH = 12.6
 ix, iy, iw = panel(XB, TOP, WB, MH, "Methodology")
-bullets(ix, iy - 0.05, iw, 4.6, [
-    "Prompt → typed JSON specification (the user may review and edit it)",
+mh = steps(ix, iy + 0.05, iw, [
+    "Prompt to a typed JSON specification, which the user may review and edit",
     "RTL and testbench generated separately: the testbench never sees the RTL",
     "Sandbox and lint, then Icarus Verilog simulation with a timeout",
-    "FAIL → compiler fix, then an LLM diagnosis and a minimal patch (up to 5 rounds); a patch that deletes checks is rejected",
-    "PASS → evidence: strength, toggle coverage, second opinion, timing, area, netlist proof",
-], label="method bullets", space_after=5)
-my = iy + 4.6
+    "On FAIL: compiler fix, LLM diagnosis, minimal patch (up to 5 rounds); patches that delete checks are rejected",
+    "On PASS: strength, toggle coverage, second opinion, timing, area and the netlist proof",
+], color=STEEL, size=22.5, gap=0.17, d=0.58, label="method")
+my = iy + 0.05 + mh + 0.15
 text(ix, my, iw, 0.7, ["PASS  ⇔  Passed: N > 0  ∧  Failed: 0  ∧  clean exit"], size=23, color=PURPLE,
      align=PP_ALIGN.CENTER, font=MONO, bold=True, label="formula")
 # compact flow diagram: row 1 generation -> simulation, row 2 repair loop (FAIL) and evidence (PASS)
@@ -287,13 +351,14 @@ text(icx - 1.45, r1 + bh + 0.6, 1.0, 0.45, ["FAIL"], size=16, bold=True, color=R
 
 y = TOP + MH + 0.45
 ix, iy, iw = panel(XB, y, WB, BOTTOM - y, "Experimental Setup")
-bullets(ix, iy - 0.05, iw, 4.25, [
-    "**Tools:** Icarus Verilog 12.0, Yosys 0.71, OpenSTA 3.2.0, SkyWater sky130_fd_sc_hd (typical, 25°C, 1.8 V)",
-    "**Software:** FastAPI backend, React 18 + TypeScript frontend, SQLite",
-    "**Models:** OpenCode (evaluation: DeepSeek V4.1 Flash, free), Cloudflare Workers AI, NVIDIA NIM; keys stay on the server",
-    "**Evaluation:** 15 prompts (7 combinational, 6 sequential, 2 FSM), one run each",
-], size=25, label="setup bullets", space_after=8)
-sy = iy + 4.3
+kh = kv_rows(ix, iy + 0.0, iw, [
+    ("EDA tools", "Icarus Verilog 12.0 \u00b7 Yosys 0.71 \u00b7 OpenSTA 3.2.0"),
+    ("Library", "SkyWater sky130_fd_sc_hd, typical, 25\u00b0C, 1.8\u00a0V"),
+    ("Software", "FastAPI \u00b7 React 18 + TypeScript \u00b7 SQLite"),
+    ("Models", "OpenCode (DeepSeek V4.1 Flash, free), Cloudflare, NVIDIA NIM"),
+    ("Evaluation", "15 prompts: 7 combinational, 6 sequential, 2 FSM"),
+], label_w=2.5, size=21.5)
+sy = iy + kh + 0.3
 framed(f"{ASSETS}/diagram_architecture.png", ix, sy, iw, BOTTOM - 0.3 - sy,
        "Three-tier architecture: browser, backend, model router, EDA tools")
 
@@ -309,14 +374,15 @@ for k, (big, small) in enumerate(kpis):
         radius=0.1, paras=[{"runs": parse(f"**{big}**"), "size": 46, "color": STEEL}, {"runs": parse(f"**{small}**"),
                                                                                       "size": 18.5, "color": BODY}],
         size=18.5, label="kpi " + big, space_after=0)
-bullets(ix, iy + 2.25, lw_, 6.1, [
-    "15 prompts, 14 completed: **8 passed first time, 6 after self-repair**; the 15th timed out and is reported as no result",
-    "Hand-written reference testbenches confirmed all 14 designs: **no false PASS**",
-    "A separate testbench model disagreed on a shift register (FAIL 61/108): the app refused to rewrite the checks; "
-    "the testbench was at fault",
-    "After a repair rewrote a FIFO testbench, a fresh **second opinion agreed** (3798/3798) and the original's 482 "
-    "failures were shown as a warning",
-], size=25, label="results bullets", space_after=9)
+accent_cards(ix, iy + 2.25, lw_, [
+    (GREEN, T_GREEN, "**Live evaluation:** 15 prompts, 14 completed; 8 passed first time and 6 after self-repair. "
+                     "The 15th timed out and is reported as no result."),
+    (STEEL, TILE, "**No false PASS:** hand-written reference testbenches confirmed all 14 designs."),
+    (AMBER, RGBColor(0xFE, 0xF3, 0xC7), "**Models disagreed:** a separate testbench model failed a shift register "
+                                        "(61/108). The app kept the FAIL; the testbench was at fault."),
+    (PURPLE, CHIP, "**Second opinion:** after a repair rewrote a FIFO testbench, a fresh one agreed (3798/3798); "
+                   "the original's 482 failures stayed as a warning."),
+], size=23, gap=0.2)
 text(rx, iy - 0.05, rw, 0.6, ["Verification metrics & evidence"], size=26, color=PURPLE, bold=True,
      align=PP_ALIGN.CENTER, label="table title")
 rows = [("Metric", "Achieved", "Status"),
@@ -354,17 +420,17 @@ framed(f"{SHOTS}/schematic_counter_gate_full.png", ix + w1 + 0.35, gy, w2, gh,
 by = TOP + RH + 0.45
 CW = 13.9
 ix, iy, iw = panel(XC, by, CW, BOTTOM - by, "Conclusion")
-bullets(ix, iy - 0.05, iw, 2.75, [
-    "A closed loop where only the simulator decides, and every PASS states how much it is worth",
-    "14 of 14 completed live runs passed and were confirmed by reference testbenches",
-    "The sky130 netlist is formally proven equal to the RTL on 16 of 18 designs",
-    "Evidence is pre-layout and from simulation: small designs, one run each",
-], size=25, label="conclusion", space_after=7)
-yy = sub(ix, iy + 2.7 + max(0.3, (BOTTOM - 0.3 - (iy + 2.7) - 0.68 - 1.15) / 2), iw, "Future Work")
-bullets(ix, yy, iw, BOTTOM - 0.3 - yy, [
-    "Power from simulation activity; testbench hardening from missed bugs",
-    "OpenROAD place and route, SVA assertions, and a Tiny Tapeout chip",
-], size=25, label="future", space_after=5)
+CONC = ("SiliconScribe closes the loop between a language model and a real simulator: only the simulator decides, "
+        "and every PASS states how much it is worth. All 14 completed live runs passed and were confirmed by "
+        "reference testbenches, and the sky130 netlist is formally proven equal to the RTL on 16 of 18 designs. "
+        "The evidence is pre-layout and from simulation, on small designs run once each.")
+FUT = ["Power from simulation activity", "Testbench hardening", "OpenROAD place and route", "SVA assertions",
+       "Tiny Tapeout chip"]
+h_c = para_h(CONC, 23, iw); h_f = chips(ix, 0, iw, FUT, size=20, draw=False)
+g = max(0.2, (BOTTOM - 0.3 - (iy - 0.05) - h_c - 0.68 - h_f) / 2)
+text(ix, iy - 0.05, iw, h_c + 0.15, [CONC], size=23, label="conclusion")
+yy = sub(ix, iy - 0.05 + h_c + g, iw, "Future Work")
+chips(ix, yy + 0.05, iw, FUT, size=20)
 
 px = XC + CW + 0.4; pw_ = 47.2 - px
 ix, iy, iw = panel(px, by, pw_, BOTTOM - by, "Prepared By:")
