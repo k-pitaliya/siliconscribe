@@ -1,8 +1,8 @@
-# SiliconScribe: viva demo runbook (23 Nov 2026)
+# SiliconScribe: viva demo runbook (25 Nov 2026)
 
 Everything here was checked against the real app. Where a number depends on the final evaluation it says so.
 
-## The day before (22 Nov)
+## The day before (24 Nov)
 1. **After 05:30 IST** (free-quota reset), run the preflight with one tiny live call:
    ```
    cd ~/Kushal_Master/Projects/VLSI/ai-eda-playground/backend
