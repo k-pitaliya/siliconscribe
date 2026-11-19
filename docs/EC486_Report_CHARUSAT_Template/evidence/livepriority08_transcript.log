@@ -1,0 +1,5 @@
+VCD info: dumpfile design.vcd opened for output.
+Passed: 116
+Failed: 0
+ALL TESTS PASSED
+/Users/kushalpitaliya/Kushal_Master/Projects/VLSI/ai-eda-playground/backend/workspace/livepriority08/testbench.sv:64: $finish called at 116 (1s)
