@@ -393,3 +393,35 @@ def test_the_shipped_hidden_file_is_valid_and_never_names_the_demo_models(monkey
     for demo in ("opencode/deepseek-v4.1-flash-free", "nim/nvidia/nemotron-3-ultra-550b-a55b", "opencode/hy4-flash-free",
                  "@cf/openai/gpt-oss-120b", "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free"):
         assert demo not in hidden
+
+
+def test_two_first_requests_at_once_both_get_the_provider(monkeypatch):
+    """Race found by a concurrent benchmark (24 Nov): the key was stored before the provider was built."""
+    import threading
+    import time
+    cloudflare(monkeypatch)
+    monkeypatch.setenv("NVIDIA_NIM_API_KEY", NIM_KEY)
+    real_cf, real_nim = llm_service.CloudflareProvider, llm_service.NimProvider
+
+    def slow(cls):
+        class Slow(cls):
+            def __init__(self, *a, **k):
+                time.sleep(0.2)                       # widen the window the race needs
+                super().__init__(*a, **k)
+        return Slow
+    monkeypatch.setattr(llm_service, "CloudflareProvider", slow(real_cf))
+    monkeypatch.setattr(llm_service, "NimProvider", slow(real_nim))
+    errors, got = [], []
+
+    def ask(model):
+        try:
+            got.append(llm_service.get_provider(model))
+        except Exception as e:                        # noqa: BLE001 - any exception is the bug
+            errors.append(repr(e))
+    threads = [threading.Thread(target=ask, args=(m,)) for m in ["@cf/openai/gpt-oss-120b", "nim/a/b"] * 4]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert errors == []
+    assert len({id(p) for p in got}) == 2             # one provider per source, shared by every request

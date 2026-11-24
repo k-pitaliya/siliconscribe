@@ -22,6 +22,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import threading
 from typing import Optional
 
 from dotenv import load_dotenv
@@ -965,6 +966,7 @@ _offline_provider = _provider if isinstance(_provider, OfflineProvider) else Off
 
 _cloudflare_cache: dict = {}
 _nim_cache: dict = {}
+_provider_lock = threading.Lock()
 
 
 def _nim_provider() -> "NimProvider":
@@ -972,10 +974,13 @@ def _nim_provider() -> "NimProvider":
     if cfg is None:
         raise ModelNotAvailable("NVIDIA NIM is not set up. Start the backend with NVIDIA_NIM_API_KEY set, "
                                 "or pick another model.")
-    if _nim_cache.get("key") != cfg:                              # rebuilt only if the key or address changes
-        _nim_cache["key"] = cfg
-        _nim_cache["provider"] = NimProvider(*cfg)
-    return _nim_cache["provider"]
+    with _provider_lock:                                          # rebuilt only if the key or address changes
+        if _nim_cache.get("key") != cfg or "provider" not in _nim_cache:
+            # Build first, then publish under the lock: two first requests at once used to read the key before the
+            # provider existed (KeyError: 'provider'; found by a concurrent benchmark, 24 Nov).
+            _nim_cache["provider"] = NimProvider(*cfg)
+            _nim_cache["key"] = cfg
+        return _nim_cache["provider"]
 
 
 def _cloudflare_provider() -> "CloudflareProvider":
@@ -983,10 +988,11 @@ def _cloudflare_provider() -> "CloudflareProvider":
     if cfg is None:
         raise ModelNotAvailable("Cloudflare is not set up. Start the backend with CLOUDFLARE_ACCOUNT_ID and "
                                 "CLOUDFLARE_API_TOKEN set, or pick an OpenCode model.")
-    if _cloudflare_cache.get("key") != cfg:                       # rebuilt only if the credentials change
-        _cloudflare_cache["key"] = cfg
-        _cloudflare_cache["provider"] = CloudflareProvider(*cfg)
-    return _cloudflare_cache["provider"]
+    with _provider_lock:                                          # rebuilt only if the credentials change
+        if _cloudflare_cache.get("key") != cfg or "provider" not in _cloudflare_cache:
+            _cloudflare_cache["provider"] = CloudflareProvider(*cfg)
+            _cloudflare_cache["key"] = cfg
+        return _cloudflare_cache["provider"]
 
 
 def get_provider(model: Optional[str] = None):
