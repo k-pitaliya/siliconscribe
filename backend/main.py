@@ -18,7 +18,10 @@ from simulator import IcarusSimulator
 from cov_metrics import compute_coverage
 from vcd_parser import parse_vcd, ports_from_rtl
 from orchestrator import _tb_check_count
+import agent
+import wave_query
 from models import (
+    AgentRequest,
     SimError,
     SimulationRequest, SimulationRerunResponse,
     RunRequest, RunResponse, RTLDesignSpec, SpecParseRequest,
@@ -345,50 +348,90 @@ def run_simulation(request: SimulationRequest, req: Request):
     _check_rate_limit(_get_client_ip(req))
     logger.info("run_simulation id=%s", request.design_id)
     try:
-        result = simulator.simulate(
-            design_id=request.design_id,
-            rtl_code=request.rtl_code,
-            testbench_code=request.testbench_code,
-            timeout=request.timeout_seconds,
-        )
-        # Sanitize artifact paths: ensure they are inside workspace before exposing
-        for attr in ("waveform_file", "transcript_file"):
-            val = getattr(result, attr, None)
-            if val:
-                try:
-                    p = Path(val).resolve()
-                    ws = Path(WORKSPACE).resolve()
-                    try:
-                        is_inside = p.is_relative_to(ws)
-                    except AttributeError:
-                        try:
-                            p.relative_to(ws)
-                            is_inside = True
-                        except ValueError:
-                            is_inside = False
-                    if not is_inside:
-                        logger.warning("sanitized artifact path outside workspace: %s", val)
-                        setattr(result, attr, None)
-                except Exception:
-                    setattr(result, attr, None)
-        if result.status == "PASS" and _tb_check_count(request.testbench_code) == 0:
-            # Same rule as the generation path: a testbench that cannot fail proves nothing.
-            result.status = "ERROR"
-            result.errors.append(SimError(message="The testbench contains no self-checks; refusing to report PASS."))
-        result.coverage = compute_coverage(result)
-        logger.info("run_simulation id=%s status=%s", request.design_id, result.status)
-        waveform = None
-        if result.waveform_file:
-            try:
-                waveform = parse_vcd(result.waveform_file, ports=ports_from_rtl(request.rtl_code))
-            except Exception:
-                logger.exception("waveform parse failed for %s", request.design_id)
-        return SimulationRerunResponse(**result.model_dump(), waveform=waveform)
+        return _rerun(request.design_id, request.rtl_code, request.testbench_code, request.timeout_seconds)
     except HTTPException:
         raise
     except Exception:
         logger.exception("run_simulation id=%s failed", request.design_id)
         raise HTTPException(status_code=500, detail="Internal server error")
+
+
+def _simulate_checked(design_id: str, rtl_code: str, testbench_code: str, timeout: int):
+    """One sandboxed simulation, with the rule that a testbench without self-checks can never PASS."""
+    result = simulator.simulate(design_id=design_id, rtl_code=rtl_code, testbench_code=testbench_code, timeout=timeout)
+    if result.status == "PASS" and _tb_check_count(testbench_code) == 0:
+        # Same rule as the generation path: a testbench that cannot fail proves nothing.
+        result.status = "ERROR"
+        result.errors.append(SimError(message="The testbench contains no self-checks; refusing to report PASS."))
+    return result
+
+
+def _rerun(design_id: str, rtl_code: str, testbench_code: str, timeout: int) -> SimulationRerunResponse:
+    """Simulate edited code once (no auto-fix) and return the verdict with its matching waveform."""
+    result = _simulate_checked(design_id, rtl_code, testbench_code, timeout)
+    # Sanitize artifact paths: ensure they are inside workspace before exposing
+    ws = Path(WORKSPACE).resolve()
+    for attr in ("waveform_file", "transcript_file"):
+        val = getattr(result, attr, None)
+        if val:
+            try:
+                if not Path(val).resolve().is_relative_to(ws):
+                    logger.warning("sanitized artifact path outside workspace: %s", val)
+                    setattr(result, attr, None)
+            except Exception:
+                setattr(result, attr, None)
+    result.coverage = compute_coverage(result)
+    logger.info("run_simulation id=%s status=%s", design_id, result.status)
+    waveform = None
+    if result.waveform_file:
+        try:
+            waveform = parse_vcd(result.waveform_file, ports=ports_from_rtl(rtl_code))
+        except Exception:
+            logger.exception("waveform parse failed for %s", design_id)
+    return SimulationRerunResponse(**result.model_dump(), waveform=waveform)
+
+
+@app.post("/api/agent/ask")
+def agent_ask(request: AgentRequest, req: Request):
+    """Server-Sent Events: the debugging agent answers a question about the code in the editor.
+
+    Events: {"type": "status"}, {"type": "run"} (the evidence simulation, with its waveform), {"type": "tool"} per tool
+    call, then exactly one {"type": "answer"} or {"type": "error"}.
+    """
+    _check_rate_limit(_get_client_ip(req))
+    logger.info("agent_ask q=%s model=%s", request.question[:80], request.model)
+
+    def event_source():
+        try:
+            yield _sse({"type": "status", "message": "Simulating the code in the editor to collect evidence..."})
+            run_id = agent.new_workspace_id()
+            res = _rerun(run_id, request.rtl_code, request.testbench_code, 30)
+            yield _sse({"type": "run", "result": res.model_dump()})
+            waves = None
+            if res.waveform_file:
+                try:
+                    waves = wave_query.load(res.waveform_file)
+                except Exception:
+                    logger.exception("agent waveform load failed")
+            fix_id = agent.new_workspace_id()
+            tools = agent.Toolbox(waves, res, request.rtl_code, request.testbench_code,
+                                  simulate=lambda r, t: _simulate_checked(fix_id, r, t, 30))
+            history = [h.model_dump() for h in request.history]
+            for ev in agent.ask(request.question, tools, history=history, model=request.model,
+                                reasoning_effort=request.reasoning_effort):
+                if ev.get("type") == "answer":
+                    ev["model"] = None if ev.get("rule_based") else (request.model or llm_service.current_model_id())
+                yield _sse(ev)
+        except Exception as e:
+            logger.exception("agent_ask failed")
+            yield _sse({"type": "error", "message": orchestrator_user_error(e)})
+
+    return StreamingResponse(event_source(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+def _sse(event: dict) -> str:
+    return f"data: {json.dumps(event)}\n\n"
 
 
 @app.post("/api/synthesis/run")

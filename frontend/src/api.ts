@@ -1,4 +1,4 @@
-import type { ModelsResponse, RTLDesignSpec, RunResponse, SimulationRerun, StreamEvent, ProjectSummary, UVMExportResponse } from './types'
+import type { AgentEvent, ModelsResponse, RTLDesignSpec, RunResponse, SimulationRerun, StreamEvent, ProjectSummary, UVMExportResponse } from './types'
 export type { ProjectSummary, UVMExportResponse } from './types'
 
 // In dev, Vite proxies /api -> :8000. Override with VITE_API_BASE if needed.
@@ -150,7 +150,20 @@ export async function streamDesign(
     throw new Error(`stream failed: ${resp.status} ${body.slice(0, 200)}`.trim())
   }
 
-  const reader = resp.body.getReader()
+  const sawFinal = await readSSE<StreamEvent>(resp.body, onEvent, (e) => e.stage === 'done' || e.stage === 'error', signal)
+  if (!sawFinal && !signal?.aborted) {
+    throw new Error('The connection closed before the run finished. Please try again.')
+  }
+}
+
+/** Read a Server-Sent Events body: one JSON event per `data:` frame. Returns whether a final event arrived. */
+async function readSSE<T>(
+  body: ReadableStream<Uint8Array>,
+  onEvent: (e: T) => void,
+  isFinal: (e: T) => boolean,
+  signal?: AbortSignal,
+): Promise<boolean> {
+  const reader = body.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
   let sawFinal = false
@@ -166,18 +179,18 @@ export async function streamDesign(
     let sep
     while ((sep = buffer.indexOf('\n\n')) !== -1) {
       // After Stop, frames already in this chunk must not be applied (self-review: a cancelled run applied its `done`).
-      if (signal?.aborted) return
+      if (signal?.aborted) return sawFinal
       const frame = buffer.slice(0, sep)
       buffer = buffer.slice(sep + 2)
       const line = frame.split('\n').find((l) => l.startsWith('data:'))
       if (!line) continue
-      let event: StreamEvent
+      let event: T
       try {
-        event = JSON.parse(line.slice(5).trim()) as StreamEvent
+        event = JSON.parse(line.slice(5).trim()) as T
       } catch {
         continue // malformed frame: ignore it
       }
-      if (event.stage === 'done' || event.stage === 'error') sawFinal = true
+      if (isFinal(event)) sawFinal = true
       // Outside the try, so an exception in the consumer is not swallowed as a "bad frame".
       onEvent(event)
     }
@@ -185,7 +198,38 @@ export async function streamDesign(
   } finally {
     reader.cancel().catch(() => {}) // also when onEvent throws: never leave the stream open
   }
-  if (!sawFinal && !signal?.aborted) {
-    throw new Error('The connection closed before the run finished. Please try again.')
+  return sawFinal
+}
+
+export interface AgentParams {
+  rtl_code: string
+  testbench_code: string
+  question: string
+  history?: { question: string; answer: string }[]
+  model?: string
+  reasoning_effort?: string
+}
+
+/** Ask the debugging agent about the code in the editor; one callback per event (status, run, tool, answer, error). */
+export async function askAgent(params: AgentParams, onEvent: (e: AgentEvent) => void, signal?: AbortSignal): Promise<void> {
+  const resp = await fetch(`${BASE}/api/agent/ask`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+    signal,
+  })
+  if (!resp.ok || !resp.body) {
+    const body = await resp.text().catch(() => '')
+    let detail = ''
+    try {
+      const j = JSON.parse(body)
+      if (j && typeof j.detail === 'string') detail = j.detail
+      else if (j && Array.isArray(j.detail)) detail = j.detail.map((d: { msg?: string }) => d?.msg).filter(Boolean).join('; ')
+    } catch {
+      /* body is not JSON */
+    }
+    throw new Error(detail || `The question could not be sent (${resp.status}).`)
   }
+  const sawFinal = await readSSE<AgentEvent>(resp.body, onEvent, (e) => e.type === 'answer' || e.type === 'error', signal)
+  if (!sawFinal && !signal?.aborted) throw new Error('The connection closed before the answer arrived. Please ask again.')
 }

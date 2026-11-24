@@ -1177,6 +1177,19 @@ def explain_design(rtl_code: str, spec: RTLDesignSpec, model: Optional[str] = No
         raise
 
 
+def uses_offline(model: Optional[str] = None) -> bool:
+    """True when *model* would be served by the offline demo provider (no AI connected)."""
+    return isinstance(get_provider(model), OfflineProvider)
+
+
+def agent_chat(system: str, user: str, model: Optional[str] = None, reasoning_effort: Optional[str] = None) -> str:
+    """One turn of the debugging agent (agent.py): plain text in, plain text out, on the chosen model."""
+    prov = get_provider(model)
+    if isinstance(prov, OfflineProvider):
+        raise ModelNotAvailable("No AI model is connected (offline mode).")
+    return prov._chat(system, user, temperature=0.1, model=model, reasoning_effort=reasoning_effort, stage="agent")
+
+
 def fix_design(rtl_code: str, tb_code: str, log: str, model: Optional[str] = None,
                reasoning_effort: Optional[str] = None,
                spec: Optional[RTLDesignSpec] = None) -> dict:

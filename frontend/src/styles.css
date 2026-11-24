@@ -627,3 +627,54 @@ textarea::placeholder, input::placeholder { color: var(--ink-3); }
 .critical-path table { border-collapse: collapse; width: 100%; font-size: 13px; }
 .critical-path th, .critical-path td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--line); }
 .critical-path td.num, .critical-path th:nth-child(n+4) { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* ---------------------------------------------------------------- debugging chat (sidebar) */
+.debug-chat .side-title { display: flex; align-items: center; gap: 6px; }
+.debug-intro { font-size: 12px; margin: -4px 0 10px; }
+.debug-chat .example-chips { margin-bottom: 10px; }
+.debug-chat .chip { text-align: left; }
+.debug-log { display: grid; gap: 14px; }
+.debug-log:empty { display: none; }
+.debug-turn { display: grid; gap: 6px; font-size: 13px; }
+.debug-q {
+  justify-self: end; max-width: 92%; margin: 0; padding: 6px 10px; border-radius: 10px;
+  background: var(--panel-2); color: var(--ink); overflow-wrap: anywhere;
+}
+.debug-steps { list-style: none; margin: 0; padding: 0 0 0 4px; border-left: 2px solid var(--line); display: grid; gap: 2px; }
+.debug-steps li { padding-left: 8px; font-size: 12px; color: var(--ink-2); }
+.debug-steps li.bad summary { color: var(--fail); }
+.debug-steps summary { cursor: pointer; display: flex; align-items: center; gap: 6px; padding: 2px 0; }
+.debug-steps summary::-webkit-details-marker { display: none; }
+.step-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent-edge); flex: none; }
+.step-thought { margin: 2px 0 4px; font-size: 12px; }
+.step-result {
+  margin: 4px 0; padding: 8px; border-radius: 6px; background: var(--panel-2); color: var(--ink);
+  font-size: 11px; line-height: 1.45; white-space: pre; overflow: auto; max-height: 220px;
+}
+.fix-code { max-height: 320px; }
+.debug-status { display: flex; align-items: center; gap: 6px; margin: 0; font-size: 12px; color: var(--ink-3); }
+.debug-answer { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; display: grid; gap: 6px; }
+.debug-answer.rule { border-style: dashed; }
+.debug-answer-head { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: var(--ink-2); flex-wrap: wrap; }
+.debug-answer-head .muted { font-weight: 400; margin-left: auto; }
+.debug-model { margin: -2px 0 0; font-family: var(--font-mono); font-size: 11px; overflow-wrap: anywhere; }
+.debug-verdict, .debug-note { margin: 0; font-size: 12px; color: var(--ink-2); }
+.debug-note { color: var(--warn); }
+.rich-text p { margin: 0 0 6px; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; }
+.rich-text p:last-child { margin-bottom: 0; }
+.rich-text code { font-size: 12px; background: var(--panel-2); padding: 0 3px; border-radius: 3px; }
+.time-link {
+  font-family: var(--font-mono); font-size: 12px; padding: 0 4px; border-radius: 4px;
+  border: 1px solid var(--accent-edge); background: transparent; color: var(--accent-text); cursor: pointer;
+}
+.time-link:hover { background: var(--accent); color: var(--accent-ink); }
+.fix-card { border-radius: 6px; padding: 8px; display: grid; gap: 6px; font-size: 12px; background: var(--panel-2); }
+.fix-card.ok .fix-head svg { color: var(--pass); }
+.fix-card.bad .fix-head svg { color: var(--fail); }
+.fix-head { display: flex; gap: 6px; align-items: flex-start; }
+.fix-head svg { flex: none; margin-top: 2px; }
+.fix-card summary { cursor: pointer; }
+.fix-card .btn { justify-self: start; }
+.debug-input { display: flex; gap: 6px; align-items: flex-end; margin-top: 10px; }
+.debug-input textarea { resize: vertical; font-size: 13px; min-height: 40px; }
+.debug-input .btn { height: 40px; }

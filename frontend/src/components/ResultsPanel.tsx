@@ -1,5 +1,5 @@
 import SpecSummary from './SpecSummary'
-import { useState, useCallback, useEffect, useMemo, type KeyboardEvent, type ReactNode } from 'react'
+import { useState, useCallback, useEffect, useMemo, useRef, type KeyboardEvent, type ReactNode } from 'react'
 import { Activity, ArrowUpDown, Timer, Bug, CircleCheck, CircleX, Cpu, FileCode, Info, ListChecks, Search, TriangleExclamationPoint, Workflow , ShieldCheck } from 'lucide-react'
 import WaveformViewer, { type WaveformMarker } from './WaveformViewer'
 import TestCasesView from './TestCasesView'
@@ -37,6 +37,8 @@ interface Props {
   tabRequest?: { tab: Tab; seq: number } | null
   /** Told whenever the visible tab changes. */
   onTabChange?: (tab: Tab) => void
+  /** Show this time (VCD ticks) in the Waveform tab; the seq makes a repeated request count. */
+  focusRequest?: { t: number; seq: number } | null
 }
 
 const TAB_META: Record<Tab, { label: string; Icon: typeof Activity }> = {
@@ -48,7 +50,7 @@ const TAB_META: Record<Tab, { label: string; Icon: typeof Activity }> = {
 }
 
 export default function ResultsPanel({
-  result, waveform, schematic, history, iterations, synthesis, strength, timing, model, testbenchModel, secondOpinion, spec, lint, degraded, warning, disputed, design, tabRequest, onTabChange,
+  result, waveform, schematic, history, iterations, synthesis, strength, timing, model, testbenchModel, secondOpinion, spec, lint, degraded, warning, disputed, design, tabRequest, onTabChange, focusRequest,
 }: Props) {
   // Depend on whether there IS a design tab, not on the element itself: the element is new on every
   // render, and re-running the request effect each render would override the user's own tab clicks.
@@ -82,6 +84,14 @@ export default function ResultsPanel({
     setFocus((prev) => ({ t, seq: (prev?.seq ?? 0) + 1 }))
     setTab('waveform')
   }, [])
+  // Only NEW requests: when the panel remounts for another design, an old request must not jump to the waveform.
+  const seenFocus = useRef(focusRequest?.seq)
+  useEffect(() => {
+    if (focusRequest && focusRequest.seq !== seenFocus.current) {
+      seenFocus.current = focusRequest.seq
+      showInWaveform(focusRequest.t)
+    }
+  }, [focusRequest, showInWaveform])
 
   const handleKeyDown = useCallback((e: KeyboardEvent<HTMLDivElement>) => {
     if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return

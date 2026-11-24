@@ -212,6 +212,22 @@ class SimulationRequest(BaseModel):
         return v
 
 
+class AgentTurn(BaseModel):
+    """One earlier question and answer of the debugging conversation (context for the next question)."""
+    question: str = Field(..., max_length=2000)
+    answer: str = Field("", max_length=8000)
+
+
+class AgentRequest(BaseModel):
+    """Ask the debugging agent about the code in the editor (see agent.py)."""
+    rtl_code: str = Field(..., min_length=1, max_length=50000)
+    testbench_code: str = Field(..., min_length=1, max_length=50000)
+    question: str = Field(..., min_length=1, max_length=2000)
+    history: List[AgentTurn] = Field(default_factory=list, max_length=6)
+    model: Optional[str] = Field(None, max_length=100, pattern=r"^[A-Za-z0-9@][A-Za-z0-9._:/@+-]{0,99}$")
+    reasoning_effort: Optional[Literal["low", "medium", "high", "xhigh", "max"]] = None
+
+
 class IterationRecord(BaseModel):
     """One pass of the self-correction loop."""
     iteration: int

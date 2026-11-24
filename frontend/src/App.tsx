@@ -5,6 +5,7 @@ import CodeEditor from './components/CodeEditor'
 import ErrorBoundary from './ErrorBoundary'
 import ResultsPanel, { type Tab } from './components/ResultsPanel'
 import AgentChat, { type ChatMessage } from './components/AgentChat'
+import DebugChat from './components/DebugChat'
 import { useTheme } from './theme'
 import SpecReview from './components/SpecReview'
 import { getModels, parseSpec, streamDesign, reSimulate, exportUVM, listProjects, deleteProject, getProject } from './api'
@@ -18,6 +19,7 @@ import type {
   RunResponse,
   Schematic,
   SecondOpinion,
+  SimulationRerun,
   SimulationResult,
   StrengthReport,
   SynthesisInfo,
@@ -79,6 +81,10 @@ export default function App() {
   const [verificationWarning, setVerificationWarning] = useState<string>('')
 
   const [messages, setMessages] = useState<ChatMessage[]>([])
+  // The debugging chat asks the waveform to show a time it cited.
+  const [waveFocus, setWaveFocus] = useState<{ t: number; seq: number } | null>(null)
+  // The code the on-screen result was simulated from, so an edit since then is noticed.
+  const shownCodeRef = useRef<{ rtl: string; tb: string } | null>(null)
   const [tabRequest, setTabRequest] = useState<{ tab: Tab; seq: number } | null>(null)
   const showTab = (tab: Tab) => setTabRequest((prev) => ({ tab, seq: (prev?.seq ?? 0) + 1 }))
   const currentTab = useRef<Tab>('design')
@@ -264,6 +270,7 @@ export default function App() {
             const r: RunResponse = e.response
             setRtl(r.rtl_code)
             setTb(r.testbench_code)
+            shownCodeRef.current = { rtl: r.rtl_code, tb: r.testbench_code }
             setResult(r.result)
             setWaveform(r.waveform)
             setSchematic(r.schematic)
@@ -309,6 +316,43 @@ export default function App() {
     abortRef.current?.abort()
   }
 
+  /** Show a simulation of edited code. The verdict, the waveform and the test cases all come from THIS run: leaving
+   *  the old waveform, repair timeline or warning on screen would show them next to a new PASS/FAIL. */
+  function applyRerun(fresh: SimulationRerun, ranRtl: string, ranTb: string) {
+    const { waveform: freshWaveform, ...res } = fresh
+    shownCodeRef.current = { rtl: ranRtl, tb: ranTb }
+    setResult(res)
+    setWaveform(freshWaveform ?? null)
+    setStaleRepairs((n) => Math.max(n, history.filter((h) => h.iteration > 0).length))
+    setHistory([])
+    setIterations(0)
+    setStrength(null) // scored the previous code, not what was just re-run
+    setTiming(null) // timed the previous code
+    setUsedModel(null) // the edited code is not what the model wrote
+    setUsedTbModel(null)
+    setSecondOpinion(null) // it judged the previous code
+    setSynthesis(null) // synthesised the previous code
+    setLintInfo(null)
+    setPassDisputed('')
+    setVerificationWarning('Re-run of edited code: only the simulation was repeated. Strength, synthesis, timing and the second opinion were not recomputed for this code.')
+  }
+
+  /** The debugging chat simulated the editor's code. Same code as on screen: nothing changes (Icarus is deterministic).
+   *  Edited code: show that run, so the times the answer cites match the waveform on screen. */
+  function handleEvidenceRun(run: SimulationRerun, ranRtl: string, ranTb: string) {
+    const shown = shownCodeRef.current
+    if (shown && shown.rtl === ranRtl && shown.tb === ranTb) return
+    applyRerun(run, ranRtl, ranTb)
+    pushMsg({ role: 'ai', stage: 'simulate', status: run.status, text: `The code was edited since the last run, so the question re-simulated it: ${run.status}. Results and waveform now show the edited code.` })
+  }
+
+  function handleApplyFix(file: 'rtl' | 'testbench', code: string) {
+    if (file === 'rtl') setRtl(code)
+    else setTb(code)
+    pushMsg({ role: 'user', text: `Applied the AI's proposed fix to the ${file === 'rtl' ? 'design' : 'testbench'}. Press Re-run to see it in the results.` })
+    showTab('design')
+  }
+
   async function handleReRun() {
     if (!rtl || !tb || running) return
     setRunning(true)
@@ -316,23 +360,11 @@ export default function App() {
     abortRef.current = ctrl
     pushMsg({ role: 'user', text: 'Re-running edited code…' })
     try {
-      const { waveform: freshWaveform, ...res } = await reSimulate(designId || 'edit', rtl, tb, ctrl.signal)
-      // The verdict, the waveform and the test cases all come from THIS run. Leaving the old
-      // waveform, repair timeline or warning on screen would show them next to a new PASS/FAIL.
-      setResult(res)
-      setWaveform(freshWaveform ?? null)
-      setStaleRepairs((n) => Math.max(n, history.filter((h) => h.iteration > 0).length))
-      setHistory([])
-      setIterations(0)
-      setStrength(null) // scored the previous code, not what was just re-run
-      setTiming(null) // timed the previous code
-      setUsedModel(null) // the edited code is not what the model wrote
-      setUsedTbModel(null)
-      setSecondOpinion(null) // it judged the previous code
-      setSynthesis(null) // synthesised the previous code
-      setLintInfo(null)
-      setPassDisputed('')
-      setVerificationWarning('Re-run of edited code: only the simulation was repeated. Strength, synthesis, timing and the second opinion were not recomputed for this code.')
+      const ranRtl = rtl
+      const ranTb = tb
+      const fresh = await reSimulate(designId || 'edit', ranRtl, ranTb, ctrl.signal)
+      const res = fresh
+      applyRerun(fresh, ranRtl, ranTb)
       // From the editor, show the new verdict; anywhere else (waveform, test cases) stay where the user is looking.
       if (currentTab.current === 'design') showTab('results')
       pushMsg({
@@ -400,6 +432,7 @@ export default function App() {
       if (seq !== loadSeq.current) return // a newer load (or a new run) started meanwhile
       setRtl(proj.rtl_code)
       setTb(proj.testbench_code)
+      shownCodeRef.current = { rtl: proj.rtl_code, tb: proj.testbench_code }
       setModuleName(proj.rtl_spec.module_name)
       setResult(proj.result)
       setWaveform(proj.waveform)
@@ -563,6 +596,20 @@ export default function App() {
             offline={provider?.offline ?? false}
           >
             {(messages.length > 0 || running) && <AgentChat messages={messages} running={running} explanation={explanation} repairs={Math.max(staleRepairs, history.filter((h) => h.iteration > 0).length)} />}
+            {rtl && tb && (
+              <DebugChat
+                key={designId || 'none'}
+                rtl={rtl}
+                tb={tb}
+                model={selectedModel || undefined}
+                thinking={availableThinking.includes(selectedThinking) ? selectedThinking : undefined}
+                busy={running}
+                waveform={waveform}
+                onShowTime={(t) => setWaveFocus((prev) => ({ t, seq: (prev?.seq ?? 0) + 1 }))}
+                onApplyFix={handleApplyFix}
+                onEvidenceRun={handleEvidenceRun}
+              />
+            )}
           </PromptPanel>
         </aside>
 
@@ -598,6 +645,7 @@ export default function App() {
             degraded={!!fallbackNotice}
             warning={verificationWarning}
             disputed={passDisputed}
+            focusRequest={waveFocus}
           />
           </ErrorBoundary>
         )}

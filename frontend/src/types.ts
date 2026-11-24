@@ -362,3 +362,32 @@ export interface StreamEvent {
   strength?: StrengthReport
   timing?: TimingReport
 }
+
+/** A proposed fix, re-simulated by the server; the verdict is the server's, never the model's claim. */
+export interface AgentFix {
+  file: 'rtl' | 'testbench'
+  code: string
+  status: 'PASS' | 'FAIL' | 'TIMEOUT' | 'ERROR'
+  pass_count: number
+  fail_count: number
+  test_count: number
+  summary: string
+}
+
+export type AgentEvent =
+  | { type: 'status'; message: string }
+  | { type: 'run'; result: SimulationRerun }
+  | { type: 'tool'; tool: string; args: Record<string, unknown>; thought: string; ok: boolean; summary: string; result: string }
+  | {
+      type: 'answer'
+      text: string
+      suspect: 'design' | 'testbench' | 'both' | 'unclear' | 'none'
+      confidence: 'high' | 'medium' | 'low'
+      fix: AgentFix | null
+      rule_based: boolean
+      steps: number
+      model?: string | null
+      note?: string
+    }
+  | { type: 'error'; message: string }
+
