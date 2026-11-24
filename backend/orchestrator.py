@@ -935,8 +935,14 @@ _REASON_PATTERNS = (
      "it spent its whole answer budget on reasoning and returned no answer"),
     (re.compile(r"opencodenotinstalled|'opencode' command was not found"), "the OpenCode app is not installed on the server"),
     (re.compile(r"\b410\b|\bretired\b|\bdeprecated\b|no longer (?:available|supported)"), "the provider has retired this model"),
-    (re.compile(r"\b40[13]\b|unauthori[sz]ed|forbidden|authentication|invalid api key|api key"),
-     "the provider did not accept the credentials or the model is not available to this account"),
+    # Seen live on 24 Nov: OpenCode answers HTTP 400 "Model is unavailable" for a retired free model, and
+    # "unavailable for free" / "subscription is required" for models listed with a free-looking name.
+    (re.compile(r"subscription is required|unavailable for free|paid version|requires? (?:a )?paid"),
+     "it needs a paid plan or subscription with its provider"),
+    (re.compile(r"model is unavailable|model unavailable"), "the provider is not serving this model right now"),
+    (re.compile(r"\b40[13]\b|unauthori[sz]ed|forbidden|permissiondenied|authentication|invalid api key|api key"),
+     "the provider did not accept the credentials or the model is not available to this account (for example it "
+     "needs a paid plan)"),
     (re.compile(r"\b404\b|not found|unknown model|does not exist"), "the provider does not know this model"),
 )
 

@@ -27,6 +27,9 @@ def _no_real_credentials_or_network_models(monkeypatch):
     for name in ("CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_API_KEY", "CLOUDFLARE_API_BASE",
                  "NVIDIA_NIM_API_KEY", "NVIDIA_NIM_BASE_URL"):
         monkeypatch.delenv(name, raising=False)
+    # The real model_hidden.json lists tonight's failed models; tests must not depend on it (tests that need a list
+    # point MODEL_HIDDEN_FILE at their own file).
+    monkeypatch.setenv("MODEL_HIDDEN_FILE", "/nonexistent/model_hidden.json")
     model_catalog.clear_cache()
     yield
     model_catalog.clear_cache()

@@ -519,7 +519,9 @@ def ask(question: str, tools: Toolbox, history: Optional[List[dict]] = None,
             reply = chat(SYSTEM_PROMPT, _transcript(base, steps))
         except Exception as e:
             logger.warning("agent model call failed: %s", str(e)[:300])
-            yield rule_based_answer(tools, f"The AI model did not answer ({_reason(e)}).", steps_taken=len(steps))
+            who = model or llm_service.current_model_id() or "the AI model"
+            yield rule_based_answer(tools, f"The model {who} could not be used: {_reason(e)}. Pick another model from "
+                                           f"the Model menu.", steps_taken=len(steps))
             return
         obj = _parse_reply(reply)
         if obj is None:
@@ -568,14 +570,11 @@ def ask(question: str, tools: Toolbox, history: Optional[List[dict]] = None,
 
 
 def _reason(e: Exception) -> str:
-    low = str(e).lower()
-    if "429" in low or "limit" in low or "quota" in low:
-        return "its usage limit was reached"
-    if "timeout" in low or "timed out" in low:
-        return "it timed out"
+    """Why the model failed, in the same words as a failed Generate (orchestrator._reason)."""
     if isinstance(e, llm_service.ModelNotAvailable):
         return str(e)[:160]
-    return "the provider returned an error"
+    from orchestrator import _reason as pipeline_reason      # imported here: orchestrator is the heavier module
+    return pipeline_reason(str(e).lower())
 
 
 # ============================================================================ no-AI evidence

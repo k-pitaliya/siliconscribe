@@ -124,7 +124,7 @@ The older single-provider variables (`OPENCODE_API_KEY` / `ZEN_API_KEY`, `NVIDIA
 | GET | `/api/projects` | List persisted projects `?limit=20&offset=0` → `{total, projects}`. |
 | GET | `/api/projects/{id}` | Get full `RunResponse` for persisted project. |
 | DELETE | `/api/projects/{id}` | Delete persisted project. |
-| GET | `/api/models` | Models for the menu: OpenCode, Cloudflare Workers AI and NVIDIA NIM (`?include_paid=true` adds non-free models, `?refresh=true` re-reads the catalogues). |
+| GET | `/api/models` | Models for the menu: OpenCode, Cloudflare Workers AI and NVIDIA NIM (`?include_paid=true` adds non-free models, `?refresh=true` re-reads the catalogues). Models listed in `backend/model_hidden.json` (they failed a one-message check on 24 Nov 2026: paid-only, retired, not chat models or too slow) are not offered; `failed_hidden` counts them. Delete a line to offer a model again. |
 | POST | `/api/admin/cleanup` | Admin: GC workspace `?ttl_hours=24` (1..720). |
 | GET | `/`, `/health` | Status & simulator check. |
 

@@ -275,3 +275,19 @@ def test_a_second_unsupported_answer_is_accepted(buggy_run):
 def test_a_failed_waveform_query_does_not_count_as_evidence(buggy_run):
     chat, seen = _script({"tool": "changes", "args": {"signal": "nope"}}, {"answer": "a"}, {"answer": "b"})
     assert list(agent.ask("q", _tools(buggy_run), chat=chat))[-1]["text"] == "b"
+
+
+@pytest.mark.parametrize("err,expected", [
+    ("LLM_UPSTREAM:PermissionDeniedError: model=@cf/zai-org/glm-5.3 err=Error code: 403", "needs a paid plan"),
+    ('LLM_UPSTREAM:OpenCodeError: {"message": "Upstream request failed: Model is unavailable.", "status": 400}',
+     "not serving this model"),
+    ('LLM_UPSTREAM:OpenCodeError: {"type": "provider.auth", "message": "An active OpenCode Go subscription is required"}',
+     "paid plan or subscription"),
+    ("LLM_UPSTREAM:Timeout: opencode model=x after 90s", "did not answer in time"),
+])
+def test_a_failed_model_is_named_with_a_plain_reason(buggy_run, err, expected):
+    chat, _ = _script(RuntimeError(err))
+    ans = list(agent.ask("q", _tools(buggy_run), model="@cf/zai-org/glm-5.3", chat=chat))[-1]
+    assert ans["rule_based"] is True
+    assert "@cf/zai-org/glm-5.3 could not be used" in ans["text"] and expected in ans["text"]
+    assert "Pick another model" in ans["text"]

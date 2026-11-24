@@ -33,6 +33,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger("siliconscribe.models")
@@ -129,6 +130,26 @@ def _get_cache(key: str, refresh: bool):
 def _put_cache(key: str, value: object, ttl: float) -> None:
     with _lock:
         _cache[key] = (time.time() + ttl, value)
+
+
+HIDDEN_FILE = Path(__file__).resolve().parent / "model_hidden.json"
+
+
+def hidden_models() -> Dict[str, str]:
+    """{model id: reason} for models the Model menu hides because they failed the last check (model_hidden.json).
+
+    Read on every call (the file is tiny), so editing it takes effect on the next menu refresh. A missing or broken
+    file hides nothing: a typo must never empty the menu. MODEL_HIDDEN_FILE points elsewhere (tests).
+    """
+    path = Path(os.getenv("MODEL_HIDDEN_FILE") or HIDDEN_FILE)
+    try:
+        data = json.loads(path.read_text())
+        models = data.get("models") if isinstance(data, dict) else None
+        if not isinstance(models, dict):
+            return {}
+        return {str(k): str(v) for k, v in models.items()}
+    except (OSError, ValueError):
+        return {}
 
 
 def clear_cache() -> None:

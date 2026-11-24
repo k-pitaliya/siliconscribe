@@ -1079,7 +1079,8 @@ def list_models(include_paid: bool = False, refresh: bool = False) -> dict:
       by the UI used to trigger a silent degraded fallback).
     * Cloudflare Workers AI: its models when CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN are set.
     * NVIDIA NIM: its chat models (ids prefixed `nim/`) when NVIDIA_NIM_API_KEY is set.
-    The reply keeps the older keys (offline, current, models, stage_models) and adds `providers` and `paid_hidden`.
+    The reply keeps the older keys (offline, current, models, stage_models) and adds `providers`, `paid_hidden` and
+    `failed_hidden` (models hidden because they failed the last check, see model_catalog.hidden_models).
     """
     if is_offline():
         return {"offline": True, "current": "offline", "providers": [], "paid_hidden": 0, "models": [
@@ -1111,13 +1112,22 @@ def list_models(include_paid: bool = False, refresh: bool = False) -> dict:
             m.setdefault("provider", "opencode")
             m.setdefault("group", "Models")
             m.setdefault("free", None)
+    # Models that failed the last check (model_hidden.json) are not offered; the configured model always is.
+    failed = model_catalog.hidden_models()
+    keep = lambda ms: [m for m in ms if m["id"] not in failed or m["id"] == current]  # noqa: E731
+    before = len(models)
+    models = keep(models)
+    failed_hidden = before - len(models)
     providers = [{"id": "opencode", "label": "OpenCode", "available": bool(models), "count": len(models),
                   "hint": None if models else "No models were found. Is the OpenCode app installed and signed in?"}]
     cf = model_catalog.cloudflare_status(refresh)
-    providers.append({"id": "cloudflare", "label": "Cloudflare", "available": cf["available"], "count": len(cf["models"]), "hint": cf["hint"]})
+    cf_models = keep(cf["models"])
+    providers.append({"id": "cloudflare", "label": "Cloudflare", "available": cf["available"], "count": len(cf_models), "hint": cf["hint"]})
     nim = model_catalog.nim_status(refresh)
-    providers.append({"id": "nim", "label": "NVIDIA NIM", "available": nim["available"], "count": len(nim["models"]), "hint": nim["hint"]})
-    models = models + cf["models"] + nim["models"]
+    nim_models = keep(nim["models"])
+    providers.append({"id": "nim", "label": "NVIDIA NIM", "available": nim["available"], "count": len(nim_models), "hint": nim["hint"]})
+    failed_hidden += len(cf["models"]) - len(cf_models) + len(nim["models"]) - len(nim_models)
+    models = models + cf_models + nim_models
     # Per-stage overrides (LLM_MODEL_TESTBENCH etc.) that differ from the default model. A request that
     # explicitly picks another model in the UI overrides them, so say where they apply.
     stage = {s: m for s, m in (getattr(prov, "stage_models", None) or {}).items() if m and m != current}
@@ -1126,7 +1136,7 @@ def list_models(include_paid: bool = False, refresh: bool = False) -> dict:
             if m["id"] == current:
                 m["note"] = f"{m['note']} · testbench written by {stage['testbench']}"
     return {"offline": False, "current": current, "models": models, "stage_models": stage,
-            "providers": providers, "paid_hidden": hidden}
+            "providers": providers, "paid_hidden": hidden, "failed_hidden": failed_hidden}
 
 
 # --------------------------------------------------------------------------- #

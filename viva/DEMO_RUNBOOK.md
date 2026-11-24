@@ -33,6 +33,8 @@ cd ~/Kushal_Master/Projects/VLSI/ai-eda-playground/frontend && npm run dev -- --
 ```
 Open http://127.0.0.1:5173. The top-right badge must say **Live · deepseek-v4.1-flash-free**. If it says *Offline demo* or *Demo fallback*, the live model is not in use.
 
+**Model menu:** on 24 Nov every model in the menu was sent one tiny message; 29 of 69 failed (paid-only, retired by OpenCode, not chat models, or too slow) and are now hidden (`backend/model_hidden.json`, with the reason for each). OpenCode changes its free models without notice, so a model can still fail tomorrow: the app then names the model and the reason, and you pick another. Safe choices verified on 24 Nov: `deepseek-v4.1-flash-free` and `hy4-flash-free` (OpenCode), `nemotron-3-ultra-550b-a55b` (NVIDIA NIM), `gpt-oss-120b` (Cloudflare).
+
 For **Ask about this run** use a fast model: in the sidebar **Model** menu pick the **NVIDIA NIM** tab, then `nvidia/nemotron-3-ultra-550b-a55b` (it needs the NIM key that is already in `backend/.env`). It answered in 31-219 s on 24 Nov; DeepSeek through OpenCode also works but is slower. The chat uses whatever model is selected in this menu.
 
 On the morning of the 25th: run the preflight **without** `--live` once more after starting both servers (it now checks that the running backend is live and can see the simulator), keep the Mac awake during long runs with `caffeinate -dims` in a third terminal, and if `npm run dev` says port 5173 is in use, stop the old server first (otherwise you would be looking at an old build). If the badge says **Server not reachable**, the backend is not running: start it and press Retry.

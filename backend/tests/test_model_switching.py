@@ -350,3 +350,46 @@ def test_unavailable_nim_is_reported_in_plain_words(monkeypatch, tmp_path):
     events = run(tmp_path, model="nim/poolside/laguna-xs-2.1")
     assert events[-1]["stage"] == "error" and "NVIDIA_NIM_API_KEY" in events[-1]["message"] and "nvidia-nim" in events[0]["message"]
 
+
+
+# ------------------------------------------------------------------------- models that failed the check
+def hide(monkeypatch, tmp_path, models):
+    f = tmp_path / "model_hidden.json"
+    f.write_text(json.dumps({"checked": "2026-11-24", "models": models}))
+    monkeypatch.setenv("MODEL_HIDDEN_FILE", str(f))
+
+
+def test_models_that_failed_the_check_are_not_offered_and_are_counted(monkeypatch, tmp_path):
+    hide(monkeypatch, tmp_path, {"opencode-go/hy4-flash-free": "needs a paid OpenCode Go subscription",
+                                 "@cf/zai-org/glm-5.3": "needs Cloudflare's paid Workers plan (HTTP 403)"})
+    with cloudflare(monkeypatch, search_pages=[[model_entry("@cf/openai/gpt-oss-120b"), model_entry("@cf/zai-org/glm-5.3")]]):
+        out = menu(monkeypatch)
+    ids = [m["id"] for m in out["models"]]
+    assert "opencode-go/hy4-flash-free" not in ids and "@cf/zai-org/glm-5.3" not in ids
+    assert "openrouter/a/b:free" in ids and "@cf/openai/gpt-oss-120b" in ids
+    assert out["failed_hidden"] == 2
+    assert next(p for p in out["providers"] if p["id"] == "cloudflare")["count"] == 1      # counts match what is shown
+
+
+def test_the_configured_model_is_never_hidden(monkeypatch, tmp_path):
+    hide(monkeypatch, tmp_path, {"opencode/deepseek-v4.1-flash-free": "pretend it failed"})
+    out = menu(monkeypatch)
+    assert out["models"][0]["id"] == "opencode/deepseek-v4.1-flash-free" and out["failed_hidden"] == 0
+
+
+@pytest.mark.parametrize("content", ["not json {", json.dumps(["a list"]), json.dumps({"models": "x"})])
+def test_a_broken_hidden_file_hides_nothing(monkeypatch, tmp_path, content):
+    f = tmp_path / "model_hidden.json"
+    f.write_text(content)
+    monkeypatch.setenv("MODEL_HIDDEN_FILE", str(f))
+    assert mc.hidden_models() == {}
+    assert menu(monkeypatch)["failed_hidden"] == 0
+
+
+def test_the_shipped_hidden_file_is_valid_and_never_names_the_demo_models(monkeypatch):
+    monkeypatch.delenv("MODEL_HIDDEN_FILE", raising=False)
+    hidden = mc.hidden_models()
+    assert len(hidden) >= 20 and all(isinstance(v, str) and v for v in hidden.values())
+    for demo in ("opencode/deepseek-v4.1-flash-free", "nim/nvidia/nemotron-3-ultra-550b-a55b", "opencode/hy4-flash-free",
+                 "@cf/openai/gpt-oss-120b", "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free"):
+        assert demo not in hidden
