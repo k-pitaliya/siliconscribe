@@ -13,6 +13,7 @@
   \node[hbox,minimum width=13.4cm] (fe) {FRONTEND \quad React 18 + Vite + TypeScript (runs in the browser)};
   \node[box,below=3mm of fe.south west,anchor=north west,minimum width=13.4cm,align=left,font=\scriptsize] (fed)
     {Sidebar: prompt, run timeline, examples, Model menu, ``Testbench written by'', specification review, target clock \\
+     ``Ask about this run'' (the debugging agent) under the run timeline \\
      Design / Results / Test cases / Waveform / Schematic tabs \textbullet\ Projects menu \textbullet\ Export UVM, Re-run, Stop \textbullet\ theme};
   \node[hbox,below=12mm of fed.south west,anchor=north west,minimum width=9.1cm] (be) {BACKEND \quad FastAPI + Pydantic (Python)};
   \node[box,below=3mm of be.south west,anchor=north west,minimum width=9.1cm,text width=8.8cm,align=left,font=\scriptsize] (bed)
@@ -22,6 +23,7 @@
      \file{simulator.py}: Icarus Verilog and sandbox\\
      \file{mutation.py}: testbench strength \textbullet\ \file{timing.py}: timing and area\\
      \file{equivalence.py}: proof that the netlist equals the RTL\\
+     \file{agent.py} + \file{wave_query.py}: the debugging agent\\
      linter, checks, VCD parser and toggle coverage, schematic, synthesis, UVM export, SQLite};
   \node[hbox,right=4mm of be,minimum width=3.9cm] (llm) {LLM PROVIDERS};
   \node[box,below=3mm of llm.south west,anchor=north west,minimum width=3.9cm,text width=3.6cm,align=left,font=\scriptsize] (llmd)
@@ -55,6 +57,8 @@ The browser never talks to the AI provider and never runs tools. All secrets (AP
 \file{backend/mutation.py} & Testbench strength: injects small bugs into a passing design and counts how many the testbench catches. \\
 \file{backend/timing.py} & Pre-layout timing and area: Yosys maps the design to sky130 cells, OpenSTA times the netlist and gives the critical path pin by pin. \\
 \file{backend/equivalence.py} & Formal equivalence: proves with Yosys' built-in SAT solver that the sky130 netlist computes the same function as the RTL. \\
+\file{backend/agent.py} & The debugging agent behind ``Ask about this run'': the JSON tool loop, its eight tools, fix verification and the rule-based fallback (Chapter~\ref{ch:agent}). \\
+\file{backend/wave_query.py} & \code{WaveDB}: a queryable copy of one run's VCD, with values at and just before any time, edges, changes and value search. \\
 \file{backend/pdk/} & The sky130 cell library file (\file{sky130hd_tt.lib}) that timing needs, with a README saying where to fetch it. \\
 \file{backend/models.py} & The data contracts (Pydantic models) for every request, response and record. \\
 \file{backend/offline_designs.py} & Built-in designs (counter, 4- and 8-bit ALU, full adder, 4:1 mux) with their testbenches, used offline and for the mutation sweep. \\
@@ -73,13 +77,13 @@ The browser never talks to the AI provider and never runs tools. All secrets (AP
 \file{backend/tools/build_opensta.sh} & Builds OpenSTA from source into \file{~/.local/opensta} (no Homebrew). \\
 \file{backend/evaluation/} & Recorded live results: \file{results.jsonl}, \file{summary.md}, the final designs and testbenches in \file{artifacts/}. \\
 \file{backend/evaluation/independent/} & Hand-written reference testbenches (\file{tb_c1.v} \ldots\ \file{tb_s6.v}), \file{run.py} that checks each evaluated design against them, and \file{strength.py} that checks the references themselves with every mutant. \\
-\file{backend/tests/} & 591 automated backend tests in 35 test files, plus \file{conftest.py} (shared test set-up) and two fake servers (\file{cf_fake.py}, \file{nim_fake.py}) so Cloudflare and NIM code is tested without the internet. \\
+\file{backend/tests/} & 632 automated backend tests in 36 test files, plus \file{conftest.py} (shared test set-up) and two fake servers (\file{cf_fake.py}, \file{nim_fake.py}) so Cloudflare and NIM code is tested without the internet. \\
 \file{backend/workspace/} & Runtime files: one folder per design (\file{design.sv}, \file{testbench.sv}, \file{transcript.log}, \file{design.vcd}) and \file{projects.db}. \\
 \file{frontend/src/App.tsx} & The page: holds all state and connects the components. \\
 \file{frontend/src/api.ts} & Every call to the backend, including the SSE stream reader. \\
 \file{frontend/src/types.ts} & TypeScript copies of the backend data shapes. \\
 \file{frontend/src/theme.ts} & Light, dark or system theme; an explicit choice is remembered in the browser. \\
-\file{frontend/src/components/} & PromptPanel, ModelPicker, TestbenchModelSelect, SpecReview, SpecSummary, AgentChat, CodeEditor, ResultsPanel, TestCasesView, WaveformViewer, SchematicView (plus their tests). \\
+\file{frontend/src/components/} & PromptPanel, ModelPicker, TestbenchModelSelect, SpecReview, SpecSummary, AgentChat, DebugChat, CodeEditor, ResultsPanel, TestCasesView, WaveformViewer, SchematicView (plus their tests). \\
 \file{frontend/src/ErrorBoundary.tsx} & Catches a drawing error in the results panel so the rest of the page keeps working. \\
 \file{frontend/src/netlistRender.ts} & Lays out a Yosys netlist as an SVG drawing with netlistsvg; loaded only when a schematic view needs it. \\
 \file{docs/} & Report, presentation, poster, screenshots, live evidence, this guide. \\
@@ -290,6 +294,7 @@ After the loop, in this order, the orchestrator:
 Each extra check is wrapped so that if it fails it only disappears from the result; it can never break a run that already has a verdict. Measured toggle coverage is not a separate stage: the simulator computes it every time it parses a result (Section~\ref{sec:toggle}).
 
 \section{Fallback policy: honest degraded mode}
+\label{sec:fallback}
 
 All model calls go through \code{_call_llm} inside \code{pipeline_events}:
 
@@ -618,6 +623,7 @@ A model id from the browser ends up as an argument of a subprocess (\code{openco
 The full system prompts are in \file{backend/llm_service.py} (and Appendix~B of the project report). The testbench prompt insists on Icarus-compatible Verilog-2001, a top module named \code{testbench}, a reset sequence first, directed corner cases plus exhaustive testing when there are at most 4096 input combinations (otherwise at least 100 random vectors), every comparison through the standard \code{chk} task (which uses \code{===} and prints one \code{CHK|...} line per check), the exact \code{Passed:}/\code{Failed:}/\code{ALL TESTS PASSED} summary lines, and a watchdog that prints a failure and stops a hung run.
 
 \section{Reading the model's answer}
+\label{sec:llmparse}
 
 Models wrap code in prose and Markdown fences, think out loud first, and sometimes give a draft before the real answer. The parsers are forgiving, but in a careful order:
 
@@ -792,6 +798,7 @@ POST & /api/spec/parse & Turn a prompt into a specification and stop, for review
 POST & /api/design/stream & The main route: the full pipeline as Server-Sent Events. Saves the finished project. \\
 POST & /api/design/run & The same pipeline, returning one JSON response at the end. Saves the project. \\
 POST & /api/simulation/run & Simulate a hand-edited RTL/testbench pair once (the Re-run button). No auto-fix. \\
+POST & /api/agent/ask & The debugging agent: re-simulates the editor's code, then streams the evidence steps and one answer as Server-Sent Events (Chapter~\ref{ch:agent}). \\
 POST & /api/synthesis/run & Generic Yosys synthesis; returns \texttt{\{"available": false\}} when not installed. \\
 POST & /api/timing/run & The timing and area estimate on its own (RTL, module name, target, optional testbench for parameter overrides). \\
 GET & /api/projects & List saved projects (limit 1--100, offset). \\
@@ -825,7 +832,7 @@ POST & /api/admin/cleanup & Delete old workspaces; disabled unless \code{ADMIN_T
 \resizebox{\textwidth}{!}{%
 \begin{tikzpicture}[node distance=6mm and 5mm,font=\small]
   \node[hbox] (app) {App.tsx \\ \scriptsize all state + handlers};
-  \node[box,below left=10mm and 14mm of app,align=center] (pp) {PromptPanel \\ \scriptsize ModelPicker, TestbenchModelSelect, AgentChat};
+  \node[box,below left=10mm and 14mm of app,align=center] (pp) {PromptPanel \\ \scriptsize ModelPicker, TestbenchModelSelect, AgentChat, DebugChat};
   \node[box,below=22mm of app] (spec) {SpecReview};
   \node[box,right=24mm of app] (rp) {ResultsPanel};
   \node[box,above right=4mm and 6mm of rp,align=left,font=\scriptsize] (tabs) {CodeEditor (Design) \\ TestCasesView \\ WaveformViewer \\ SchematicView \\ SpecSummary};
@@ -846,11 +853,13 @@ POST & /api/admin/cleanup & Delete old workspaces; disabled unless \code{ADMIN_T
   \item[\code{startRun}] Clears \emph{every} result of the previous run, including the RTL, testbench, explanation and design id (otherwise a new run that failed after its RTL arrived left the new RTL next to the old testbench, and Re-run checked that mixed pair), closes any open specification review, opens the stream (with the confirmed specification if there is one), and for each event: adds a timeline message, shows a fallback notice once (\code{lastNoticeRef} prevents duplicates), clears old lint when a repair changes the code, and fills whichever fields the event carries. On \code{done} it loads the complete response (including \code{pass_disputed}), switches to the Results tab and refreshes Projects. It turns network problems into plain messages that say the run is lost and what to do.
   \item[\code{handleCancel}] Aborts the stream or a re-run (the Stop button). Both now carry an abort signal; Stop used to do nothing during a Re-run.
   \item[\code{handleReRun}] Sends the edited code to \code{/api/simulation/run} once, without the AI. It clears strength, synthesis, timing, second opinion, lint and ``Design written by'', because those described the previous code, and shows the note ``Re-run of edited code: only the simulation was repeated \ldots''.
+  \item[\code{handleEvidenceRun}, \code{handleApplyFix}] For the debugging agent: when its evidence run simulated code that differs from the results on screen, show that run instead (with a timeline message); put a fix from the agent into the editor and open the Design tab.
   \item[\code{handleUVMExport}] Requests the bundle and downloads the zip; a second click while an export is running is ignored.
   \item[\code{handleLoadProject}, \code{handleDeleteProject}] Open or delete a saved run (deleting asks for confirmation). Loading resets the repair count and lint too, and a counter (\code{loadSeq}) makes sure only the \emph{latest} load writes the screen: two quick clicks used to let the slower, older project overwrite the newer one.
 \end{description}
 
 \section{api.ts and streaming}
+\label{sec:apits}
 
 The browser's built-in \code{EventSource} cannot send a POST body, so \code{streamDesign} uses \code{fetch} and reads the response body as a stream. It decodes chunks into a buffer, normalises \texttt{\textbackslash r\textbackslash n} to \texttt{\textbackslash n} on the whole buffer (a pair can be split across two chunks), splits on blank lines, takes the \code{data:} line of each frame and parses its JSON. After Stop, frames already received are not applied (a cancelled run used to apply its final result), and the stream is always closed, even if handling an event throws. A FastAPI validation error (a list of messages) is shown as its messages, not as raw JSON. HTTP 502/504 errors say that the server did not answer in time. \file{api.stream.test.ts} runs this real function against a fake server; every other App test replaces it with a stub.
 
@@ -862,6 +871,7 @@ The browser's built-in \code{EventSource} cannot send a POST body, so \code{stre
   \item[TestbenchModelSelect] ``Testbench written by'': ``Same model as the design'' or any model from any source.
   \item[SpecReview] The specification review panel: module, ports and parameters, editable behaviour and constraints, ``Generate with this specification'' and Cancel.
   \item[AgentChat] The run timeline: one message per event with an icon for its stage and status, the structured diagnosis folded under a ``Diagnosis'' line (it is also on the Results tab), with \texttt{`code`} from the model shown as code, a ``Working\ldots'' timer while a run is going, and the design explanation.
+  \item[DebugChat] The ``Ask about this run'' panel under the run timeline: questions, the evidence steps, the answer with clickable times, and the fix card with the server's verdict (Chapter~\ref{ch:agent}).
   \item[CodeEditor] Two tabs (RTL and testbench) using CodeMirror with Verilog highlighting, editable, with a copy button. Edited code can be re-simulated with Re-run. It is shown on the Design tab (before any run, the Design tab shows a welcome page with recent projects instead).
   \item[ResultsPanel] Five tabs: Design, Results, Test cases, Waveform, Schematic. \emph{Results}, top to bottom: the built-in-demo tag when the result is not from an AI model, the verdict (status badge, which reads ``PASS, disputed'' in warning colour when the evidence contradicts the PASS; checks, passed, failed, pass rate), the ``Do not trust this PASS yet'' line, warnings, the second opinion, ``Design written by'', then sections for testbench strength, synthesis, timing and area (with the equivalence line, \code{EquivalenceLine}, and the fold-out critical path table, \code{CriticalPath}), toggle coverage, test types, lint, the self-correction loop, errors and the specification used (SpecSummary).
   \item[TestCasesView] Every executed check, with filters, search and a bit-by-bit comparison (Section~\ref{sec:testcases}).
@@ -869,6 +879,283 @@ The browser's built-in \code{EventSource} cannot send a POST body, so \code{stre
   \item[ErrorBoundary] Wraps the results panel: if any part of it fails to draw, that panel shows the error and a ``Try again'' button, and the rest of the app keeps working.
   \item[SchematicView] Three views chosen with buttons: \emph{Block diagram} (the module as a box with input ports on the left, outputs on the right and widths shown as \code{[n:0]}, drawn by the component itself), \emph{RTL cells} and \emph{Gate level} (the two netlists of Section~\ref{sec:schematicnetlists}). A view without a netlist is greyed out, with the reason as a tooltip. The netlist views are laid out by \textbf{netlistsvg} (open source, MIT licence) through \file{netlistRender.ts}, which is \emph{lazy-loaded}: the layout engine is fetched with a dynamic \code{import} only the first time such a view is opened, so the first page load stays fast. The SVG it returns is shown through an \code{<img>} tag from a blob URL, not inserted into the page: an SVG shown as an image cannot run script, whatever names the design's signals carry. Above 400 cells (\code{MAX_DRAWN_CELLS}) nothing is drawn and the tab says why. Zoom (0.5$\times$ to 6$\times$), \emph{Fit to panel} and \emph{Download SVG} work on the drawn view.
 \end{description}
+
+% ---------------------------------------------------------------------------
+\chapter{The Debugging Agent}
+\label{ch:agent}
+
+Everything so far is a \emph{fixed pipeline}: the orchestrator decides which step runs next, and the model only fills in each step. This chapter describes the one part of SiliconScribe where the model decides what to look at. In the app it is the panel \textbf{Ask about this run} in the left sidebar, under the run timeline. You type a question about the code in the editor (``Why did the first check fail?''), and the answer is built from the simulation itself: values read from the waveform at exact times, lines found in the source, and fixes that the server has simulated.
+
+It was added on 24 November 2026, \emph{after} the project report was submitted (deadline 6 November 2026). In the report it appears only as an extension after submission, never as part of the submitted work. The code is on the branch \code{agent-debug}, commit \code{3d05b94}.
+
+\begin{center}
+\small
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{5.0cm}X@{}}
+\toprule
+\textbf{File} & \textbf{What it does} \\
+\midrule
+\file{backend/agent.py} & The tool loop: the system prompt, the eight tools (\code{Toolbox}), the overview, the grounding rule, fix verification and the rule-based fallback. \\
+\file{backend/wave_query.py} & \code{WaveDB}: a queryable copy of one run's VCD (exact values at exact times, for any signal). \\
+\file{backend/main.py} & \code{agent_ask}, the route \code{POST /api/agent/ask}: the evidence run and the event stream. \\
+\file{backend/llm_service.py} & \code{agent_chat} (one model turn, plain text in and out) and \code{uses_offline}. \\
+\file{frontend/src/components/}\newline\file{DebugChat.tsx} & The panel: questions, evidence steps, the answer, clickable times and the fix card. \\
+\file{frontend/src/api.ts} & \code{askAgent}, which reads the stream with the same \code{readSSE} function as a normal run. \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\section{What an agent is}
+
+A plain chat model answers from the text it was given. If you paste a Verilog file and ask ``why does the hold check fail?'', it reads the code and \emph{guesses} what the hardware did. It cannot see the waveform, so it can describe a waveform that never happened (Section~\ref{sec:llmalonefails} explains why that is the core problem of using a model for hardware).
+
+An \textbf{agent} is a model placed in a loop with \textbf{tools}. A tool is a small function on the server that does one real thing, such as ``give me the value of \code{count} at 25 ns''. In each turn the model either asks for one tool or gives its final answer. The server runs the tool, adds the result to the conversation, and asks the model again. The model chooses the questions; the server supplies the answers from real data.
+
+\begin{analogy}
+A doctor on the phone can only guess from what you say. A doctor in a clinic can order a blood test, read the result, then order the next test that result suggests. The tools are the lab tests: the doctor chooses them, but the numbers come from the lab, not from the doctor's memory.
+\end{analogy}
+
+\begin{figure}[H]
+\centering
+\resizebox{\textwidth}{!}{%
+\begin{tikzpicture}[node distance=6mm and 9mm]
+  \node[hbox] (q) {Your question\\ \scriptsize + the code in the editor};
+  \node[box,right=of q] (sim) {Evidence run\\ \scriptsize Icarus, sandbox, 30 s};
+  \node[box,right=of sim] (ov) {Overview\\ \scriptsize verdict, failing checks,\\ \scriptsize clocks, signals, RTL};
+  \node[box,below=13mm of ov] (m) {Model\\ \scriptsize one JSON object per reply};
+  \node[box,left=30mm of m] (tb) {Toolbox\\ \scriptsize 8 tools: waveform, code, test\_fix};
+  \node[okbox,below=13mm of m] (ans) {Answer\\ \scriptsize text, suspect, confidence, fix};
+  \node[box,left=of ans] (fx) {Server re-simulates the fix\\ \scriptsize its own verdict is shown};
+  \node[hbox,left=of fx] (ui) {Panel in\\ the browser};
+  \draw[arr] (q)--(sim); \draw[arr] (sim)--(ov); \draw[arr] (ov)--(m);
+  \draw[arr] ([yshift=1.5mm]m.west) -- node[above,font=\scriptsize]{tool call} ([yshift=1.5mm]tb.east);
+  \draw[arr] ([yshift=-1.5mm]tb.east) -- node[below,font=\scriptsize]{result added} ([yshift=-1.5mm]m.west);
+  \draw[arr] (m)--node[right,font=\scriptsize]{answer}(ans);
+  \draw[arr] (ans)--(fx); \draw[arr] (fx)--(ui);
+  \node[note,right=4mm of m,text width=3.2cm] {at most 10 model calls;\\ no waveform query yet:\\ sent back once};
+\end{tikzpicture}}
+\caption{One question. The model chooses the tools; every tool result comes from the simulator or the source, and every fix is simulated again by the server before it is shown.}
+\label{fig:agentloop}
+\end{figure}
+
+\section{The protocol: one JSON object per reply}
+
+The system prompt (\code{SYSTEM_PROMPT} in \file{agent.py}) tells the model that every reply must be exactly one JSON object, in one of two shapes:
+
+\begin{lstlisting}[style=plain]
+{"thought": "one short sentence", "tool": "cycle_table",
+ "args": {"signals": ["enable", "count"], "from_ns": 0, "to_ns": 100}}
+
+{"answer": "<markdown>", "suspect": "design" | "testbench" | "both" | "unclear" | "none",
+ "confidence": "high" | "medium" | "low",
+ "fix": {"file": "rtl" | "testbench", "code": "<the COMPLETE corrected file>"}}
+\end{lstlisting}
+
+The first is a tool call, the second the final answer (\code{fix} is optional). The prompt also gives the working rules: start from the first failing check, remember that the testbench can be wrong too, test a fix before claiming it works, query the waveform at least once, and write every time as ``@125ns'' so the user can click it.
+
+\subsection{Why plain JSON text and not native function calling}
+
+Some AI services offer \textbf{native function calling}: the program declares its tools in a special field of the request, and the service returns a structured tool call instead of text. SiliconScribe does not use it. Its models come from four kinds of source (the OpenCode app, Cloudflare Workers AI, NVIDIA NIM and any OpenAI-compatible endpoint), and they do not all offer that field in the same way. The OpenCode app, for example, is driven through its command line (Section~\ref{sec:routing}): the prompt goes in as text and the answer comes back as text, with no place to declare tools. Plain JSON in plain text works the same through every source, so the agent works with any model in the Model menu.
+
+The price is that the reply must be parsed. \code{_parse_reply} uses the same forgiving reader as the rest of the app (\code{_extract_json}, Section~\ref{sec:llmparse}), which takes the last complete JSON object in the reply. A reply that is not one of the two shapes counts as a \textbf{format slip}: the first time, the model is told ``Your reply was not one JSON object'' and asked again; after a second slip its text is shown, with the note ``The model did not follow the tool protocol; this text is unchecked.''
+
+Each model turn is one call of \code{agent_chat} in \file{llm_service.py}: the chosen model, temperature 0.1, the system prompt and a transcript that holds the question, up to 4 earlier questions and answers of the conversation, the overview, and every step so far. The last 5 tool results are kept whole (up to 3000 characters each); older ones are shortened to 400 characters, because each turn sends the whole growing transcript again.
+
+\section{The evidence run}
+
+The question is about the code \emph{in the editor}, which may have been edited since the last run. So the first thing \code{agent_ask} in \file{main.py} does is simulate that code again, with \code{_rerun}, the same function the Re-run button uses: a fresh workspace folder (\code{new_workspace_id}), Icarus Verilog, the full sandbox policy and allow-list (Section~\ref{sec:sandbox}), the resource caps, and a 30-second limit. \code{_simulate_checked} also applies the rule that a testbench without checks can never PASS. A \code{$system} call in the code is refused here exactly as in a normal run.
+
+The result is streamed to the browser as a \code{run} event. If the editor's code differs from the code whose results are on screen, the Results and Waveform tabs switch to this run, and the timeline says so (``The code was edited since the last run, so the question re-simulated it \ldots''). That way the times in the answer always match the waveform on screen. If the code is unchanged, nothing on screen changes: Icarus gives the same result for the same code.
+
+\code{overview} then writes a short summary that opens the model's first turn: the verdict and counts; for ERROR or TIMEOUT the error lines and the end of the log; the first six failing checks with their times; how long the simulation ran and the length of one VCD tick; up to two clocks with their period and first rising edge; the list of signals (up to 80, the design's own first); the RTL with line numbers (up to 400 lines); and the length of the testbench (the model reads it with \code{read_code} when it needs to).
+
+\section{WaveDB: reading a VCD for questions}
+\label{sec:wavedb}
+
+A VCD file (Section~\ref{sec:vcdbasics}) is a list of value changes in time order. The waveform viewer gets a compact copy (\code{parse_vcd}: at most 40 signals and 2000 changes each, in hex). The agent needs something else: the exact value of \emph{any} signal at \emph{any} time, without ever putting the whole file into a prompt. \code{wave_query.load} builds that copy, called a \code{WaveDB}:
+
+\begin{enumerate}
+  \item Read at most 8 MB of the file (the same cap as the viewer; if the file was larger, \code{partial} is set and the overview says late changes are missing), the timescale, and every \code{$var} declaration. Parameters, events and strings are skipped.
+  \item Walk the changes. \texttt{\#t} sets the current time; \code{1!} or \code{b0101 code} is a change of one signal. Each value is stored as binary text padded to the signal's width (\code{x} and \code{z} bits are kept). A repeated dump of the same value is not a change.
+  \item If a signal changes several times in one time step, only the \textbf{settled} value is kept. That is what the step ends with, and what any later code sees.
+  \item Each signal ends up with two lists: the times of its changes and the values. Up to 2000 signals and 200,000 changes per signal are kept.
+\end{enumerate}
+
+Looking up a value is then a \textbf{binary search} in the list of times (Python's \code{bisect}), the way you find a word in a dictionary by opening it in the middle rather than reading from page one. \code{resolve} finds a signal by full path (\code{testbench.dut.count}), by the end of a path (\code{dut.count}) or by bare name (\code{count}); when several match, the design's own copy wins over a testbench variable of the same name.
+
+\subsection{value\_at and value\_before: why ``just before the edge''}
+
+Every signal has two lookups, and the difference between them is the most important idea in this chapter:
+\begin{description}
+  \item[\code{value_at(t)}] the value \emph{after} every change at time $t$: the last change at or before $t$.
+  \item[\code{value_before(t)}] the value \emph{just before} $t$: the last change strictly before $t$.
+\end{description}
+
+Why both? Take a counter at a rising clock edge at 25 ns. In the VCD, \code{count} has a change \emph{at} 25 ns, because the flip-flops updated on that edge. But the flip-flops decided what to store from the values their inputs had \emph{just before} the edge: at the instant the clock rises, a flip-flop takes a snapshot of its input, and only then does its output change (Section~\ref{sec:seqlogic}). If the agent read \code{enable} ``at'' 25 ns, it would see the value after the edge, which may already have been changed by the testbench in the same time step. That is not what the flip-flop saw. So \code{value_before} answers ``what did the flip-flop sample?'' and \code{value_at} answers ``what did it store?''.
+
+\begin{keyidea}
+At a clock edge, read the inputs \emph{just before} the edge and the outputs \emph{after} it. A flip-flop samples before and updates after. Reading both at the same instant is the classic off-by-one-cycle mistake in waveform debugging, and it is exactly the mistake the \code{cycle_table} tool is built to avoid.
+\end{keyidea}
+
+This was checked by sabotage: making ``just before'' return the same as ``after'' (together with making the fix check always report PASS) made 4 backend tests fail.
+
+\subsection{Times: nanoseconds and ticks}
+
+The VCD stores times as whole \textbf{ticks} of its timescale. The model always speaks in nanoseconds. \code{to_ticks} converts with $\text{ticks} = \text{ns} \times 1000 / \text{tick length in ps}$, and \code{to_ns} converts back. In the runs shown in this guide one tick is 1 ps, so 30 ns is 30,000 ticks. \code{edges} finds rising or falling edges of a 1-bit signal; as in Verilog, a change from \code{x} or \code{z} to 1 also counts as a rising edge. \code{clocks} finds 1-bit signals named like \code{clk} or \code{clock}.
+
+\section{The eight tools}
+
+\code{Toolbox} in \file{agent.py} holds the run being discussed (its \code{WaveDB}, its result, the RTL and testbench) and offers eight tools. Times in the arguments are nanoseconds.
+
+\begin{center}
+\small
+\begin{tabularx}{\textwidth}{@{}>{\ttfamily}lX@{}}
+\toprule
+\textrm{\textbf{Tool}} & \textbf{What it returns} \\
+\midrule
+failing\_checks & The testbench's failed comparisons: number, time, type, name, expected and actual value (up to 25 per call, with an offset to page through more). \\
+values\_at & Each signal's value at a time \emph{and} just before it (``\code{count = 4'h2 (2) (was 4'h1 (1))}''). Without a signal list it reads the design's ports. Up to 12 signals per call. \\
+changes & Every change of one signal in a time window, and the value entering the window (at most 40 changes; it says when there are more). \\
+cycle\_table & One row per clock edge: each signal's value sampled just \emph{before} the edge (what the flip-flops see) and \emph{after} it. Up to 32 rows. The best tool for sequential logic. The clock is found by name when there is one. \\
+find\_value & When a signal held a given value, written in decimal (\code{9}), hex (\code{4'h9}, \code{0x9}), binary (\code{4'b1001}), \code{x} or \code{z} (up to 5 intervals). \\
+drivers & Source lines that assign a signal (left side of \code{=} or \code{<=}, not a \code{==} comparison), with the enclosing \code{always} or \code{assign} block, plus instance ports connected to it. This is a \emph{text search} with comments and strings blanked, not a full elaboration of the design, and it says so. \\
+read\_code & Numbered lines of the RTL or the testbench (at most 120 per call). \\
+test\_fix & Simulates a candidate fix (the complete corrected file) with the other file unchanged, and returns the verdict and the first failing checks. At most 3 per question. \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+Values are written as \code{4'h9 (9)}: hex always, decimal too when no bit is \code{x} or \code{z} (\code{fmt_value}). A bad call (an unknown signal, a missing time, a fourth \code{test_fix}) raises \code{ToolError}; its message goes back to the model as the tool result, with hints such as similar signal names, so the model can correct itself. A crash inside a tool is logged and reported as ``Tool error'' without ending the conversation. A tool result is cut at 3000 characters. For \code{test_fix}, the code argument is replaced by ``\textless N characters\textgreater'' in the events sent to the browser, so a long file is not echoed back.
+
+\section{The grounding rule}
+
+An answer about a run must rest on the run. The four waveform tools and \code{test_fix} are the tools that read the simulation (\code{WAVE_TOOLS}). If the model answers before any of them has given a real result (a call that ended in a tool error does not count), the answer is not shown. Instead the model is told once: ``Before answering, confirm your explanation with at least one waveform query \ldots, then answer.'' If it answers again without one, that second answer is accepted, so a stubborn model cannot loop forever. A run with no waveform at all (it did not compile) is exempt.
+
+The rule came from a live result. With the model \code{opencode/deepseek-v4.1-flash-free}, the hidden counter bug (A4 in Table~\ref{tab:agentlive}) was diagnosed correctly and the fix passed 57/57, but with \emph{zero} tool calls: the model reasoned from the overview alone. It was right that time, but nothing in the answer came from the waveform.
+
+\section{The answer and the fix}
+
+The final answer carries markdown text, a \textbf{suspect} (design, testbench, both, unclear or none) and a \textbf{confidence} (high, medium or low); anything else is replaced by ``unclear'' or ``medium''. If it includes a fix, \code{_verified_fix} decides what happens to it:
+\begin{enumerate}
+  \item It must name the RTL or the testbench, contain a module and be at most 50,000 characters; otherwise it is dropped.
+  \item A ``fix'' identical to the current file is dropped.
+  \item The server simulates it (\code{run_fix}, in the same sandbox, other file unchanged). If the model already tested exactly this code with \code{test_fix}, that result is reused, since the same code gives the same verdict.
+  \item The answer carries \emph{that} verdict: status and counts, for example ``PASS, 57 of 57 checks''. If the fix cannot even be simulated, it is shown as ERROR with the reason, not hidden.
+\end{enumerate}
+The model's own claim that the fix works is never shown as the verdict. A testbench fix also gets a warning in the panel: ``This changes the checker itself. A testbench fix can make a wrong design pass: read it before you apply it.''
+
+\begin{warnbox}[What is checked and what is not]
+Only the \emph{fix} is checked, by simulation. The \emph{explanation} is model text and is not verified. In one live run (A6 below) the fix passed 558 of 558 checks, but the explanation was only partly right. A passing fix proves that the new code passes this testbench, not that the model understood why the old code failed.
+\end{warnbox}
+
+\section{When there is no AI: rule-based evidence}
+
+\code{rule_based_answer} collects the same kind of evidence with fixed rules: the verdict, the first failing check (name, time, expected and actual), the values of the ports at that time, a cycle table of the edges before it, and the lines that assign the design's outputs. It is used in three cases:
+\begin{itemize}
+  \item no AI model is connected (\code{uses_offline} says the chosen model would be served by the offline demo provider);
+  \item the model call fails: a usage limit, a timeout or another provider error (the reason is named);
+  \item the model used all 10 steps without answering (from step 8 on, the transcript asks it to answer now).
+\end{itemize}
+The text starts with the reason in bold and ``This is evidence collected by fixed rules, not an AI diagnosis'', and the panel labels it \textbf{Rule-based evidence (no AI)}. It is never presented as the AI's answer: there is no silent swap. This follows the same honesty rule as the main pipeline's fallback (Section~\ref{sec:fallback}).
+
+\section{The event stream}
+
+\code{POST /api/agent/ask} answers with Server-Sent Events, like a normal run, but each event has a \code{type} field instead of \code{stage}:
+
+\begin{center}
+\small
+\begin{tabularx}{\textwidth}{@{}>{\ttfamily}lX@{}}
+\toprule
+\textrm{\textbf{type}} & \textbf{Meaning and fields} \\
+\midrule
+status & Progress text: ``Simulating the code in the editor to collect evidence\ldots''. \\
+run & The evidence run: \code{result}, the full simulation result with its waveform. \\
+tool & One tool call: \code{tool}, \code{args}, the model's \code{thought}, \code{ok} (false for a tool error), a one-line \code{summary} and the \code{result} text. \\
+answer & The end: \code{text}, \code{suspect}, \code{confidence}, \code{fix} (with the server's verdict, or null), \code{rule_based}, \code{steps}, the \code{model} (null for rule-based), and \code{note} when the text is unchecked. \\
+error & The end, when something failed: a short, safe \code{message}. \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+Exactly one \code{answer} or \code{error} ends every stream. The request is checked by Pydantic (\code{AgentRequest}): RTL and testbench of 1 to 50,000 characters each, a question of 1 to 2000 characters, at most 6 earlier turns, a model id that matches the safe pattern (Section~\ref{sec:modelid}), and an optional thinking level. The rate limit applies, as on every other route.
+
+\section{The panel in the browser}
+
+\code{DebugChat} is shown in the sidebar once there is an RTL and a testbench. It is disabled while a generation or a Re-run is in progress, and a new design starts a fresh conversation. Its parts:
+\begin{description}
+  \item[Asking] Three example questions (``Why did the first check fail?'', ``Is the design or the testbench wrong?'', ``Walk me through the first 5 clock cycles.''), or your own question (Enter sends, Shift+Enter adds a line). \code{ask} sends the code exactly as it is at that moment, the chosen model and thinking level, and up to 4 earlier questions and answers. \textbf{Stop} aborts the request.
+  \item[Evidence steps] Each \code{tool} event becomes one numbered step with a plain label (``Built a cycle-by-cycle table: enable, count 0--100ns''). Click a step to see the model's thought and the raw tool result. A failed tool call is marked.
+  \item[The answer] A header that says \textbf{AI answer} with the number of evidence steps, or \textbf{Rule-based evidence (no AI)}; the model id; ``Suspect: Design \textbullet\ confidence high'' (hidden when unclear); the note, if any; then the text.
+  \item[Plain text only] \code{RichText} shows the model's text as plain text. Only three things are recognised: \texttt{`code`}, \texttt{**bold**} and times. Nothing is ever inserted as HTML, so a model cannot put a script or a fake button into the page.
+  \item[Clickable times] A time such as ``@30ns'' or ``30 ns'' becomes a button. The waveform viewer works in VCD ticks, so \code{inline} converts: $\text{ticks} = \text{round}(\text{ns} \times 1000 / \text{timescale\_ps})$. Clicking it opens the Waveform tab with cursor A at that time. A sabotage test proved this matters: a wrong ns-to-tick conversion made a frontend test fail.
+  \item[The fix card] Green for PASS, red otherwise: ``Proposed fix to the design: the server re-simulated it, PASS (57 of 57 checks passed)'', the testbench warning when the fix is to the testbench, the failing checks when it did not pass, a fold-out with the proposed code, and \textbf{Apply to the editor}. Applying puts the code in the editor and opens the Design tab; the main results change only when you press \textbf{Re-run}.
+\end{description}
+
+When the \code{run} event arrives, \code{handleEvidenceRun} in \file{App.tsx} compares the code that was asked about with the code whose results are on screen; if they differ, the evidence run replaces the results, exactly as a Re-run would (\code{applyRerun}). \code{askAgent} reads the stream with the same \code{readSSE} function as \code{streamDesign} (Section~\ref{sec:apits}), treats \code{answer} and \code{error} as final, and says ``The connection closed before the answer arrived'' if neither came.
+
+\section{A worked example: the hidden counter bug}
+\label{sec:agentexample}
+
+The built-in 4-bit counter (Section~\ref{sec:counterexample}) was given a bug with no comment pointing at it: \code{else if (enable)} became \code{else if (enable || count[0])}. Whenever the lowest bit is 1, the counter now counts even with \code{enable} low. The testbench is unchanged; its hold checks set \code{enable} to 0 and expect \code{count} to stay put. The simulator says FAIL, 12 of 57 checks passed (45 failed).
+
+On 24 November the question was asked live with the model \code{nvidia/nemotron-3-ultra-550b-a55b} on NVIDIA NIM (A2 in Table~\ref{tab:agentlive}). The answer took 34 s. The model built a cycle table, which showed \code{count} changing while \code{enable} was 0, at 25, 55 and 85 ns. This is what that table looks like (reproduced afterwards by running the same tool on the same code; the rows from 15 to 55 ns):
+
+\begin{lstlisting}[style=plain]
+posedge of testbench.clk; 'before' = sampled by flip-flops at the edge, 'after' = value once
+the edge's updates settled.
+cycle | time | enable before -> after | count before -> after
+    1 | 15ns | 1                      | 4'h0 (0) -> 4'h1 (1)
+    2 | 25ns | 0                      | 4'h1 (1) -> 4'h2 (2)     <- enable was 0, count moved
+    3 | 35ns | 0                      | 4'h2 (2)                 <- count[0] is 0: it holds
+    4 | 45ns | 1                      | 4'h2 (2) -> 4'h3 (3)
+    5 | 55ns | 0                      | 4'h3 (3) -> 4'h4 (4)     <- moved again
+\end{lstlisting}
+
+Read row 2 with the key idea above: just before the edge at 25 ns, \code{enable} was 0 and \code{count} was 1; after it, \code{count} was 2. A correct counter must hold there. Row 3 is the clue to the cause: with \code{count} = 2 (lowest bit 0) it does hold. So the counter moves only when the lowest bit is 1, which points straight at \code{count[0]} in the condition. The testbench's first hold check, at 30 ns, expected 1 and got 2.
+
+The answer correctly blamed the condition in the design, and its proposed fix was re-simulated by the server: \textbf{PASS, 57 of 57}. Figures~\ref{fig:askpanel} and~\ref{fig:askjump} in Chapter~\ref{ch:usage} show the same bug asked in the real browser (A3).
+
+\section{Live results}
+
+These are single runs on small designs, mainly with one model, on 24 November 2026: evidence that the mechanism works, not a benchmark. The model is \code{nvidia/nemotron-3-ultra-550b-a55b} on NVIDIA NIM unless stated.
+
+\begin{center}
+\small
+\begin{longtable}{@{}l>{\raggedright\arraybackslash}p{3.9cm}>{\raggedright\arraybackslash}p{6.1cm}>{\raggedleft\arraybackslash}p{2.2cm}@{}}
+\caption{Live results of the debugging agent.}\label{tab:agentlive}\\
+\toprule
+\textbf{\#} & \textbf{Case} & \textbf{Result} & \textbf{Time} \\ \midrule \endfirsthead
+\toprule
+\textbf{\#} & \textbf{Case} & \textbf{Result} & \textbf{Time} \\ \midrule \endhead
+A1 & Built-in buggy counter (adds 2; the RTL has a ``BUG'' comment) & Correct, design; fix re-simulated 57/57 & 31 s \\
+A2 & Hidden bug \code{enable || count[0]}, no comment & Correct; used a cycle table (count moves while enable = 0 at 25, 55, 85 ns); fix 57/57 & 34 s \\
+A3 & Same hidden bug, in the real browser (twice) & Correct both times, fix 57/57; one answer cited 9 clickable times & 107 s, 74 s \\
+A4 & Same hidden bug, model \file{opencode/deepseek-v4.1-flash-free} & Correct, fix 57/57, but zero tool calls (reasoned from the overview): led to the grounding rule & 49 s \\
+A5 & Correct counter, wrong testbench (expects 3 instead of 2 in \code{counting_continues}) & Suspect \textbf{testbench}: the check runs at the falling edge at 560 ns, before the third rising edge; testbench fix 57/57 & 219 s, 5 steps \\
+A6 & Saved SR-latch project that timed out (a real AI design from 20 Nov), real browser & Fix (gate delays) re-simulated 558/558, but the explanation was only partly right: it blamed the hold state; the real cause is the testbench releasing both inputs from 0,0 at once (Section~\ref{sec:latch-timeout}) & 316 s \\
+A7 & Older saved counter whose 20-check testbench never drops enable, with the hidden bug & Said the run passed and no hold check failed (the question's premise was false) instead of inventing a failure; this weak testbench does not expose the bug & about 170 s \\
+\bottomrule
+\end{longtable}
+\end{center}
+
+Three of these teach the most. \textbf{A5}: the agent can say ``your design is fine, the checker is wrong'', with evidence (the time of the check relative to the clock edges). \textbf{A6}: the fix is verified, the explanation is not. \textbf{A7}: when the question assumes something false, the evidence lets the model say so.
+
+\begin{warnbox}[Limitations]
+\begin{itemize}
+  \item The explanation is model text; only fixes are verified by simulation (A6).
+  \item It is slow: about 30 s to 5 minutes per question on free models, because each step sends the growing transcript again.
+  \item \code{drivers} is a text search, not an elaborated netlist. Icarus only: no SVA, no UVM.
+  \item One run per case, small designs, mainly one model: not a benchmark.
+  \item The evidence run is limited to 30 s, so a design that hangs (A6) costs the full 30 s before the model even starts.
+\end{itemize}
+\end{warnbox}
+
+\begin{keyidea}
+The agent does not weaken ``only the simulator decides''. The model now chooses \emph{which} questions to ask, but every answer to those questions comes from the simulator's waveform or the source text, and every fix is simulated again by the server. What the model adds is the reasoning that connects the evidence, and that part is labelled as model text.
+\end{keyidea}
+
+\begin{viva}
+\emph{``Isn't this just ChatGPT with your code pasted in?''} No. A chat model guesses what the waveform looked like. Here the model must ask for the waveform: values at exact times, a table of every clock edge with the inputs sampled just before the edge, the lines that drive a signal. An answer without at least one simulation query is sent back once. And a proposed fix is never shown with the model's claim; the server simulates it and shows its own verdict.
+\end{viva}
 
 % ---------------------------------------------------------------------------
 \chapter{Lessons from the Nine-Role Review}
@@ -953,6 +1240,7 @@ Each fix pinned by a test that fails without it & yes (sabotage-checked) \\
 Defects found by the independent verifier in the fixes & 1 bypass, 1 slowdown, 3 regressions \\
 Saved runs with identical verdicts, old vs new code & 123 of 123 (and 14 of 14 evaluation designs) \\
 Automated tests after the review & 591 backend + 267 frontend \\
+\quad (after the debugging agent, 24 Nov) & 632 backend + 277 frontend \\
 \bottomrule
 \end{tabularx}
 \end{center}

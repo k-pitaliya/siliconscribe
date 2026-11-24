@@ -56,3 +56,14 @@ s19_schematic_gate_level.png       Schematic tab, "Gate level" view of the built
 s20_timing_proof_critical_path.png Results tab, timing section of the built-in 8-bit ALU: longest path 2.69 ns, "Netlist formally
                                    proven equal to the RTL (SAT proof over every input value)", and the critical path pin by pin:
                                    b[0] -> nor2b -> six maj3 (the ripple-carry chain) -> o21ai -> o22ai -> overflow.
+
+Added 24 Nov 2026 (debugging agent, "Ask about this run"; REAL live run, NVIDIA NIM nvidia/nemotron-3-ultra-550b-a55b,
+nothing mocked; a saved counter project with viva/demo_files/counter_rtl_hidden_enable_bug.v and
+counter_tb_57_checks.v pasted into the editor; light theme, 1440x900 @2x):
+s21_ask_answer.png                 Whole window: the agent's answer in the sidebar (Suspect: Design, line 13 `enable ||
+                                   count[0]`, cited times as links, fix card "the server re-simulated it, PASS (57 of 57)")
+                                   and the Results tab showing the edited code's FAIL 12/57 (45 failed).
+s22_ask_panel.png                  The whole "Ask about this run" panel: question, evidence steps (read the testbench, test a
+                                   fix), the answer and the fix card with Apply to the editor.
+s23_ask_waveform_jump.png          After clicking "@30ns" in the answer: Waveform tab, cursor A at 30 ns, enable = 0 and
+                                   count = 0x2 where the hold check expected 1.

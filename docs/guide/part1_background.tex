@@ -99,7 +99,7 @@ Evaluated designs correct against hand-written references & 14 of 14 \\
 Mutation sweep of the built-in designs & 27 of 27 caught \\
 Timing netlists equal to the RTL in gate-level simulation & 19 of 19 designs \\
 Timing netlists formally proven equal to the RTL & 16 of 18 (2 FSMs not proven, 0 different) \\
-Automated tests & 591 backend (35 files) + 267 frontend (18 files), all passing \\
+Automated tests & 632 backend (36 files) + 277 frontend (19 files), all passing \\
 Nine-role self-review (19 Nov 2026) & about 110 findings, all reproduced and fixed \\
 Saved runs re-checked with the new code & 123 of 123 verdicts unchanged \\
 \bottomrule
@@ -132,6 +132,7 @@ A \textbf{logic gate} computes an output bit from input bits: AND (1 only if all
 \end{itemize}
 
 \section{Sequential logic, clocks and resets}
+\label{sec:seqlogic}
 
 \textbf{Sequential logic} has memory: its outputs depend on the past as well as the present. The memory elements are \textbf{flip-flops} (one bit each); a group of flip-flops holding a value is a \textbf{register}.
 
@@ -172,6 +173,7 @@ A netlist is like the parts list and wiring list of a radio kit: ``resistor R3 g
 \textbf{Verilog} is a hardware description language (HDL). It looks a little like the C programming language, but it describes circuits that all run at the same time, not instructions that run one after another. \textbf{SystemVerilog} is its modern superset. SiliconScribe generates Verilog-2001 style code because the simulator it uses (Icarus Verilog) supports that best.
 
 \section{A complete example: the curated counter}
+\label{sec:counterexample}
 
 This is the real counter design that ships with SiliconScribe (\file{backend/offline_designs.py}):
 
@@ -375,6 +377,7 @@ where \code{-g2012} enables the 2012 language mode and \code{-Wall} turns on all
 Icarus has a third mode that SiliconScribe uses for safety, not for simulation: \code{iverilog -E} only \emph{preprocesses} the files. It expands every macro (\code{`define}) and prints the result. The sandbox (Section~\ref{sec:sandbox}) runs its rules a second time on that expanded text, because a macro can assemble a forbidden name such as \code{$fopen} out of pieces that look harmless one by one.
 
 \section{VCD: the waveform file}
+\label{sec:vcdbasics}
 
 A \textbf{VCD} (value change dump) file is a plain-text record of every signal change. The testbench requests one with \code{$dumpfile("design.vcd")} and \code{$dumpvars}. If a generated testbench forgets, SiliconScribe adds those lines automatically. A small excerpt looks like:
 
@@ -445,6 +448,7 @@ A \textbf{large language model (LLM)} is a program trained on huge amounts of te
 \end{description}
 
 \section{Why an LLM alone fails at hardware}
+\label{sec:llmalonefails}
 
 \begin{enumerate}
   \item \textbf{Toolchain incompatibility.} Models emit SystemVerilog features Icarus rejects, so the code never compiles.

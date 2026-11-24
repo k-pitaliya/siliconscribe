@@ -80,3 +80,27 @@ A testbench could write a file outside its folder: first with a comment between 
 
 **26. Why can a simulation hang although the design is correct? (the SR latch run, 20 Nov)**
 A live "design sr latch" run passed 552 checks and then timed out. The testbench released the forbidden s_n=r_n=0 input on both pins in the same time step. With zero gate delay both NAND gates switch together, 1,1 to 0,0 to 1,1, forever, as delta cycles at one simulated time, so time stops and a `#20000` watchdog can never fire; only the 30 s wall-clock limit ends it. Real silicon settles because one gate is always slightly faster. TIMEOUT was the right verdict, but the screen said "0 checks, 0%". Now the simulator stops `vvp` with SIGTERM first (it flushes its output; SIGKILL lost the tail), shows "552 checks before stop" with no pass rate, explains the likely zero-delay loop to the user and the repair model, and the testbench prompt says to leave a forbidden state one input at a time. For the demo, avoid gate-level latches and ring oscillators.
+
+
+## Ask about this run (debugging agent, added 24 Nov 2026, after the report was submitted)
+
+**27. What is "Ask about this run"?**
+A chat in the sidebar. You ask about the code in the editor; the server simulates that code again in the same sandbox, and the model then answers by calling tools on that real simulation: the failing checks, a signal's value at a time and just before it, the changes in a window, a cycle-by-cycle table at each clock edge, when a signal held a value, which lines assign a signal, numbered source lines, and testing a fix (at most 3 per question). It must query the simulation at least once before it may answer. Times in the answer are links that move the waveform cursor.
+
+**28. Why should I trust its answer?**
+Trust the fix, not the prose. Every fix in an answer is simulated again by the server and the card shows that verdict ("PASS, 57 of 57 checks"), never the model's claim. The explanation is model text. On the SR latch that timed out, the fix passed 558 of 558, but the explanation blamed the hold state instead of the testbench releasing both inputs from 0,0 at once. That is why the explanation is labelled as an AI answer and the fix carries its own verdict.
+
+**29. Can it tell when the testbench, not the design, is wrong?**
+Yes, in the run I made. With a correct counter and a testbench that expects 3 where 2 is right, it answered "Suspect: Testbench": the check runs at the negedge at 560 ns, before the third rising edge. Its testbench fix passed 57 of 57, and the app warns that a testbench fix changes the checker itself and can make a wrong design pass. That took 219 s.
+
+**30. How is this different from your repair loop?**
+The repair loop is a fixed pipeline: the orchestrator decides what runs and the model only rewrites code from the log. The agent chooses what to inspect (which signal, which time window, which lines) and answers follow-up questions, but every tool result comes from the simulator or the source, and every fix is re-simulated. "Only the simulator decides" still holds.
+
+**31. Why plain JSON instead of the provider's function calling?**
+The app uses four model sources, including the OpenCode app's command line, which has no function-calling interface. One JSON object per reply works with all of them. Replies that are not valid JSON are sent back once; a second slip is shown as unchecked text.
+
+**32. What happens with no model or a failed model?**
+It never swaps in a fake answer. With no model connected, a model error (quota, timeout) or ten steps without an answer, it shows "Rule-based evidence (no AI)": the first failing check, the port values at that time, the clock cycles before it, and the lines that assign the outputs, with a note that it is not an AI diagnosis.
+
+**33. Limits of the agent?**
+Explanations are not verified; answers take 30 s to 5 minutes on free models; the "drivers" tool is a text search, not an elaborated netlist; Icarus only; one run per case on small designs, so it is a demonstration, not a benchmark. It has 41 backend and 10 frontend tests of its own (632 and 277 in total), including sabotage checks that the tests fail when the fix check or the edge sampling is broken.

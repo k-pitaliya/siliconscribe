@@ -6,6 +6,7 @@
 \label{app:glossary}
 
 \begin{description}[style=nextline,itemsep=1pt]
+  \item[Agent (debugging)] A model placed in a loop with tools: each turn it either asks for one tool (for example a waveform query) or gives its answer. Here, the ``Ask about this run'' panel.
   \item[ALU] Arithmetic logic unit: computes add, subtract, AND, OR, XOR and similar, chosen by an opcode.
   \item[API] Application programming interface: a defined way for programs to call each other, here over HTTP.
   \item[Assertion] A statement in a testbench that must hold; if it fails, the test fails.
@@ -34,11 +35,13 @@
   \item[Flatten] Merge all sub-modules into one, so area and timing cover the whole design.
   \item[Flip-flop] A one-bit memory element that updates on a clock edge.
   \item[Formal verification] Proving a property for every possible input by reasoning, instead of trying examples in simulation.
+  \item[Function calling (native)] A feature of some AI services where tools are declared in a special request field and the model returns a structured call. The debugging agent uses plain JSON text instead, so it works with every model source.
   \item[FPGA] A chip that can be reconfigured to implement any digital circuit.
   \item[Frontend] The browser half of the app (React, TypeScript).
   \item[Gate-level netlist] A netlist in which every cell is a single small gate or a one-bit flip-flop.
   \item[Generator (Python)] A function that yields values one at a time; used to stream events.
   \item[Hallucination] An AI stating something false with confidence.
+  \item[Grounding rule] The debugging agent's rule that an answer must rest on at least one simulation query; an answer without one is sent back once.
   \item[HDL] Hardware description language, such as Verilog.
   \item[Icarus Verilog] The free simulator SiliconScribe uses (\code{iverilog} + \code{vvp}).
   \item[Inconclusive (mutant)] A mutant whose run crashed, or timed out with a testbench that is slow anyway; it is neither caught nor survived and is not counted.
@@ -103,8 +106,10 @@
   \item[Temperature] How random an AI's output is.
   \item[Testbench] A Verilog module that tests a design.
   \item[Testbench strength] The share of injected bugs a testbench catches (mutation testing).
+  \item[Tick (VCD)] The VCD's own time unit, given by its timescale; with a 1 ps timescale, 30 ns is 30,000 ticks.
   \item[Toggle coverage] The share of design signal bits seen going both 0 to 1 and 1 to 0 in simulation.
   \item[Token] A word fragment; the unit an LLM reads and writes.
+  \item[Tool (agent)] A small server function the debugging agent's model may call, such as \code{cycle_table} or \code{test_fix}; its result comes from the simulation or the source, not from the model.
   \item[UVM] Universal Verification Methodology: the industry's class-based testbench framework.
   \item[VCD] Value change dump: the text waveform file.
   \item[Verilog] The hardware description language used here.
@@ -186,6 +191,25 @@ POST /api/simulation/run
     "checks": [...], "check_groups": [...], "measured_toggle": {...}, "waveform": {...}}
 \end{lstlisting}
 
+\section{Asking the debugging agent}
+
+\begin{lstlisting}[style=plain]
+POST /api/agent/ask
+{"rtl_code": "...", "testbench_code": "...", "question": "Some hold checks fail. Why?",
+ "history": [], "model": "nim/nvidia/nemotron-3-ultra-550b-a55b"}
+
+data: {"type": "status", "message": "Simulating the code in the editor to collect evidence..."}
+data: {"type": "run", "result": {"status": "FAIL", "pass_count": 12, "fail_count": 45, ...}}
+data: {"type": "tool", "tool": "read_code", "args": {"file": "testbench", ...},
+       "thought": "...", "ok": true, "summary": "...", "result": "..."}
+data: {"type": "tool", "tool": "test_fix", "args": {"file": "rtl", "code": "<... characters>"}, ...}
+data: {"type": "answer", "text": "...", "suspect": "design", "confidence": "high",
+       "fix": {"file": "rtl", "code": "...", "status": "PASS", "pass_count": 57,
+               "fail_count": 0, "test_count": 57, "summary": "..."},
+       "rule_based": false, "steps": 2, "model": "nim/nvidia/nemotron-3-ultra-550b-a55b"}
+\end{lstlisting}
+The shape of a real exchange (Figure~\ref{fig:askpanel}), shortened. Offline, the stream ends with an \code{answer} whose \code{rule_based} is true, with no fix and no model.
+
 \section{Reviewing a specification first}
 
 \begin{lstlisting}[style=plain]
@@ -226,6 +250,8 @@ GET /api/models
  & \code{parseSpec} & Ask for the specification only (\code{/api/spec/parse}). \\
  & \code{runDesign} & One-shot pipeline call (\code{/api/design/run}). \\
  & \code{streamDesign} & Streamed pipeline: POST, read the body stream, normalise CRLF, split SSE frames, parse each JSON event; frames received after Stop are not applied, and the stream is always closed. \\
+ & \code{askAgent} & Ask the debugging agent (\code{/api/agent/ask}); reads the stream until an \code{answer} or \code{error} event, and says so if the connection closed before either. \\
+ & \code{readSSE} & The shared stream reader for \code{streamDesign} and \code{askAgent}: one JSON event per \code{data:} frame, nothing applied after Stop, the stream always closed. \\
  & \code{reSimulate} & Simulate edited code once (\code{/api/simulation/run}); takes an abort signal so Stop works. \\
  & \code{listProjects}, \code{getProject}, \code{deleteProject} & Projects menu operations. \\
  & \code{exportUVM} & Request the UVM bundle. \\
@@ -235,6 +261,7 @@ GET /api/models
  & \code{handleCancel} & Abort the running stream or re-run. \\
  & \code{handleReRun} & Re-simulate edited code and say what was not recomputed. \\
  & \code{handleUVMExport} & Download the UVM zip (one export at a time). \\
+ & \code{handleEvidenceRun}, \code{handleApplyFix} & Show the agent's evidence run when the editor's code differs from the results on screen; put an agent fix into the editor. \\
  & \code{handleLoadProject}, \code{handleDeleteProject} & Load (only the latest load is applied) or delete a saved project. \\
  & \code{refreshProjects}, \code{pushMsg} & Reload the project list; add a timeline message. \\
 \file{PromptPanel.tsx} & \code{submit}, \code{clampFreq}, \code{handleTextareaKey} & Validate and send the prompt; keep the target clock in 1--10000; Ctrl/Cmd+Enter. \\
@@ -246,6 +273,9 @@ GET /api/models
 \file{theme.ts} & \code{useTheme}, \code{applyTheme} & Cycle system, light and dark; remember an explicit choice. \\
 \file{CodeEditor.tsx} & tab switch, copy & RTL/testbench tabs with Verilog highlighting and copy-to-clipboard. \\
 \file{AgentChat.tsx} & \code{stageIcon}, \code{formatElapsed}, \code{RunTimer}, \code{InlineCode} & Pick an icon for each stage and status; the ``Working\ldots'' timer; \texttt{`code`} from the model shown as code in the folded diagnosis. \\
+\file{DebugChat.tsx} & \code{ask}, \code{argHint} & Send a question with the code, model and up to 4 earlier turns, and apply each event; a short label for each evidence step. \\
+ & \code{Answer}, \code{FixCard} & The answer header (AI answer or Rule-based evidence), suspect and confidence; the fix card with the server's verdict, the testbench warning and Apply to the editor. \\
+ & \code{RichText}, \code{inline} & Model text as plain text with \texttt{`code`}, bold and clickable times (ns converted to VCD ticks); never inserted as HTML. \\
 \file{ErrorBoundary.tsx} & (component) & Show a drawing error inside the results panel with ``Try again'', instead of a blank page. \\
 \file{ResultsPanel.tsx} & \code{ResultsView}, \code{Metric}, \code{describeUntoggled} & Demo tag, verdict (``PASS, disputed'' when contradicted) and metrics, warnings, second opinion, Design written by, strength, synthesis, timing, toggle coverage, test types, lint, repair timeline, specification. \\
  & \code{EquivalenceLine} & The proof line: proven (green), not proven (grey), or a red alert that the netlist differs and the timing and area are invalid. \\

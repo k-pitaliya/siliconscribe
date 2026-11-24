@@ -1,4 +1,4 @@
-"""SiliconScribe viva deck (16:9, 16 slides) in the poster's design system.
+"""SiliconScribe viva deck (16:9, 20 slides) in the poster's design system.
 
 Hand-built: real diagrams/charts cropped from the poster, real app screenshots, plain shapes for every
 graphic element, speaker notes on every slide. Numbers come from the project's verified fact sheet.
@@ -215,7 +215,7 @@ s = slide("System architecture", "Three tiers. The browser front end in React ta
 fit_picture(s, A("diagram_architecture"), 6.45, 1.55, 6.3, 5.3)
 bullets(s, 0.6, 1.75, 5.6, 5.0, [
     "**Frontend:** React 18 + TypeScript; prompt, model menu, spec review, live run timeline, results, waveform",
-    "**Backend:** FastAPI; orchestrator with the repair loop and guards, sandbox policy, SQLite projects, UVM export",
+    "**Backend:** FastAPI; orchestrator with the repair loop and guards, sandbox policy, debugging agent, SQLite projects",
     "**Model router:** OpenCode (about 460 models), Cloudflare Workers AI, NVIDIA NIM; keys only in backend/.env",
     "**EDA tools:** Icarus Verilog 12.0, Yosys 0.71, OpenSTA 3.2.0 with the sky130 library"], size=17.5,
         label="arch bullets", space_after=12)
@@ -246,6 +246,7 @@ bullets(s, 9.35, 1.75, 3.4, 5.0, [
     "Per-run **model choice** from three sources",
     "Optional **separate testbench model**",
     "Optional **specification review**",
+    "**Ask about this run:** a chat that reads the waveform (new)",
     "Tabs: Design, Results, Test cases, Waveform, Schematic"], size=17, label="app bullets", space_after=12)
 
 # 7 ---------------------------------------------------------------- verdict integrity and safety
@@ -344,6 +345,52 @@ bullets(s, 6.6, 3.15, 6.15, 3.7, [
     "ALU critical path: **six maj3 cells** = the ripple-carry chain, 2.69 ns",
     "Proves netlist = RTL, not that the RTL is correct"], size=16.5, label="proof bullets", space_after=10)
 
+# 11c -------------------------------------------------------------- debugging agent
+s = slide("Ask about this run: an AI that reads the waveform", "New since the report was submitted: a chat panel. You ask a question "
+          "about the code in the editor. The server simulates that code again, and the AI then uses eight tools on the real "
+          "simulation: values at a time, a cycle-by-cycle table, what drives a signal, and testing a fix. It must query the "
+          "waveform before it may answer. Here I hid a bug in the counter: it also counts when the low bit is one. The AI blamed "
+          "line 13 and proposed a fix; the server re-simulated that fix: 57 of 57. Every time in the answer is a link: clicking "
+          "30 nanoseconds opens the waveform at the failing hold check, where enable is 0 but count is already 2.",
+          kicker="New · added 24 Nov, after submission")
+fit_picture(s, A("screenshot_s23_ask_waveform_jump"), 0.6, 1.55, 8.4, 5.3, center=False)
+bullets(s, 9.35, 1.7, 3.4, 5.2, [
+    "Re-simulates the **code in the editor**",
+    "**8 tools:** values at a time, cycle table, drivers, test a fix",
+    "Must **query the waveform** before it answers",
+    "Every fix is **re-simulated by the server**",
+    "Times are links: **@30ns** moves the cursor"], size=16.5, label="agent bullets", space_after=10)
+
+# 11d -------------------------------------------------------------- debugging agent: live results
+s = slide("Debugging agent: live results", "Four real runs from today, one each, on small designs. First, the hidden enable bug: found "
+          "from a cycle table, fix verified 57 of 57. Second, the most important: the counter was correct and the testbench was "
+          "wrong, and the AI said so, because the check runs at the negedge before the third clock edge. Third, the honest one: "
+          "for the SR latch that timed out, the fix passed 558 of 558, but the explanation blamed the wrong moment. So the fix is "
+          "verified and the explanation is not. Fourth, DeepSeek answered correctly without looking at any evidence, which is why "
+          "the agent now must query the waveform first.", kicker="Evidence")
+rows = [("Case", "The AI's verdict", "Server check of its fix", "Time"),
+        ("Hidden bug: enable || count[0]", "Design, line 13 (from a cycle table)", "PASS 57 / 57", "34–107 s"),
+        ("Correct counter, wrong testbench", "Testbench: checks at the negedge, 560 ns", "PASS 57 / 57 (testbench fix)", "219 s"),
+        ("SR latch that timed out", "Design: zero-delay loop (only partly right)", "PASS 558 / 558", "316 s"),
+        ("Hidden bug, DeepSeek model", "Correct, but used no tools (now required)", "PASS 57 / 57", "49 s")]
+cws = [3.55, 4.0, 3.05, W - 1.2 - 3.55 - 4.0 - 3.05]
+for r, row in enumerate(rows):
+    x = 0.6
+    for c, v in enumerate(row):
+        hdr = r == 0
+        box(s, x, 1.6 + r * 0.74, cws[c], 0.74, fillc=NAVY if hdr else (T_GREY if r % 2 else WHITE), line=BORDER, lw=0.75,
+            paras=[v], size=15.5, bold=hdr or c == 0, color=WHITE if hdr else (GREEN if c == 2 else TXT),
+            align=PP_ALIGN.LEFT, label=f"ag {r}{c}", inset=0.12)
+        x += cws[c]
+box(s, 0.6, 5.5, 7.5, 1.3, fillc=T_AMBER, line=AMBER, lw=1.25, paras=[
+    {"runs": parse("**The fix is verified; the explanation is not.** The SR-latch fix passed, but its explanation blamed the "
+                   "wrong moment."), "align": PP_ALIGN.LEFT, "space_after": 4},
+    {"runs": parse("One run each, small designs; NVIDIA NIM Nemotron Ultra unless stated."), "align": PP_ALIGN.LEFT,
+     "size": 13, "color": SLATE}], size=15.5, label="agent takeaway", inset=0.18)
+box(s, 8.4, 5.5, 4.35, 1.3, fillc=T_GREEN, line=GREEN, lw=1.25,
+    paras=[{"runs": parse("**632 + 277**"), "size": 26, "color": GREEN}, "automated tests (41 + 10 new)"],
+    size=15.5, label="agent kpi")
+
 # 12 --------------------------------------------------------------- live evaluation
 s = slide("Live evaluation: 15 prompts", "Fifteen prompts: seven combinational, six sequential and two state machines, with a free "
           "model, one run each. Fourteen completed and all fourteen passed: eight first time, six after repair. The fifteenth timed "
@@ -360,12 +407,12 @@ for k, (big, small, c, bc) in enumerate(kp):
 # 13 --------------------------------------------------------------- timing, area, tools
 s = slide("Timing, area, repair and tool checks", "Left: timing per design. Combinational designs get a longest path, never a clock "
           "rate. Area grows with flip-flops, the FIFO is largest. A seeded counter bug was found from the log alone and repaired "
-          "from 1 of 20 to 20 of 20 checks. The tool itself has 591 backend and 267 frontend tests.", kicker="Results")
+          "from 1 of 20 to 20 of 20 checks. The tool itself has 632 backend and 277 frontend tests.", kicker="Results")
 fit_picture(s, A("chart_timing_area_repair"), 0.6, 1.5, 6.6, 5.4)
 bullets(s, 7.55, 1.75, 5.2, 5.0, [
     "Combinational designs report a **longest path**, never a clock rate",
     "Seeded counter bug: **1 / 20 → 20 / 20** checks after the live repair",
-    "**591** backend + **267** frontend automated tests pass",
+    "**632** backend + **277** frontend automated tests pass",
     "**27 / 27** injected bugs caught in the built-in designs",
     "**16 / 18** netlists formally proven equal to the RTL"], size=17.5, label="t13 bullets", space_after=11)
 
@@ -377,7 +424,7 @@ rows = [("Work", "Focus", "What SiliconScribe adds"),
         ("VeriGen, ChipNeMo", "Better models for Verilog", "Any model plugs into the same verified loop"),
         ("VerilogEval", "Benchmark against golden answers", "Works without a golden answer: spec-derived testbench"),
         ("AutoChip", "Compiler and simulator feedback", "Structured diagnosis, anti-cheat guards, honest fallback"),
-        ("Chip-Chat", "Human-led conversational design", "Automated loop; simulator is the only judge"),
+        ("Chip-Chat", "Human-led conversational design", "Automated loop; its chat answers from simulation evidence"),
         ("SiliconScribe", "Trustworthy loop + evidence", "Strength, coverage, second opinion, timing and area")]
 cws = [2.6, 4.2, W - 1.2 - 2.6 - 4.2]
 for r, row in enumerate(rows):
@@ -400,6 +447,7 @@ for k, (t, c, bc, items) in enumerate([
         ("Limitations", RED, T_RED, ["Small designs (under about 100 lines), one run each, mainly one model",
                                      "Only toggle coverage is measured; no assertions",
                                      "Timing is pre-layout on one corner; strength samples up to 12 mutants",
+                                     "The agent's fixes are verified, its explanations are not",
                                      "The sandbox is defence in depth, not a jail"]),
         ("Future work", GREEN, T_GREEN, ["Power from the simulation's own activity",
                                          "Testbench hardening from the bugs it missed",
@@ -408,7 +456,7 @@ for k, (t, c, bc, items) in enumerate([
     x = 0.6 + k * (cw2 + 0.35)
     box(s, x, 1.7, cw2, 4.6, fillc=bc, line=c, lw=1.5)
     box(s, x, 1.7, cw2, 0.62, fillc=c, line=c, paras=[t], size=20, color=WHITE, bold=True, label="lf " + t)
-    bullets(s, x + 0.25, 2.55, cw2 - 0.5, 3.7, items, size=19.5, label="lf b " + t, space_after=14)
+    bullets(s, x + 0.25, 2.55, cw2 - 0.5, 3.7, items, size=18.5, label="lf b " + t, space_after=11)
 
 # 16 --------------------------------------------------------------- conclusion
 s = slide(None, "To conclude: SiliconScribe lets a language model design hardware while the simulator stays the judge, and every PASS "
@@ -418,7 +466,7 @@ text(s, 1.0, 1.05, W - 2.0, 0.5, ["CONCLUSION"], size=15, color=RGBColor(0x93, 0
 text(s, 1.0, 1.55, W - 2.0, 1.9, ["Only the simulator decides, and every PASS states how much it is worth."], size=36,
      color=WHITE, bold=True, label="c main")
 for k, (big, small) in enumerate([("14 / 14", "live runs PASS"), ("102 / 111", "bugs caught"), ("16 / 18", "netlists formally proven"),
-                                  ("591 + 267", "automated tests")]):
+                                  ("632 + 277", "automated tests")]):
     x = 1.0 + k * 2.88
     text(s, x, 3.75, 2.7, 0.75, [big], size=32, color=WHITE, bold=True, label="c big")
     text(s, x, 4.45, 2.7, 0.45, [small], size=15, color=RGBColor(0xCB, 0xD5, 0xE1), label="c small")

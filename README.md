@@ -44,6 +44,7 @@ Natural language ─▶ Specification ─▶ RTL gen ─▶ Testbench gen ─▶
 - **UVM Export (Questa style)**: `POST /api/uvm/export` generates a 16-file Questa/ModelSim bundle (`logic`/`always_ff`, `uvm_*`, `uvm_config_db#(virtual *_if)`, `run_test()`, `Makefile`/`filelist.f`/`README`). Export-only, never simulated with Icarus.
 - **Projects**: SQLite `backend/workspace/projects.db` persists every design/run. `GET /api/projects` (paginated), `GET /api/projects/{id}`, `DELETE`. Frontend drawer with Load/Delete.
 - **Editable code**: CodeMirror with Verilog highlighting, Copy per tab, `Ctrl+Enter` to generate; edit and **Re-run** (`POST /api/simulation/run`).
+- **Ask about this run (debugging agent, added 24 Nov 2026)**: a sidebar chat answers questions about the code in the editor from simulation evidence. `POST /api/agent/ask` (SSE) re-simulates the editor's code in the sandbox, then the chosen model calls tools on that run: failing checks, a signal's value at a time and just before it, changes in a window, a cycle-by-cycle table at each clock edge, when a value occurred, which lines assign a signal, numbered source, and testing a fix (max 3). It must query the simulation before answering; every fix in an answer is re-simulated by the server and shown with that verdict; a testbench fix is flagged as changing the checker; with no model (or a failed one) it shows labelled rule-based evidence. Times in the answer are links that move the waveform cursor. Live on 24 Nov (NVIDIA NIM Nemotron Ultra): a hidden enable bug found with fix 57/57; a correct counter with a wrong testbench identified as a testbench bug (fix 57/57); an SR-latch timeout fixed 558/558 with a partly wrong explanation. The fix is verified; the explanation is not.
 - **Live agent stream**: the pipeline streams over Server-Sent Events into the agent panel (spec, RTL, testbench, lint, simulate, fix, synthesis, strength, timing, second opinion).
 - **Sandbox policy (defence in depth, not a jail)**: before anything is compiled, linted, synthesized or timed, RTL/testbench are rejected if they use a system task outside an allow-list (`$display`/`$monitor`/`$finish`/`$dump*`/`$random`/math helpers…), `` `include ``, `$readmemh`, `$system`, file I/O, macro token pasting or a non-plain `$dumpfile`; RTL may not print the testbench's `Passed:`/`Failed:` lines or call `$finish`. The child process gets a scrubbed environment (API keys never reach `vvp`), a closed stdin, CPU-time / file-size / memory limits (the memory limit is enforced on Linux, not macOS) and at most `SIM_MAX_CONCURRENT` (default 2) simulations run at once.
 - **Verdict integrity**: PASS needs a whole-line `Passed: N` / `Failed: 0` summary with N > 0 (at least one executed check), no `FAIL`/`ERROR` line contradicting it, and a clean `vvp` exit. Zero executed checks is never a PASS. A testbench whose watchdog fires before its summary is ERROR. PASS is evidence, not proof: it is only as strong as the testbench that prints it.
@@ -116,6 +117,7 @@ The older single-provider variables (`OPENCODE_API_KEY` / `ZEN_API_KEY`, `NVIDIA
 | POST | `/api/design/stream` | Same pipeline, streamed as SSE (one event per stage). |
 | POST | `/api/spec/parse` | Turn a prompt into a specification and stop, so it can be reviewed and edited before generation. |
 | POST | `/api/simulation/run` | Simulate a (possibly hand-edited) RTL/TB pair once. Rate-limited. |
+| POST | `/api/agent/ask` | Debugging agent, SSE: `status`, `run` (the evidence simulation with its waveform), one `tool` event per tool call, then one `answer` (text, suspect, confidence, re-simulated fix or null, `rule_based`) or `error`. Body: `rtl_code`, `testbench_code`, `question`, optional `history` (max 6), `model`, `reasoning_effort`. |
 | POST | `/api/synthesis/run` | Synthesize RTL with Yosys (if available) → `{available, cell_count, area_estimate (relative proxy, NOT µm²), liberty_mapped:false, area_units, tech_node:null}`. |
 | POST | `/api/timing/run` | Map RTL to sky130 cells and report pre-layout timing and area at the target clock (or the reason it refuses). |
 | POST | `/api/uvm/export` | Export UVM bundle (Questa style) from prompt → `{files, file_count, is_sequential, zip_base64}`. Export-only, not Icarus. |
@@ -144,13 +146,13 @@ Full table (checks, strength, toggle coverage, timing, area per design): [`backe
 
 ```bash
 cd backend
-PATH="$HOME/.local/bin:$PATH" OFFLINE_MODE=1 python3 -m pytest tests/ -q   # 591 passed (35 test files)
+PATH="$HOME/.local/bin:$PATH" OFFLINE_MODE=1 python3 -m pytest tests/ -q   # 632 passed (36 test files)
 PATH="$HOME/.local/bin:$PATH" python3 tools/mutation_sweep.py            # 27 of 27 injected bugs caught
 PATH="$HOME/.local/bin:$PATH" python3 tools/verify_mapping.py            # 19 of 19 designs equivalent at gate level (about 30 s)
 PATH="$HOME/.local/bin:$PATH" python3 tools/preflight.py                 # demo readiness, free checks only
 #   add --live to preflight.py for ONE tiny live model call (uses a little quota)
 cd ../frontend
-npm test                  # 267 passed (vitest)
+npm test                  # 277 passed (vitest)
 npm run build             # tsc -b && vite build
 ```
 
@@ -174,6 +176,7 @@ The backend suite runs with **no API key** (`OFFLINE_MODE=1`); the model catalog
 - Free models are slow and quota-limited; GitHub Copilot `auto` cannot name the model it used.
 - The sandbox is defence in depth, not a jail.
 - Evaluated on small blocks (under about 100 lines of RTL), one run each, mainly one model.
+- The debugging agent's explanations are model text (only its fixes are re-simulated); answers take 30 s to 5 minutes on free models; its `drivers` tool is a text search, not an elaborated netlist.
 
 ## Future work
 
@@ -210,6 +213,8 @@ backend/
   offline_designs.py curated designs (ALU/counter/adder/mux + buggy) + // [offline:key] marker
   simulator.py       Icarus compile/run, sandbox policy, $dumpvars injection, limits
   vcd_parser.py      VCD → waveform JSON (MAX 40/2000), toggle coverage
+  wave_query.py      queryable view of a whole VCD for the debugging agent (value at / before a time, edges, changes)
+  agent.py           debugging agent: JSON tool loop, 8 tools, grounding rule, fix re-simulation, rule-based fallback
   cov_metrics.py     testbench-reported coverage parsing
   schematic.py       port-level + synthesize_with_yosys (stat, RTL-cell and gate-level JSON netlists for the schematic)
   synthesis.py       YosysSynthesizer hybrid (available/cell_count/area/json)
@@ -220,12 +225,12 @@ backend/
   pdk/               sky130hd_tt.lib goes here (git-ignored, see pdk/README.md)
   tools/             mutation_sweep.py, verify_mapping.py, evaluate_live.py, preflight.py, build_opensta.sh
   evaluation/        live evaluation: summary.md, results.jsonl, artifacts/, independent/
-  tests/             pytest suite (591 tests, 35 files; offline, no key)
+  tests/             pytest suite (632 tests, 36 files; offline, no key)
 frontend/
   src/App.tsx        layout + streaming + Projects drawer + UVM export → zip download
   src/components/    PromptPanel, ModelPicker, TestbenchModelSelect, SpecReview, SpecSummary, CodeEditor, AgentChat,
                      ResultsPanel (strength, timing and area, synthesis, toggle coverage), TestCasesView,
-                     WaveformViewer, SchematicView
+                     WaveformViewer, SchematicView, DebugChat (Ask about this run)
   src/api.ts         REST + SSE (fetch+Reader) + projects/uvm export client
   src/types.ts       RunResponse and related types
 ```

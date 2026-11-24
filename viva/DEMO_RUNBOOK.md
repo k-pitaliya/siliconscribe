@@ -2,6 +2,8 @@
 
 Everything here was checked against the real app. Where a number depends on the final evaluation it says so.
 
+**Code version:** the demo runs from branch `agent-debug` (it adds "Ask about this run", 24 Nov). Check with `git branch --show-current` in the repo before starting the servers.
+
 ## The day before (24 Nov)
 1. **After 05:30 IST** (free-quota reset), run the preflight with one tiny live call:
    ```
@@ -31,6 +33,8 @@ cd ~/Kushal_Master/Projects/VLSI/ai-eda-playground/frontend && npm run dev -- --
 ```
 Open http://127.0.0.1:5173. The top-right badge must say **Live · deepseek-v4.1-flash-free**. If it says *Offline demo* or *Demo fallback*, the live model is not in use.
 
+For **Ask about this run** use a fast model: in the sidebar **Model** menu pick the **NVIDIA NIM** tab, then `nvidia/nemotron-3-ultra-550b-a55b` (it needs the NIM key that is already in `backend/.env`). It answered in 31-219 s on 24 Nov; DeepSeek through OpenCode also works but is slower. The chat uses whatever model is selected in this menu.
+
 On the morning of the 25th: run the preflight **without** `--live` once more after starting both servers (it now checks that the running backend is live and can see the simulator), keep the Mac awake during long runs with `caffeinate -dims` in a third terminal, and if `npm run dev` says port 5173 is in use, stop the old server first (otherwise you would be looking at an old build). If the badge says **Server not reachable**, the backend is not running: start it and press Retry.
 
 What looks different since the 19 Nov self-review: a PASS whose original testbench (or a fresh second-opinion testbench) still fails is shown as **PASS, disputed** in amber, which is intended, so explain it. The verdict card says "Checks", the attribution says "Design written by", and saved demo runs carry a **demo** label in Projects.
@@ -48,7 +52,25 @@ What looks different since the 19 Nov self-review: a PASS whose original testben
    - The theme switch (top right) follows the system; pick whichever reads best on the projector.
 5. **Show a failure on purpose (instant, no model needed).** With a loaded counter in the editor, change the increment in the RTL (for example `count + 1'b1` to `count + 2'd2`) and press **Re-run**. It fails immediately: open **Test cases**, press *Failed*, click a row to see the differing bits, then open **Waveform** (the red flags mark the failed checks; `[` and `]` jump between them). Change the line back and **Re-run** again to return to PASS. This is a real simulation of your edit, not a recording.
    (Do **not** use the "buggy 4-bit counter" example chip with the live model: it is only scripted in offline mode, so with a live model it is just another prompt.)
-6. **Close with limits** (see "Say this / never say this").
+6. **Ask the AI about a failure (new, 2-4 minutes, needs the live model).** Use the ready files in `viva/demo_files/`
+   (open each in a text editor, Cmd+A, Cmd+C, then click into the app's editor tab, Cmd+A, Cmd+V):
+   - **Design bug:** RTL tab = `counter_rtl_hidden_enable_bug.v`, Testbench tab = `counter_tb_57_checks.v`. In
+     **Ask about this run** type *Some hold checks fail. Why?* (verified: FAIL 12/57 before the question). Expected on
+     24 Nov: evidence steps (read the testbench, a cycle table, test a fix), "Suspect: Design", line 13
+     `enable || count[0]`, and a fix card "the server re-simulated it, PASS (57 of 57 checks passed)". Click a time
+     such as **@30ns**: the Waveform tab opens with the cursor where `enable=0` but `count` is already 2.
+   - **Testbench bug (the strongest moment):** RTL = `counter_rtl_correct.v`, Testbench =
+     `counter_tb_wrong_expectation.v` (FAIL 56/57). Ask *The last check fails. Is my counter wrong?* Expected:
+     "Suspect: Testbench" (the check at 560 ns expects 3 before the third clock edge), and a testbench fix with the
+     warning that it changes the checker. This took 219 s on 24 Nov, so start it and keep talking.
+   - Say while it works: "It re-simulates the code on screen, then queries the waveform; every fix it proposes is
+     simulated again by the server, and only that verdict is shown."
+   - Do NOT use a saved counter project's own testbench for this: the older saved ones have 20 checks and never drop
+     `enable`, so the hidden bug is not exposed (the agent then correctly says nothing failed).
+   - If it is slow or the quota is out: show deck slides 14-15 (real runs from 24 Nov). If no model answers, the panel
+     shows **Rule-based evidence (no AI)** (the first failing check, the signal values, the cycles before it): say that
+     is the labelled fallback, not an AI answer.
+7. **Close with limits** (see "Say this / never say this").
 
 ## If something goes wrong (fallback ladder)
 | Problem | What to do | What to say |
@@ -57,11 +79,13 @@ What looks different since the 19 Nov self-review: a PASS whose original testben
 | The model stalls or says it could not be used | Pick another free model in the **Model** menu (for example `hy4-flash-free` or `beam-free`) and run again; Cloudflare is the second tab if it is set up | "Free models vary; the menu lists every one the OpenCode app offers." |
 | Live run errors or quota is out | Projects, Load the saved result | "This is a saved live run from earlier." |
 | Backend will not start with the live model | `cd backend && PATH="$HOME/.local/bin:$PATH" OFFLINE_MODE=1 python3 -m uvicorn main:app --host 127.0.0.1 --port 8000` (do NOT keep `env -u OFFLINE_MODE` in front, it would undo the setting) (then the "buggy 4-bit counter" chip is scripted and shows a failure and a repair) | "This is the scripted offline demo; the badge says so." |
+| Ask about this run is slow | Keep talking; it shows each evidence step as it happens. After 5 minutes press Stop | "Each step is a model call on a free model; the answer will rest on these steps." |
+| Ask about this run fails | The panel shows labelled rule-based evidence; or show deck slides 14-15 | "No AI answered, so it shows evidence collected by fixed rules, and says so." |
 | Everything fails | Open `backend/evaluation/summary.md` and `artifacts/` | "These are the recorded live results." |
 
 Never pretend an offline or saved result is a fresh live one. The app labels them, and so should you.
 
 ## Say this / never say this
-**Say:** the simulator decides; PASS needs a validated summary and at least one executed check; the testbench is written from the specification, never from the RTL; the strength card measures whether the testbench could have caught bugs; the sandbox is defence in depth on a developer machine.
+**Say:** the simulator decides; the agent's fix is re-simulated by the server, its explanation is model text; PASS needs a validated summary and at least one executed check; the testbench is written from the specification, never from the RTL; the strength card measures whether the testbench could have caught bugs; the sandbox is defence in depth on a developer machine.
 
-**Never say:** "proven correct" (PASS is evidence, not proof); "sign-off timing" or "silicon area" (the timing and area are a pre-layout estimate on one sky130 corner: no wire delay, ideal clock, setup only); "UVM was simulated" (UVM is export-only); "secure sandbox or jail"; "two independent models" (one model writes both stages; the separate-model setting exists but the free models tried were not reliable).
+**Never say:** "proven correct" (PASS is evidence, not proof); "the AI's explanation is verified" (only its fix is: the SR-latch fix passed 558/558 with a partly wrong explanation); "sign-off timing" or "silicon area" (the timing and area are a pre-layout estimate on one sky130 corner: no wire delay, ideal clock, setup only); "UVM was simulated" (UVM is export-only); "secure sandbox or jail"; "two independent models" (one model writes both stages; the separate-model setting exists but the free models tried were not reliable).

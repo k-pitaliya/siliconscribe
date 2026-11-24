@@ -283,6 +283,66 @@ You can edit the RTL or testbench directly in the Design tab, then press \textbf
 \caption{Waveform of the scripted buggy-counter demo (offline): each red marker is a failed check (48 of 57).}
 \end{figure}
 
+\section{Asking about a run}
+\label{sec:askrun}
+
+The panel \textbf{Ask about this run} sits in the sidebar, under the run timeline. It appears as soon as there is an RTL and a testbench (after a run, or after opening a project). Ask it a question about the code in the editor, and the AI answers from the simulation itself, not from reading the code alone (Chapter~\ref{ch:agent} explains how).
+
+\begin{minipage}[t]{0.36\textwidth}
+\vspace{0pt}
+\centering
+\includegraphics[height=0.6\textheight]{s22_ask_panel.png}
+\captionof{figure}{The whole ``Ask about this run'' panel from a real live run: question, evidence steps, answer, fix card.}
+\label{fig:askpanel}
+\end{minipage}\hfill
+\begin{minipage}[t]{0.6\textwidth}
+\vspace{0pt}
+\textbf{How to ask}
+\begin{enumerate}
+  \item Click one of the example questions, or type your own and press Enter (Shift+Enter starts a new line). Good questions name what you see: ``Some hold checks fail. Why?'', ``Why is count 2 at 20 ns?'', ``Is the design or the testbench wrong?'', ``Walk me through the first 5 clock cycles.''
+  \item Wait. The server first simulates the code in the editor again, then the model reads the evidence step by step. Each step appears in the panel as it happens (``Built a cycle-by-cycle table'', ``Read source lines: testbench'', ``Simulated a candidate fix: rtl''). Click a step to see what the AI was checking and the raw result it got.
+  \item Read the answer (below). Ask a follow-up if you like: the last few questions and answers are sent along as context.
+\end{enumerate}
+\medskip
+\textbf{Expected wait.} About 30 seconds to 5 minutes per question with the free models. A design that hangs costs the full 30-second simulation limit before the AI even starts. \textbf{Stop} cancels the question. The panel is greyed out while a generation or a Re-run is in progress.
+
+\medskip
+If you edited the code since the last run, the question simulates the edited code, and the Results and Waveform tabs switch to that new run; the timeline says so. The answer and the screen therefore always describe the same code.
+\end{minipage}
+
+\subsection*{Reading the answer}
+
+\begin{description}
+  \item[Header] \textbf{AI answer} with the number of evidence steps, and under it the model that wrote the answer.
+  \item[Suspect and confidence] ``Suspect: Design \textbullet\ confidence high'' says where the AI thinks the bug is: the design, the testbench, both, or none. It is left out when the AI could not decide. It is the AI's opinion, not a verdict.
+  \item[The text] What happened, the evidence, the cause and the fix. Signal names and code are shown as \code{code}. Every time written like \textbf{@30ns} is a button: click it and the Waveform tab opens with cursor A at that moment, so you can check the claim with your own eyes (Figure~\ref{fig:askjump}).
+\end{description}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\textwidth]{s23_ask_waveform_jump.png}
+\caption{After clicking ``@30ns'' in the answer: the Waveform tab opens with cursor A at 30 ns, where \code{enable} = 0 and \code{count} = 0x2 although the hold check expected 1 (a real live run; nothing mocked).}
+\label{fig:askjump}
+\end{figure}
+
+\subsection*{The fix card}
+
+When the AI found a concrete bug, the answer ends with a card such as ``Proposed fix to the design: the server re-simulated it, \textbf{PASS} (57 of 57 checks passed)''. The important words are \emph{the server re-simulated it}: the verdict on the card comes from the simulator running the proposed code, never from the AI saying it works. A green card means the fixed code passes this testbench; a red card shows the checks that still fail.
+
+\begin{itemize}
+  \item \textbf{View the proposed design} (or testbench) shows the complete corrected file.
+  \item \textbf{Apply to the editor} puts it in the editor and opens the Design tab. Nothing else changes until you press \textbf{Re-run}, which then shows the fixed code in the main results.
+  \item A fix to the \emph{testbench} carries the warning ``This changes the checker itself. A testbench fix can make a wrong design pass: read it before you apply it.'' Sometimes the testbench really is wrong (the AI can and does say so), but check its expected values against what you asked for before you accept it.
+\end{itemize}
+
+\begin{warnbox}[A passing fix does not prove the explanation]
+The fix is checked by simulation; the explanation is not. In one live run on a saved SR-latch project, the fix passed 558 of 558 checks, but the explanation blamed the hold state, while the real cause was the testbench releasing both inputs from the forbidden 0,0 state at once. Trust the card's verdict; treat the text as a well-informed opinion to check against the waveform.
+\end{warnbox}
+
+\subsection*{``Rule-based evidence (no AI)''}
+
+If no AI model is connected (offline mode), the model fails (usage limit, timeout, an error) or it runs out of its 10 steps, the panel does not pretend. The answer is labelled \textbf{Rule-based evidence (no AI)} and begins with the reason and ``This is evidence collected by fixed rules, not an AI diagnosis''. Below that are facts collected by fixed rules: the first failing check, the port values at that time, a table of the clock cycles before it, and the lines that assign the outputs. It has no suspect and no fix. It is still useful: it is where you would start looking by hand. If the model replied in an unreadable form twice, its text is shown with the note ``this text is unchecked''.
+
 \section{Projects, theme, UVM export and Stop}
 
 \textbf{Projects} opens a menu of saved runs (newest first), each with its module name, status, prompt, date and time, the model that wrote it, and an amber \textbf{demo} label when it was a built-in demo run (runs saved before this was added show no model), with \textbf{Open} and \textbf{Delete} buttons (Delete asks first). Before the first run, the start screen also lists recent projects. The theme button cycles between system (follows the computer's setting), light and dark; an explicit choice is remembered in the browser. \textbf{Export UVM} downloads the 16-file UVM bundle as a zip (export only: it is not simulated; a second click while it is being made is ignored). \textbf{Stop} cancels a running generation or Re-run.
@@ -311,30 +371,30 @@ You can edit the RTL or testbench directly in the Design tab, then press \textbf
 
 \section{Verification commands}
 
-These are the checks behind the numbers in this guide (final run: 19 Nov 2026). Run them from the project folder; none of them needs a key except the last.
+These are the checks behind the numbers in this guide (final run: 19 Nov 2026; the two test suites were run again on 24 Nov 2026, after the debugging agent was added). Run them from the project folder; none of them needs a key except the last.
 
 \begin{lstlisting}[style=plain]
 cd backend
-PATH="$HOME/.local/bin:$PATH" OFFLINE_MODE=1 python3 -m pytest tests/ -q   # 591 passed
+PATH="$HOME/.local/bin:$PATH" OFFLINE_MODE=1 python3 -m pytest tests/ -q   # 632 passed
 python3 tools/mutation_sweep.py                       # 27 of 27 injected bugs caught
 PATH="$HOME/.local/bin:$PATH" python3 tools/verify_mapping.py   # 19 of 19 equivalent
 python3 evaluation/independent/run.py                 # every evaluated design vs. its reference
 PATH="$HOME/.local/bin:$PATH" python3 evaluation/independent/strength.py   # the references' own strength
 
 cd ../frontend
-npm test                                              # 267 passed (Vitest)
+npm test                                              # 277 passed (Vitest)
 npm run build                                         # TypeScript check + production build
 \end{lstlisting}
 
 \begin{description}
-  \item[pytest] 591 backend tests in 35 test files. They use a temporary workspace (the \code{_isolated_workspace} fixture in \file{tests/conftest.py}), so they never touch your real \file{projects.db}. Tests that need Icarus, Yosys or OpenSTA are skipped automatically if the tool is missing; Cloudflare and NIM are tested against small fake servers, not the internet.
+  \item[pytest] 632 backend tests in 36 test files (41 of them in \file{tests/test_agent.py}, for the debugging agent). They use a temporary workspace (the \code{_isolated_workspace} fixture in \file{tests/conftest.py}), so they never touch your real \file{projects.db}. Tests that need Icarus, Yosys or OpenSTA are skipped automatically if the tool is missing; Cloudflare and NIM are tested against small fake servers, not the internet.
   \item[Mutation sweep] Injects 27 known bugs into the built-in designs and checks that the built-in testbenches catch every one.
   \item[Mapping verification] The checks of Chapter~\ref{ch:timing}: gate-level simulation agrees with the RTL, area and cells recount, minimum period independent of the target. Each design says OK or REFUSED (with a reason).
   \item[Equivalence proof] Runs inside every timing estimate, so it has no separate command; \file{tests/test_equivalence.py} checks it on small designs. Measured on the 14 evaluated and 4 built-in designs: 16 proven, 2 not proven (the FSMs f1 and f2), 0 different.
   \item[Independent references] Hand-written reference testbenches, not written by any model, for the 14 evaluated designs. All 14 final designs were correct (no false PASS). \file{strength.py} runs \emph{every} mutant (not a sample of 12) against each reference; the references caught every mutant except equivalent ones, unreachable code, or behaviour the prompt does not define.
-  \item[Frontend] 267 Vitest tests in 18 files; \code{npm run build} runs the TypeScript compiler (clean) and the production build.
+  \item[Frontend] 277 Vitest tests in 19 files (10 of them in \file{DebugChat.test.tsx}: the events, clickable times converted to VCD ticks, the fix card's verdict and Apply, the testbench-fix warning, the rule-based label, errors and history, model text never shown as HTML, the busy state); \code{npm run build} runs the TypeScript compiler (clean) and the production build.
   \item[Accessibility] An automated axe-core audit of every tab, both themes, for a passing and a failing run: 0 violations. Its structural rules also run in the test suite. This is an automated audit, not a user study.
-  \item[Tests of the tests] The newest components were broken on purpose, one behaviour at a time, and the tests had to fail.
+  \item[Tests of the tests] The newest components were broken on purpose, one behaviour at a time, and the tests had to fail. For the debugging agent: making the fix check always report PASS, and making ``just before the edge'' the same as ``after'', made 4 backend tests fail; a wrong ns-to-tick conversion made a frontend test fail. All were restored.
 \end{description}
 
 \section{The preflight check}
@@ -373,6 +433,7 @@ Preflight does not just check that something answers on port 8000: it asks the r
 \file{test_uvm_export.py} & The UVM bundle: no task inside a task, no crash on mux-like specifications, real clock and reset names and polarity, no ALU model for a mux. \\
 \file{test_check_parser.py}, \file{test_vcd_parser.py}, \file{test_vcd_roles.py}, \file{test_linter.py}, \file{test_models.py} & Check rows, waveform parsing and signal roles, lint, data shapes. \\
 \file{test_preflight.py}, \file{test_evaluate_live.py} & The demo preflight and the live-evaluation recorder. \\
+\file{test_agent.py} & The debugging agent: value parsing, sampling just before and after a clock edge, the tools on a real failing run, the code search ignoring comparisons, the loop with a scripted model, fix verification (a wrong fix shown failing), the grounding rule, the fallback when the model fails, the step limit, the API in offline mode, the sandbox, request validation. \\
 \bottomrule
 \end{tabularx}
 \end{center}
@@ -541,6 +602,7 @@ Yield a new event from \code{pipeline_events} with its own \code{stage} name, ad
   \item The equivalence proof says ``not proven'' for several clocks, other-edge flip-flops and power-up values rather than proving them; a design that aliases its clock through a wire is also reported as not proven.
   \item Runs saved before the nine-role review do not record their model, so the Projects menu cannot label them.
   \item One server, in-process rate limiter, SQLite, and a local single-user model provider: not a multi-user production service.
+  \item The debugging agent verifies its fixes by simulation but not its explanations; it is slow on free models (30 s to 5 minutes per question); its \code{drivers} tool is a text search, not an elaborated netlist; and it was tried once per case on small designs, mainly with one model (Chapter~\ref{ch:agent}).
 \end{enumerate}
 
 \section{Future work}
@@ -631,4 +693,18 @@ Short, honest answers you can give in your own words.
   Simulation starts the register at that value, but real hardware powers up in an unknown state, so the netlist does not keep it. Induction compares the two designs from the same start, so it would wrongly ``prove'' them equal. The app reports ``not proven'' with the reason and recommends an explicit reset.
   \item[33. How do you know your tests are not just passing?]
   Every fix was checked by undoing it on purpose and confirming that a test fails. Four tests passed for the wrong reason at first (for example a guard test that a different guard satisfied) and were rewritten until they failed for the right reason.
+  \item[34. What is the debugging agent, and is it part of the submitted project?]
+  ``Ask about this run'' lets you ask a question about the code in the editor. The server simulates that code again, then a model answers by calling tools that read the waveform (values at a time, a table per clock edge, value changes, when a value occurred), search the source, and test a candidate fix in a fresh simulation. It was added on 24 November 2026, after the report was submitted, so it is an extension, not part of the submitted work.
+  \item[35. How does the app avoid trusting the model's claims?]
+  In three ways. Every tool result comes from the simulator's waveform or the source text, not from the model. An answer that did not query the simulation at least once is sent back once to check. And a proposed fix is simulated again by the server, which shows its own verdict (for example ``PASS, 57 of 57 checks''), never the model's claim; a fix that changes nothing is dropped, and a testbench fix is flagged because it changes the checker itself.
+  \item[36. Why plain JSON text instead of the providers' function calling?]
+  The models come from the OpenCode app, Cloudflare Workers AI, NVIDIA NIM and OpenAI-compatible endpoints. They do not all offer native function calling in the same way; the OpenCode app, for example, is driven through its command line with text in and text out. One JSON object per reply works through every source. The cost is parsing: a reply that is not valid JSON is sent back once, and a second slip is shown labelled ``this text is unchecked''.
+  \item[37. The fix passed, so the explanation must be right?]
+  No. On the saved SR-latch project that timed out, the fix (gate delays) was re-simulated and passed 558 of 558, but the explanation blamed the hold state. The real cause, found by hand on 20 November, was the testbench releasing both inputs from the forbidden 0,0 state at once. Only the fix is verified by simulation; the explanation is model text.
+  \item[38. How did it know the testbench was wrong and not the design?]
+  In that trial the counter was correct, and the testbench's check \code{counting_continues} expected 3 instead of 2. The agent read the waveform and the testbench and found that the check runs at the falling edge at 560 ns, before the third rising edge, so 2 is the right value at that moment. It named the testbench as the suspect, and its testbench fix was re-simulated: 57 of 57. It took 219 s and 5 steps.
+  \item[39. Why does the agent read signals just before a clock edge?]
+  Because that is what a flip-flop sees. WaveDB has two lookups: \code{value_at(t)}, the value after every change at time $t$, and \code{value_before(t)}, the value just before $t$. At a clock edge a flip-flop samples its input just before the edge and changes its output after it. The cycle table shows inputs before the edge and outputs after it, so the model does not make the off-by-one-cycle mistake of reading both at the same instant.
+  \item[40. What happens offline, and what are the limitations?]
+  With no model connected, when the model fails, or after 10 steps without an answer, the panel shows ``Rule-based evidence (no AI)'': the first failing check, the port values then, the cycles before it and the lines that assign the outputs, labelled as not an AI diagnosis. Limitations: the explanation is not verified; it takes 30 s to 5 minutes per question on free models; \code{drivers} is a text search, not an elaborated netlist; Icarus only; and each case was tried once on small designs, mainly with one model, so it is not a benchmark.
 \end{description}

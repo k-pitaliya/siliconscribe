@@ -1,0 +1,325 @@
+\chapter{Addendum: The Debugging Agent}
+\label{sec:addendum}
+
+This chapter describes work added on 24 November 2026, after this report was
+submitted. It is not part of the submitted evaluation: the results of
+Chapter~\ref{sec:results}, the test counts of Table~\ref{tab:verify} and the
+conclusions of Chapter~\ref{sec:conclusion} are those of the submitted version and do
+not depend on anything here. The chapter is included so that the feature can be
+examined with the same standard of evidence as the rest of the report. The code is on
+the branch \code{agent-debug}, commit \code{3d05b94}.
+
+\section{Motivation}
+\label{sec:agentmotiv}
+The original SiliconScribe is a fixed pipeline (Chapter~\ref{sec:arch}). The
+orchestrator decides what runs and in which order, and the model fills each step:
+the specification, the RTL, the testbench and, on a failure, the diagnosis. This has
+two consequences. First, the model never chooses what to inspect. The fixer receives
+the RTL, the testbench, the specification and the simulator log
+(Section~\ref{sec:loop}) and must diagnose from those alone; it cannot ask for the
+value of a signal at a given time or for the clock cycles before a failing check.
+Second, the user cannot ask a follow-up question about a run. A failing run shows the
+failing checks and the waveform, but connecting a wrong value to its cause is left to
+the user.
+
+The debugging agent, shown in the interface as ``Ask about this run'', adds the
+missing interaction. The model chooses which tools to call, but every tool result
+comes from the simulator or from the source code, and every fix it proposes is
+simulated again by the server. The rule of the rest of the system, that only the
+simulator decides PASS or FAIL, still holds.
+
+\section{Design}
+\label{sec:agentdesign}
+One question is handled as follows (Figure~\ref{fig:agentflow}):
+
+\begin{enumerate}
+\item \textbf{Question.} The user types a question about the code currently in the
+editor, or clicks one of the examples (``Why did the first check fail?'', ``Is the
+design or the testbench wrong?'', ``Walk me through the first 5 clock cycles.'').
+The last four questions and answers of the conversation are sent as context.
+\item \textbf{Evidence run.} The server simulates the editor's code again in the
+same sandbox as Re-run (Section~\ref{sec:sandbox}): Icarus Verilog, allow-listed
+system tasks, CPU, memory and file limits, and a 30~s limit. The answer is therefore
+about exactly the code on screen. If the code was edited since the last run, the
+Results and Waveform tabs switch to this new run.
+\item \textbf{Overview.} The model receives a short overview: the verdict, the first
+failing checks, the clocks and their period, the list of signals in the waveform and
+the numbered RTL. The testbench is not included; the model reads it with
+\code{read_code} when it needs it.
+\item \textbf{Tool loop.} Each model reply is one JSON object, either a tool call or
+the final answer. The tool result is appended to the transcript and the model is
+called again. At most 10 model calls are made per question.
+\item \textbf{Answer.} The final answer contains markdown text, a suspect (design,
+testbench, both, unclear or none), a confidence (high, medium or low) and, optionally,
+a fix as a complete corrected file. A fix is simulated by the server before it is
+shown.
+\end{enumerate}
+
+The server streams the progress to the browser as Server-Sent Events: a status
+message, the evidence run with its waveform, one event per tool call and then exactly
+one answer (or an error).
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+    font=\footnotesize,
+    start/.style={draw=ink,rounded corners=8pt,fill=softgrey,text width=2.6cm,align=center,inner sep=4pt},
+    proc/.style={draw=ink,rounded corners=2pt,fill=white,text width=2.6cm,align=center,inner sep=4pt},
+    dec/.style={draw=ink,diamond,aspect=2.2,fill=softgrey,text width=1.9cm,align=center,inner sep=1pt},
+    arr/.style={-{Latex[length=2.4mm]},line width=0.7pt},
+    lbl/.style={font=\scriptsize,color=inkdark}
+  ]
+  \node[start] (q) {Question about the code in the editor};
+  \node[proc,right=7mm of q] (run) {Evidence run\\\scriptsize sandbox, 30~s limit};
+  \node[proc,right=7mm of run] (ov) {Overview\\\scriptsize verdict, failing checks, clocks, signals, RTL};
+  \node[dec,below=8mm of ov] (m) {Model reply: tool or answer?};
+  \node[proc,left=14mm of m] (t) {Tool\\\scriptsize waveform, source or \code{test_fix}};
+  \node[proc,below=8mm of m] (fix) {Server re-simulates the fix};
+  \node[start,left=14mm of fix] (ui) {Answer, suspect, confidence, fix verdict};
+  \draw[arr] (q) -- (run);
+  \draw[arr] (run) -- (ov);
+  \draw[arr] (ov) -- (m);
+  \draw[arr] (m.west) -- node[lbl,above]{tool} (t.east);
+  \draw[arr] (t.north) -- ++(0,0.5) -| node[lbl,above,pos=0.25]{result} (m.north west);
+  \draw[arr] (m) -- node[lbl,right]{answer} (fix);
+  \draw[arr] (fix) -- (ui);
+\end{tikzpicture}
+\caption[Flow of one question to the debugging agent]{Flow of one question to the
+debugging agent. The model chooses the tools; every tool result comes from the
+simulation or the source, and a proposed fix is simulated again before it is shown.
+At most 10 model calls and 3 fix tests are made per question.}
+\label{fig:agentflow}
+\end{figure}
+
+\subsection{Tools}
+Table~\ref{tab:agenttools} lists the eight tools. Times are given in nanoseconds.
+Five of them read the simulation (\code{failing_checks}, \code{values_at},
+\code{changes}, \code{cycle_table}, \code{find_value}), two read the source
+(\code{drivers}, \code{read_code}) and one runs a new simulation (\code{test_fix}).
+The cycle table samples each signal just before the clock edge, which is the value
+the flip-flops see, and just after it; this is the distinction that matters when
+reading sequential logic from a waveform.
+
+\begin{table}[H]
+\centering
+\caption{The eight tools available to the debugging agent.}
+\label{tab:agenttools}
+\footnotesize
+\begin{tabularx}{\textwidth}{@{}p{2.4cm}X@{}}
+\toprule
+\textbf{Tool} & \textbf{What it returns} \\
+\midrule
+\code{failing_checks} & The testbench's failed comparisons: time, name, expected value and actual value. \\
+\code{values_at} & The value of each requested signal at a given time, and just before it. \\
+\code{changes} & Every value change of one signal in a time window (at most 40). \\
+\code{cycle_table} & One row per clock edge, with each signal sampled just before the edge (what the flip-flops see) and just after it. \\
+\code{find_value} & The times at which a signal held a given value (decimal, hexadecimal, binary, \code{x} or \code{z}). \\
+\code{drivers} & The source lines that assign a signal, with the enclosing \code{always} or \code{assign} block, and the instance ports connected to it. This is a text search that ignores comments and comparisons, not a full elaboration. \\
+\code{read_code} & Numbered source lines of the RTL or the testbench (at most 120 lines). \\
+\code{test_fix} & Simulates a candidate fix (a complete file) with the other file unchanged and returns the verdict. At most 3 per question. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{Protocol}
+Each model reply must be exactly one JSON object of one of the two forms below
+(shortened):
+
+\begin{lstlisting}[language=,basicstyle=\ttfamily\scriptsize]
+{"thought": "<what is checked and why>", "tool": "cycle_table",
+ "args": {"signals": ["enable", "count"], "from_ns": 0, "to_ns": 100}}
+
+{"answer": "<markdown>", "suspect": "design", "confidence": "high",
+ "fix": {"file": "rtl", "code": "<the complete corrected file>"}}
+\end{lstlisting}
+
+The protocol is plain JSON text, not a provider's native function-calling interface.
+Native function calling differs between providers and is not available for every
+model, whereas any chat model can be asked to reply with a JSON object. The agent therefore
+works with every model source the application supports: the OpenCode app,
+Cloudflare Workers AI, NVIDIA NIM and any OpenAI-compatible endpoint. The fixer of
+Section~\ref{sec:loop} moved away from JSON after a live run produced malformed JSON
+with a complete Verilog file inside it. The agent's final answer can also carry a
+complete file inside JSON, so the same risk exists; most of its replies, however, are
+short tool calls, and a reply that is not one JSON object is handled explicitly
+(Section~\ref{sec:agenttrust}).
+
+Each step sends the whole transcript again. To limit its growth, one tool result is
+cut to 3000 characters, and results older than the last five steps are shortened to
+400 characters.
+
+\section{Trust Rules}
+\label{sec:agenttrust}
+The agent follows the same policy as the rest of SiliconScribe: the simulator
+decides, and anything that the simulator did not check is labelled as such.
+
+\begin{enumerate}
+\item \textbf{Grounding rule.} An answer must rest on at least one simulation query
+(\code{values_at}, \code{changes}, \code{cycle_table}, \code{find_value} or
+\code{test_fix}). If the model answers without one, it is sent back once to check;
+a second answer is accepted. The rule was added after live case A4
+(Section~\ref{sec:agentlive}).
+\item \textbf{Every fix is re-simulated by the server.} The fix in the final answer
+is simulated again before it is shown, and the interface shows that verdict (for
+example ``PASS, 57 of 57 checks''), never the model's own claim. A ``fix'' identical
+to the current file is dropped, and a fix that cannot be simulated is shown as an
+error. The fix is not applied automatically: ``Apply to the editor'' places it in the
+editor, and Re-run then shows it in the main results.
+\item \textbf{A testbench fix is flagged.} A fix to the testbench is shown with the
+warning ``This changes the checker itself. A testbench fix can make a wrong design
+pass.''
+\item \textbf{Labelled rule-based fallback.} When no AI model is connected (offline),
+when the model fails (quota, timeout or error) or when the 10-step limit is reached,
+the panel shows rule-based evidence instead: the first failing check, the port values
+at that time, the clock cycles before it and the lines that assign the outputs. It is
+labelled ``Rule-based evidence (no AI)'' and ``not an AI diagnosis''. As in
+Section~\ref{sec:fallback}, there is never a silent swap.
+\item \textbf{Unchecked text is marked.} If the model twice ignores the JSON
+protocol, its text is shown with the note that this text is unchecked.
+\item \textbf{No HTML from the model.} Model text is rendered as plain text, with
+only code, bold and times formatted; it is never inserted as HTML.
+\item \textbf{The sandbox applies throughout.} The policy of
+Section~\ref{sec:sandbox} applies to the evidence run and to every fix test; a
+\code{$system} call is refused.
+\end{enumerate}
+
+What is \emph{not} verified is the explanation text itself. Only the fix is checked
+by simulation. Live case A6 below shows why this distinction matters.
+
+\section{User Interface}
+\label{sec:agentui}
+The panel ``Ask about this run'' sits in the left sidebar, under the run timeline
+(Figure~\ref{fig:askpanel}). The evidence steps appear as they happen, followed by
+the answer, the suspect and confidence, and a fix card with the server's verdict.
+Times written in an answer (``@25ns'' or ``25ns'') are buttons: clicking one opens
+the Waveform tab with cursor A at that time (Figure~\ref{fig:askwave}).
+Figure~\ref{fig:askanswer} shows the whole window. The three screenshots were taken
+from the real live run A3 (light theme); nothing in them is mocked.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[height=11cm]{s22_ask_panel.png}
+\caption[The ``Ask about this run'' panel]{The whole ``Ask about this run'' panel in
+live run A3: the question, the evidence steps, the answer and the fix card.}
+\label{fig:askpanel}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.85\textwidth]{s23_ask_waveform_jump.png}
+\caption[Jumping from a cited time to the waveform]{After clicking ``@30ns'' in the
+answer: the Waveform tab with cursor A at 30\,ns, where \texttt{enable} = 0 and
+\texttt{count} = 0x2 while the hold check expected 1.}
+\label{fig:askwave}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.85\textwidth]{s21_ask_answer.png}
+\caption[Answer and main results of the edited code]{The whole window in live run A3:
+the answer in the sidebar (suspect Design, cited times, fix PASS 57/57) and the
+Results tab showing the edited code's FAIL 12/57 (45 failed).}
+\label{fig:askanswer}
+\end{figure}
+
+\section{Live Results}
+\label{sec:agentlive}
+Table~\ref{tab:agentlive} lists the live runs made on 24 November 2026. Each case was
+run once, on small designs, and the model was NVIDIA NIM
+\code{nvidia/nemotron-3-ultra-550b-a55b} unless stated.
+
+\begin{table}[H]
+\centering
+\caption[Live runs of the debugging agent]{Live runs of the debugging agent,
+24 November 2026 (one run each). Time is the time to the answer.}
+\label{tab:agentlive}
+\footnotesize
+\begin{tabularx}{\textwidth}{@{}l >{\raggedright\arraybackslash}p{4.3cm} >{\raggedright\arraybackslash}X l@{}}
+\toprule
+\textbf{Case} & \textbf{Set-up} & \textbf{Outcome} & \textbf{Time} \\
+\midrule
+A1 & Built-in buggy counter (adds 2; the RTL has a ``BUG'' comment) & Correct, suspect design; fix re-simulated 57/57 & 31~s \\
+A2 & Hidden bug \code{else if (enable || count[0])}, no comment & Correct; used a cycle table (\code{count} moves while \code{enable}=0 at 25, 55 and 85\,ns); fix 57/57 & 34~s \\
+A3 & Same hidden bug, in the real browser interface (twice) & Correct both times, fix 57/57; one answer cited 9 clickable times & 107~s, 74~s \\
+A4 & Same hidden bug, model \texttt{opencode/\allowbreak deepseek-v4.1-flash-free} & Correct, fix 57/57, but zero tool calls (reasoned from the overview) & 49~s \\
+A5 & Correct counter, wrong testbench (expects 3 instead of 2 in \code{counting_continues}) & Suspect testbench: the check runs at the negative edge at 560\,ns, before the third positive edge; testbench fix 57/57 & 219~s, 5 steps \\
+A6 & Saved SR-latch project that timed out (a real AI design from 20 November), real browser & Fix (gate delays) re-simulated 558/558, but the explanation was only partly right (see text) & 316~s \\
+A7 & Older saved counter project whose 20-check testbench never drops \code{enable}, with the hidden bug & Reported that the run passed and that no hold checks failed, instead of inventing a failure & about 170~s \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\paragraph{The hidden bug (A1 to A4).} A1 is the easy case: the RTL carries a ``BUG''
+comment. In A2 the bug, \code{else if (enable || count[0])}, has no comment, and the
+agent found it from the waveform: its cycle table showed \code{count} changing while
+\code{enable} was 0 at 25, 55 and 85\,ns. A3 repeated the case twice in the real
+browser interface, with the same result. In A4 a different model,
+\code{opencode/deepseek-v4.1-flash-free}, gave the correct answer and a passing fix
+without calling a single tool: it reasoned from the overview alone. The answer was
+right, but nothing in it came from the run. This case led to the grounding rule of
+Section~\ref{sec:agenttrust}.
+
+\paragraph{The checker was wrong (A5).} In A5 the counter was correct and the
+testbench was wrong: the check \code{counting_continues} expected 3 where 2 is
+correct. The agent named the testbench as the suspect, with evidence: the check runs
+at the negative edge at 560\,ns, before the third positive edge. Its testbench fix
+was re-simulated at 57 of 57 checks. The agent can therefore say that the design is
+fine and the checker is wrong, and show why. Because this fix changes the checker,
+the interface shows it with the testbench warning, and the decision to apply it is
+left to the user.
+
+\paragraph{Fix passed, explanation partly wrong (A6).} A6 used a saved SR-latch
+project, a real AI-generated design from 20 November whose run had timed out. The
+agent's fix, which added gate delays, was re-simulated by the server and passed 558
+of 558 checks. Its explanation, however, was only partly right: it blamed the hold
+state, whereas the real cause, found by hand on 20 November, is that the testbench
+releases both inputs from the forbidden 0,0 state at the same time. The fix is
+verified; the explanation is model text and is not. This is the clearest example of
+the limit stated at the end of Section~\ref{sec:agenttrust}. Because the design hangs,
+the evidence run also used its full 30~s before the model started.
+
+\paragraph{A false premise (A7).} In A7 the question assumed a failure that did not
+happen: the older counter project still had the hidden bug, but its 20-check
+testbench never drops \code{enable}. The agent reported that the run passed and
+that no hold checks failed, instead of inventing a failure. This weak testbench
+does not expose the bug.
+
+In summary, in every case with a fix (A1 to A6) the fix was shown only with the
+server's own re-simulation verdict. Answers took about 30~s to 5 minutes on free
+models.
+
+\section{Tests}
+\label{sec:agenttests}
+All tests pass on commit \code{3d05b94}:
+
+\begin{itemize}
+\item \textbf{Backend:} 632 pytest tests (591 before the addendum). The 41 new tests
+in \code{tests/test_agent.py} cover value parsing, sampling before and after a clock
+edge, the tools on a real failing run, the code search ignoring comparisons, the loop
+with a scripted model, fix verification, a wrong fix shown as failing, the grounding
+rule, the fallback when the model fails, the step limit, the API in offline mode, the
+sandbox and request validation.
+\item \textbf{Frontend:} 277 vitest tests (267 before). The 10 new tests in
+\code{DebugChat.test.tsx} cover the streamed events, clickable times in VCD ticks,
+the fix card's verdict and ``Apply'', the testbench-fix warning, the rule-based
+label, errors and history, model text never rendered as HTML, and the busy state.
+\item \textbf{Sabotage checks:} making the fix check always report PASS, and making
+the ``just before'' sample the same as the ``after'' sample, made 4 backend tests
+fail; a wrong conversion from nanoseconds to VCD ticks made a frontend test fail. All
+were restored afterwards.
+\end{itemize}
+
+\section{Limitations}
+\label{sec:agentlimits}
+\begin{itemize}
+\item \textbf{The explanation is not verified.} The explanation is model text; only
+the fix is checked by simulation (see A6).
+\item \textbf{Slow.} A question took 30~s to 5 minutes on free models, because each
+step sends the growing context again.
+\item \textbf{Shallow code analysis.} \code{drivers} is a text search, not an
+elaborated netlist. Only Icarus is used, so there are no SVA assertions and no UVM.
+\item \textbf{Not a benchmark.} Each case was run once, on small designs and mainly
+with one model.
+\item \textbf{Hanging designs are slow to diagnose.} The evidence run is limited to
+30~s, so a design that hangs (A6) costs the full 30~s before the model starts.
+\end{itemize}
