@@ -1,0 +1,782 @@
+[
+ {
+  "model": "opencode/beam-free",
+  "t1": {
+   "time": 24,
+   "err": null,
+   "sim": [
+    "PASS",
+    57,
+    57
+   ]
+  },
+  "t2": {
+   "time": 17,
+   "err": null,
+   "sim": [
+    "PASS",
+    1222,
+    1222
+   ]
+  }
+ },
+ {
+  "model": "opencode/deepseek-v4.1-flash-free",
+  "t1": {
+   "time": 24,
+   "err": null,
+   "sim": [
+    "PASS",
+    57,
+    57
+   ]
+  },
+  "t2": {
+   "time": 31,
+   "err": null,
+   "sim": [
+    "PASS",
+    1222,
+    1222
+   ]
+  }
+ },
+ {
+  "model": "openrouter/inclusionai/ling-3.2-flash:free",
+  "t1": {
+   "time": 69,
+   "err": null,
+   "sim": [
+    "PASS",
+    57,
+    57
+   ]
+  },
+  "t2": {
+   "time": 34,
+   "err": null,
+   "sim": [
+    "PASS",
+    1222,
+    1222
+   ]
+  }
+ },
+ {
+  "model": "openrouter/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
+  "t1": {
+   "time": 15,
+   "err": null,
+   "sim": [
+    "FAIL",
+    4,
+    57
+   ]
+  },
+  "t2": {
+   "time": 21,
+   "err": null,
+   "sim": [
+    "FAIL",
+    901,
+    1222
+   ]
+  }
+ },
+ {
+  "model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+  "t1": {
+   "time": 8,
+   "err": null,
+   "sim": [
+    "PASS",
+    57,
+    57
+   ]
+  },
+  "t2": {
+   "time": 13,
+   "err": null,
+   "sim": [
+    "PASS",
+    1222,
+    1222
+   ]
+  }
+ },
+ {
+  "model": "openrouter/nvidia/nemotron-3.5-lightning:free",
+  "t1": {
+   "time": 14,
+   "err": null,
+   "sim": [
+    "PASS",
+    57,
+    57
+   ]
+  },
+  "t2": {
+   "time": 50,
+   "err": null,
+   "sim": [
+    "ERROR",
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "model": "openrouter/liquid/lfm-3-1.7b:free",
+  "t1": {
+   "time": 81,
+   "err": null,
+   "sim": [
+    "ERROR",
+    0,
+    0
+   ]
+  },
+  "t2": {
+   "time": 172,
+   "err": "LLMUpstreamError: LLM_UPSTREAM:OpenCodeError: model=openrouter/liquid/lfm-3-1.7b:free {\"type\": \"provider.rate-limit\", \"message\": \"Rate lim",
+   "sim": null
+  }
+ },
+ {
+  "model": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+  "t1": {
+   "time": 89,
+   "err": "LLMUpstreamError: LLM_UPSTREAM:OpenCodeError: model=openrouter/nvidia/nemotron-3.5-super-vl:free {\"type\": \"provider.rate-limit\", \"message\"",
+   "sim": null
+  },
+  "t2": {
+   "time": 80,
+   "err": "LLMUpstreamError: LLM_UPSTREAM:OpenCodeError: model=openrouter/nvidia/nemotron-3.5-super-vl:free {\"type\": \"provider.rate-limit\", \"message\"",
+   "sim": null
+  }
+ },
+ {
+  "model": "openrouter/particle-ai/particle-1:free",
+  "t1": {
+   "time": 83,
+   "err": "LLMUpstreamError: LLM_UPSTREAM:OpenCodeError: model=openrouter/particle-ai/particle-1:free {\"type\": \"provider.rate-limit\", \"message\": \"Rat",
+   "sim": null
+  },
+  "t2": {
+   "time": 86,
+   "err": "LLMUpstreamError: LLM_UPSTREAM:OpenCodeError: model=openrouter/particle-ai/particle-1:free {\"type\": \"provider.rate-limit\", \"message\": \"Rat",
+   "sim": null
+  }
+ },
+ {
+  "model": "@cf/openai/gpt-oss-120b",
+  "t1": {
+   "time": 10,
+   "err": null,
+   "sim": [
+    "PASS",
+    57,
+    57
+   ]
+  },
+  "t2": {
+   "time": 24,
+   "err": null,
+   "sim": [
+    "PASS",
+    1222,
+    1222
+   ]
+  }
+ },
+ {
+  "model": "@cf/aisingapore/gemma-sea-lion-v4-27b-it",
+  "t1": {
+   "time": 4,
+   "err": null,
+   "sim": [
+    "PASS",
+    57,
+    57
+   ]
+  },
+  "t2": {
+   "time": 8,
+   "err": null,
+   "sim": [
+    "ERROR",
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "model": "@cf/daily-co/phonellm-mini-alpha-2",
+  "t1": {
+   "time": 2,
+   "err": null,
+   "sim": [
+    "PASS",
+    57,
+    57
+   ]
+  },
+  "t2": {
+   "time": 2,
+   "err": null,
+   "sim": [
+    "ERROR",
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "model": "openrouter/recursive/flint-v1.0:free",
+  "t1": {
+   "time": 81,
+   "err": "LLMUpstreamError: LLM_UPSTREAM:OpenCodeError: model=openrouter/recursive/flint-v1.0:free {\"type\": \"provider.rate-limit\", \"message\": \"Rate ",
+   "sim": null
+  },
+  "t2": {
+   "time": 84,
+   "err": "LLMUpstreamError: LLM_UPSTREAM:OpenCodeError: model=openrouter/recursive/flint-v1.0:free {\"type\": \"provider.rate-limit\", \"message\": \"Rate ",
+   "sim": null
+  }
+ },
+ {
+  "model": "@cf/ibm-granite/granite-4.0-h-micro",
+  "t1": {
+   "time": 6,
+   "err": null,
+   "sim": [
+    "FAIL",
+    55,
+    57
+   ]
+  },
+  "t2": {
+   "time": 10,
+   "err": null,
+   "sim": [
+    "ERROR",
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "model": "opencode/hy4-flash-free",
+  "t1": {
+   "time": 11,
+   "err": null,
+   "sim": [
+    "PASS",
+    57,
+    57
+   ]
+  },
+  "t2": {
+   "time": 10,
+   "err": null,
+   "sim": [
+    "PASS",
+    1222,
+    1222
+   ]
+  }
+ },
+ {
+  "model": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+  "t1": {
+   "time": 3,
+   "err": null,
+   "sim": [
+    "PASS",
+    57,
+    57
+   ]
+  },
+  "t2": {
+   "time": 6,
+   "err": null,
+   "sim": [
+    "FAIL",
+    1052,
+    1222
+   ]
+  }
+ },
+ {
+  "model": "@cf/meta/llama-4-scout-17b-16e-instruct",
+  "t1": {
+   "time": 4,
+   "err": null,
+   "sim": [
+    "PASS",
+    57,
+    57
+   ]
+  },
+  "t2": {
+   "time": 12,
+   "err": null,
+   "sim": [
+    "ERROR",
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "model": "@cf/mistralai/mistral-small-3.1-24b-instruct",
+  "t1": {
+   "time": 3,
+   "err": null,
+   "sim": [
+    "PASS",
+    57,
+    57
+   ]
+  },
+  "t2": {
+   "time": 7,
+   "err": null,
+   "sim": [
+    "PASS",
+    1222,
+    1222
+   ]
+  }
+ },
+ {
+  "model": "@cf/mistral/mistral-7b-instruct-v0.2-lora",
+  "t1": {
+   "time": 14,
+   "err": null,
+   "sim": [
+    "ERROR",
+    0,
+    0
+   ]
+  },
+  "t2": {
+   "time": 17,
+   "err": null,
+   "sim": [
+    "ERROR",
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "model": "opencode/iceman-free",
+  "t1": {
+   "time": 19,
+   "err": null,
+   "sim": [
+    "PASS",
+    57,
+    57
+   ]
+  },
+  "t2": {
+   "time": 24,
+   "err": null,
+   "sim": [
+    "PASS",
+    1222,
+    1222
+   ]
+  }
+ },
+ {
+  "model": "@cf/openai/gpt-oss-20b",
+  "t1": {
+   "time": 6,
+   "err": null,
+   "sim": [
+    "PASS",
+    57,
+    57
+   ]
+  },
+  "t2": {
+   "time": 17,
+   "err": null,
+   "sim": [
+    "PASS",
+    1222,
+    1222
+   ]
+  }
+ },
+ {
+  "model": "@cf/qwen/qwen2.5-coder-32b-instruct",
+  "t1": {
+   "time": 5,
+   "err": null,
+   "sim": [
+    "PASS",
+    57,
+    57
+   ]
+  },
+  "t2": {
+   "time": 16,
+   "err": null,
+   "sim": [
+    "PASS",
+    1222,
+    1222
+   ]
+  }
+ },
+ {
+  "model": "opencode/mimo-v2.6-flash-free",
+  "t1": {
+   "time": 11,
+   "err": null,
+   "sim": [
+    "PASS",
+    57,
+    57
+   ]
+  },
+  "t2": {
+   "time": 9,
+   "err": null,
+   "sim": [
+    "PASS",
+    1222,
+    1222
+   ]
+  }
+ },
+ {
+  "model": "nim/poolside/laguna-xs-2.1",
+  "t1": {
+   "time": 3,
+   "err": null,
+   "sim": [
+    "PASS",
+    57,
+    57
+   ]
+  },
+  "t2": {
+   "time": 8,
+   "err": null,
+   "sim": [
+    "PASS",
+    1222,
+    1222
+   ]
+  }
+ },
+ {
+  "model": "@cf/qwen/qwen3.8-27b",
+  "t1": {
+   "time": 23,
+   "err": null,
+   "sim": [
+    "PASS",
+    57,
+    57
+   ]
+  },
+  "t2": {
+   "time": 24,
+   "err": null,
+   "sim": [
+    "PASS",
+    1222,
+    1222
+   ]
+  }
+ },
+ {
+  "model": "nim/nvidia/nemotron-3.5-lightning-30b-a3b",
+  "t1": {
+   "time": 14,
+   "err": null,
+   "sim": [
+    "ERROR",
+    0,
+    0
+   ]
+  },
+  "t2": {
+   "time": 49,
+   "err": null,
+   "sim": [
+    "ERROR",
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "model": "nim/nvidia/nemotron-3-ultra-550b-a55b",
+  "t1": {
+   "time": 33,
+   "err": null,
+   "sim": [
+    "PASS",
+    57,
+    57
+   ]
+  },
+  "t2": {
+   "time": 50,
+   "err": null,
+   "sim": [
+    "PASS",
+    1222,
+    1222
+   ]
+  }
+ },
+ {
+  "model": "opencode/flint-40b-free",
+  "t1": {
+   "time": 54,
+   "err": null,
+   "sim": [
+    "ERROR",
+    0,
+    0
+   ]
+  },
+  "t2": {
+   "time": 240,
+   "err": "LLMUpstreamError: LLM_UPSTREAM:Timeout: opencode model=opencode/flint-40b-free after 240s",
+   "sim": null
+  }
+ },
+ {
+  "model": "nim/minimaxai/minimax-m3.1-flash",
+  "t1": {
+   "time": 23,
+   "err": null,
+   "sim": [
+    "PASS",
+    57,
+    57
+   ]
+  },
+  "t2": {
+   "time": 43,
+   "err": null,
+   "sim": [
+    "PASS",
+    1222,
+    1222
+   ]
+  }
+ },
+ {
+  "model": "@cf/google/gemma-4-26b-a4b-it",
+  "t1": {
+   "time": 59,
+   "err": null,
+   "sim": [
+    "PASS",
+    57,
+    57
+   ]
+  },
+  "t2": {
+   "time": 199,
+   "err": "RuntimeError: Model '@cf/google/gemma-4-26b-a4b-it' output was truncated (finish_reason=length, max_tokens=8192, reasoning_tokens=None",
+   "sim": null
+  }
+ },
+ {
+  "model": "nim/nvidia/nemotron-3.5-bolt-e4b",
+  "t1": {
+   "time": 3,
+   "err": null,
+   "sim": [
+    "ERROR",
+    0,
+    0
+   ]
+  },
+  "t2": {
+   "time": 11,
+   "err": null,
+   "sim": [
+    "ERROR",
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "model": "opencode/nemotron-3.5-super-vl-free",
+  "t1": {
+   "time": 29,
+   "err": null,
+   "sim": [
+    "PASS",
+    57,
+    57
+   ]
+  },
+  "t2": {
+   "time": 40,
+   "err": null,
+   "sim": [
+    "PASS",
+    1222,
+    1222
+   ]
+  }
+ },
+ {
+  "model": "opencode/nemotron-3.5-lightning-free",
+  "t1": {
+   "time": 26,
+   "err": null,
+   "sim": [
+    "PASS",
+    57,
+    57
+   ]
+  },
+  "t2": {
+   "time": 142,
+   "err": null,
+   "sim": [
+    "ERROR",
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "model": "nim/nvidia/nemotron-3.5-super-vl-120b-a12b",
+  "t1": {
+   "time": 29,
+   "err": null,
+   "sim": [
+    "PASS",
+    57,
+    57
+   ]
+  },
+  "t2": {
+   "time": 34,
+   "err": null,
+   "sim": [
+    "PASS",
+    1222,
+    1222
+   ]
+  }
+ },
+ {
+  "model": "nim/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
+  "t1": {
+   "time": 45,
+   "err": null,
+   "sim": [
+    "PASS",
+    57,
+    57
+   ]
+  },
+  "t2": {
+   "time": 51,
+   "err": null,
+   "sim": [
+    "ERROR",
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "model": "@cf/zai-org/glm-4.7-flash",
+  "t1": {
+   "time": 39,
+   "err": null,
+   "sim": [
+    "PASS",
+    57,
+    57
+   ]
+  },
+  "t2": {
+   "time": 169,
+   "err": "RuntimeError: Model '@cf/zai-org/glm-4.7-flash' output was truncated (finish_reason=length, max_tokens=8192, reasoning_tokens=None). I",
+   "sim": null
+  }
+ },
+ {
+  "model": "openrouter/baidu/ernie-5.5-flash-preview:free",
+  "t1": {
+   "time": 82,
+   "err": "LLMUpstreamError: LLM_UPSTREAM:OpenCodeError: model=openrouter/baidu/ernie-5.5-flash-preview:free {\"type\": \"provider.rate-limit\", \"message",
+   "sim": null
+  },
+  "t2": {
+   "time": 84,
+   "err": "LLMUpstreamError: LLM_UPSTREAM:OpenCodeError: model=openrouter/baidu/ernie-5.5-flash-preview:free {\"type\": \"provider.rate-limit\", \"message",
+   "sim": null
+  }
+ },
+ {
+  "model": "openrouter/dots-studio/dots-3-note-preview:free",
+  "t1": {
+   "time": 86,
+   "err": "LLMUpstreamError: LLM_UPSTREAM:OpenCodeError: model=openrouter/dots-studio/dots-3-note-preview:free {\"type\": \"provider.rate-limit\", \"messa",
+   "sim": null
+  },
+  "t2": {
+   "time": 84,
+   "err": "LLMUpstreamError: LLM_UPSTREAM:OpenCodeError: model=openrouter/dots-studio/dots-3-note-preview:free {\"type\": \"provider.rate-limit\", \"messa",
+   "sim": null
+  }
+ },
+ {
+  "model": "nim/meta/muse-glimmer-30b",
+  "t1": {
+   "time": 115,
+   "err": null,
+   "sim": [
+    "PASS",
+    57,
+    57
+   ]
+  },
+  "t2": {
+   "time": 182,
+   "err": null,
+   "sim": [
+    "PASS",
+    1222,
+    1222
+   ]
+  }
+ },
+ {
+  "model": "nim/mistralai/mistral-large-4-1t-a52b",
+  "t1": {
+   "time": 89,
+   "err": null,
+   "sim": [
+    "PASS",
+    57,
+    57
+   ]
+  },
+  "t2": {
+   "time": 240,
+   "err": "LLMUpstreamError: LLM_UPSTREAM:APITimeoutError: base=https://integrate.api.nvidia.com/v1/ model=mistralai/mistral-large-4-1t-a52b err=Requ",
+   "sim": null
+  }
+ }
+]

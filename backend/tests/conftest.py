@@ -30,6 +30,9 @@ def _no_real_credentials_or_network_models(monkeypatch):
     # The real model_hidden.json lists tonight's failed models; tests must not depend on it (tests that need a list
     # point MODEL_HIDDEN_FILE at their own file).
     monkeypatch.setenv("MODEL_HIDDEN_FILE", "/nonexistent/model_hidden.json")
+    # The testbench fallback (orchestrator.testbench_fallback_model) is off unless a test turns it on, so tests of
+    # "the chosen model failed and the run says so" keep their meaning.
+    monkeypatch.setenv("TESTBENCH_FALLBACK_MODEL", "")
     model_catalog.clear_cache()
     yield
     model_catalog.clear_cache()

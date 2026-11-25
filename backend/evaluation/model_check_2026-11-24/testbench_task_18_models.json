@@ -1,0 +1,278 @@
+[
+ {
+  "model": "@cf/mistralai/mistral-small-3.1-24b-instruct",
+  "t3": {
+   "time": 21,
+   "err": null,
+   "good": [
+    "ERROR",
+    0,
+    0
+   ],
+   "adds2": [
+    "ERROR",
+    0,
+    0
+   ],
+   "hidden": [
+    "ERROR",
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "model": "@cf/openai/gpt-oss-120b",
+  "t3": {
+   "time": 90,
+   "err": null,
+   "good": [
+    "ERROR",
+    0,
+    0
+   ],
+   "adds2": [
+    "ERROR",
+    0,
+    0
+   ],
+   "hidden": [
+    "ERROR",
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "model": "@cf/openai/gpt-oss-20b",
+  "t3": {
+   "time": 123,
+   "err": "RuntimeError: Model '@cf/openai/gpt-oss-20b' output was truncated (finish_reason=length, max_tokens=8192, reasoning_tokens=None). Incr"
+  }
+ },
+ {
+  "model": "@cf/qwen/qwen2.5-coder-32b-instruct",
+  "t3": {
+   "time": 49,
+   "err": null,
+   "good": [
+    "ERROR",
+    0,
+    0
+   ],
+   "adds2": [
+    "ERROR",
+    0,
+    0
+   ],
+   "hidden": [
+    "ERROR",
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "model": "@cf/qwen/qwen3.8-27b",
+  "t3": {
+   "time": 121,
+   "err": "LLMUpstreamError: LLM_UPSTREAM:APIStatusError: base=https://api.cloudflare.com/client/v4/accounts/<ACCOUNT_ID>/ai/v1/ "
+  }
+ },
+ {
+  "model": "nim/meta/muse-glimmer-30b",
+  "t3": {
+   "time": 303,
+   "err": "LLMUpstreamError: LLM_UPSTREAM:InternalServerError: base=https://integrate.api.nvidia.com/v1/ model=meta/muse-glimmer-30b err=Error code: "
+  }
+ },
+ {
+  "model": "nim/minimaxai/minimax-m3.1-flash",
+  "t3": {
+   "time": 228,
+   "err": "RuntimeError: Model 'minimaxai/minimax-m3.1-flash' output was truncated (finish_reason=length, max_tokens=8192, reasoning_tokens=8191)"
+  }
+ },
+ {
+  "model": "nim/nvidia/nemotron-3-ultra-550b-a55b",
+  "t3": {
+   "time": 135,
+   "err": null,
+   "good": [
+    "FAIL",
+    0,
+    25
+   ],
+   "adds2": [
+    "FAIL",
+    0,
+    27
+   ],
+   "hidden": [
+    "FAIL",
+    0,
+    21
+   ]
+  }
+ },
+ {
+  "model": "nim/nvidia/nemotron-3.5-super-vl-120b-a12b",
+  "t3": {
+   "time": 76,
+   "err": "RuntimeError: Model 'nvidia/nemotron-3.5-super-vl-120b-a12b' output was truncated (finish_reason=length, max_tokens=8192, reasoning_to"
+  }
+ },
+ {
+  "model": "nim/poolside/laguna-xs-2.1",
+  "t3": {
+   "time": 44,
+   "err": null,
+   "good": [
+    "ERROR",
+    0,
+    0
+   ],
+   "adds2": [
+    "ERROR",
+    0,
+    0
+   ],
+   "hidden": [
+    "ERROR",
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "model": "opencode/beam-free",
+  "t3": {
+   "time": 111,
+   "err": null,
+   "good": [
+    "FAIL",
+    54,
+    165
+   ],
+   "adds2": [
+    "FAIL",
+    36,
+    165
+   ],
+   "hidden": [
+    "FAIL",
+    54,
+    165
+   ]
+  }
+ },
+ {
+  "model": "opencode/deepseek-v4.1-flash-free",
+  "t3": {
+   "time": 148,
+   "err": null,
+   "good": [
+    "PASS",
+    173,
+    173
+   ],
+   "adds2": [
+    "FAIL",
+    40,
+    173
+   ],
+   "hidden": [
+    "FAIL",
+    75,
+    173
+   ]
+  }
+ },
+ {
+  "model": "opencode/hy4-flash-free",
+  "t3": {
+   "time": 69,
+   "err": null,
+   "good": [
+    "FAIL",
+    247,
+    316
+   ],
+   "adds2": [
+    "FAIL",
+    200,
+    316
+   ],
+   "hidden": [
+    "FAIL",
+    247,
+    316
+   ]
+  }
+ },
+ {
+  "model": "opencode/iceman-free",
+  "t3": {
+   "time": 56,
+   "err": null,
+   "good": [
+    "ERROR",
+    0,
+    0
+   ],
+   "adds2": [
+    "ERROR",
+    0,
+    0
+   ],
+   "hidden": [
+    "ERROR",
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "model": "opencode/mimo-v2.6-flash-free",
+  "t3": {
+   "time": 600,
+   "err": "LLMUpstreamError: LLM_UPSTREAM:Timeout: opencode model=opencode/mimo-v2.6-flash-free after 600s"
+  }
+ },
+ {
+  "model": "opencode/nemotron-3.5-super-vl-free",
+  "t3": {
+   "time": 239,
+   "err": null,
+   "good": [
+    "ERROR",
+    0,
+    0
+   ],
+   "adds2": [
+    "ERROR",
+    0,
+    0
+   ],
+   "hidden": [
+    "ERROR",
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "model": "openrouter/inclusionai/ling-3.2-flash:free",
+  "t3": {
+   "time": 89,
+   "err": "LLMUpstreamError: LLM_UPSTREAM:OpenCodeError: model=openrouter/inclusionai/ling-3.2-flash:free {\"type\": \"provider.rate-limit\", \"message\": "
+  }
+ },
+ {
+  "model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+  "t3": {
+   "time": 84,
+   "err": "LLMUpstreamError: LLM_UPSTREAM:OpenCodeError: model=openrouter/nvidia/nemotron-3-ultra-550b-a55b:free {\"type\": \"provider.rate-limit\", \"mes"
+  }
+ }
+]

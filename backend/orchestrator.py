@@ -523,15 +523,52 @@ def pipeline_events(
         def _tb_ok(code: str) -> bool:
             return not _tb_problems(code, spec.module_name)
 
-        tb_code = _call_llm("generate_testbench", rtl_code, spec, model=tb_model, reasoning_effort=reasoning_effort)
-        if not _tb_ok(tb_code):
-            logger.warning(
-                "Generated testbench invalid (complete=%s, checks=%d, instantiates_dut=%s); retrying once",
-                _has_complete_module(tb_code, "testbench"),
-                _tb_check_count(tb_code),
-                _instantiates_dut(tb_code, spec.module_name),
-            )
-            tb_code = _call_llm("generate_testbench", rtl_code, spec, model=tb_model, reasoning_effort=reasoning_effort)
+        def _write_testbench(with_model):
+            code = _call_llm("generate_testbench", rtl_code, spec, model=with_model, reasoning_effort=reasoning_effort)
+            if not _tb_ok(code):
+                logger.warning(
+                    "Generated testbench invalid (complete=%s, checks=%d, instantiates_dut=%s); retrying once",
+                    _has_complete_module(code, "testbench"),
+                    _tb_check_count(code),
+                    _instantiates_dut(code, spec.module_name),
+                )
+                code = _call_llm("generate_testbench", rtl_code, spec, model=with_model, reasoning_effort=reasoning_effort)
+            return code
+
+        # Testbench fallback (viva-day finding, 25 Nov): free models write RTL reliably but often cannot write the
+        # testbench (timeouts, cut-off answers, unusable code). When the testbench model fails, ask the fallback model
+        # (DeepSeek: the only free model that passed the testbench benchmark) instead of ending the run. It is announced
+        # in the timeline and recorded as the testbench model, never silent; it never replaces a model with itself.
+        fallback_tb = testbench_fallback_model()
+        failing_tb = tb_model or llm_service.current_model_id() or ""
+        can_fall_back = (bool(fallback_tb) and not use_offline and _norm(fallback_tb) != _norm(failing_tb)
+                         and _served_by_a_live_model(fallback_tb))      # never a scripted testbench under a model's name
+        tb_failure = None
+        try:
+            tb_code = _write_testbench(tb_model)
+            if not _tb_ok(tb_code):
+                tb_failure = "it returned an unusable testbench twice"
+        except llm_service.ModelNotAvailable:
+            raise                                       # a set-up problem the user can fix: say so, do not work around it
+        except RuntimeError as e:                       # includes MidRunUnavailable, timeouts and cut-off answers
+            if not can_fall_back:
+                raise
+            tb_failure = _reason(str(e.__cause__ or e).lower())    # the provider's own error, not our rewording of it
+            tb_code = ""
+        if tb_failure and can_fall_back:
+            yield {"stage": "testbench",
+                   "message": f"The testbench model {_model_used(tb_model)} could not be used ({tb_failure}); "
+                              f"asking {fallback_tb} to write the testbench instead..."}
+            first_tb_model = _model_used(tb_model)
+            tb_model = testbench_model = fallback_tb
+            independent_tb = _norm(fallback_tb) != _norm(model or llm_service.current_model_id() or "")
+            try:
+                tb_code = _write_testbench(tb_model)
+            except RuntimeError as e2:                  # name both models: the user chose the first, not the fallback
+                raise RuntimeError(
+                    f"The testbench model {first_tb_model} could not be used ({tb_failure}), and the fallback "
+                    f"{fallback_tb} failed too ({_reason(str(e2.__cause__ or e2).lower())}). Try again in a moment."
+                ) from e2
         if not _has_complete_module(tb_code, "testbench"):
             raise RuntimeError(
                 "Testbench generation did not return a complete module named "
@@ -956,6 +993,19 @@ def _model_used(model: Optional[str]) -> Optional[str]:
     if model and not llm_service.is_default_model(model):
         return model
     return llm_service.current_model_id()
+
+
+def _served_by_a_live_model(model_id: str) -> bool:
+    """False when *model_id* would be answered by the scripted offline provider, or cannot be resolved at all."""
+    try:
+        return not llm_service.uses_offline(model_id)
+    except Exception:
+        return False
+
+
+def testbench_fallback_model() -> str:
+    """The model asked to write the testbench when the chosen one fails (empty = no fallback). Read per run."""
+    return os.getenv("TESTBENCH_FALLBACK_MODEL", "opencode/deepseek-v4.1-flash-free").strip()
 
 
 SECOND_OPINION_ENABLED = os.getenv("SECOND_OPINION_ENABLED", "1").strip().lower() not in ("0", "false", "no", "off")

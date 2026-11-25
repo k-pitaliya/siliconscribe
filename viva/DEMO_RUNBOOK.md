@@ -33,6 +33,12 @@ cd ~/Kushal_Master/Projects/VLSI/ai-eda-playground/frontend && npm run dev -- --
 ```
 Open http://127.0.0.1:5173. The top-right badge must say **Live · deepseek-v4.1-flash-free**. If it says *Offline demo* or *Demo fallback*, the live model is not in use.
 
+**Keep the Mac awake (lesson of 25 Nov morning):** a run freezes while the Mac sleeps, and its time limit pauses with it. A FIFO run looked like a 96-minute hang because the lid was closed on battery from 07:26 to 09:18. During the viva: charger in, `caffeinate -dims` running in a terminal, and never close the lid while something is running.
+
+**Testbench fallback (added 25 Nov):** free models write the RTL reliably but often cannot write the testbench (timeouts, cut-off answers). When the testbench model fails, the run now asks `deepseek-v4.1-flash-free` instead and continues; the timeline says so and Results shows who wrote the testbench. DeepSeek needs about 3 minutes for a small testbench (full adder: 175 s, PASS 48/48). Each model call may take up to 10 minutes (`LLM_TIMEOUT_SECONDS=600`). Switch the fallback off with `TESTBENCH_FALLBACK_MODEL=` in front of the start command.
+
+**One run per tab, and not three at once:** a tab is locked while it generates (no Projects, Re-run or Ask). Use one tab for a live Generate and a second for everything else; several live runs at the same time slow each other down.
+
 **Model menu:** on 24 Nov every model in the menu was sent one tiny message; 29 of 69 failed (paid-only, retired by OpenCode, not chat models, or too slow) and are now hidden (`backend/model_hidden.json`, with the reason for each). OpenCode changes its free models without notice, so a model can still fail tomorrow: the app then names the model and the reason, and you pick another. Safe choices verified on 24 Nov: `deepseek-v4.1-flash-free` and `hy4-flash-free` (OpenCode), `nemotron-3-ultra-550b-a55b` (NVIDIA NIM), `gpt-oss-120b` (Cloudflare).
 
 For **Ask about this run** use a fast model: in the sidebar **Model** menu pick the **NVIDIA NIM** tab, then `nvidia/nemotron-3-ultra-550b-a55b` (it needs the NIM key that is already in `backend/.env`). It answered in 31-219 s on 24 Nov; DeepSeek through OpenCode also works but is slower. The chat uses whatever model is selected in this menu.

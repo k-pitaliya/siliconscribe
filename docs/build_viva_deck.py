@@ -388,7 +388,7 @@ box(s, 0.6, 5.5, 7.5, 1.3, fillc=T_AMBER, line=AMBER, lw=1.25, paras=[
     {"runs": parse("One run each, small designs; NVIDIA NIM Nemotron Ultra unless stated."), "align": PP_ALIGN.LEFT,
      "size": 13, "color": SLATE}], size=15.5, label="agent takeaway", inset=0.18)
 box(s, 8.4, 5.5, 4.35, 1.3, fillc=T_GREEN, line=GREEN, lw=1.25,
-    paras=[{"runs": parse("**632 + 277**"), "size": 26, "color": GREEN}, "automated tests (41 + 10 new)"],
+    paras=[{"runs": parse("**655 + 277**"), "size": 26, "color": GREEN}, "automated tests"],
     size=15.5, label="agent kpi")
 
 # 12 --------------------------------------------------------------- live evaluation
@@ -407,12 +407,14 @@ for k, (big, small, c, bc) in enumerate(kp):
 # 13 --------------------------------------------------------------- timing, area, tools
 s = slide("Timing, area, repair and tool checks", "Left: timing per design. Combinational designs get a longest path, never a clock "
           "rate. Area grows with flip-flops, the FIFO is largest. A seeded counter bug was found from the log alone and repaired "
-          "from 1 of 20 to 20 of 20 checks. The tool itself has 632 backend and 277 frontend tests.", kicker="Results")
-fit_picture(s, A("chart_timing_area_repair"), 0.6, 1.5, 6.6, 5.4)
+          "from 1 of 20 to 20 of 20 checks. The tool itself has 655 backend and 277 frontend tests. I also checked 40 free models with the tool's own prompts: 18 wrote a correct counter and ALU, but only one wrote a correct testbench first time, so when a testbench model fails the run now falls back to that model and says so.", kicker="Results")
+# the "_deck" copy has the poster's KPI tile row cropped off: it carried an old test count (453 + 222)
+fit_picture(s, A("chart_timing_area_repair_deck"), 0.6, 1.5, 6.6, 5.4)
 bullets(s, 7.55, 1.75, 5.2, 5.0, [
     "Combinational designs report a **longest path**, never a clock rate",
     "Seeded counter bug: **1 / 20 → 20 / 20** checks after the live repair",
-    "**632** backend + **277** frontend automated tests pass",
+    "**655** backend + **277** frontend automated tests pass",
+    "**40 free models checked:** 18 wrote correct RTL, only **1** a correct testbench first time",
     "**27 / 27** injected bugs caught in the built-in designs",
     "**16 / 18** netlists formally proven equal to the RTL"], size=17.5, label="t13 bullets", space_after=11)
 
@@ -466,7 +468,7 @@ text(s, 1.0, 1.05, W - 2.0, 0.5, ["CONCLUSION"], size=15, color=RGBColor(0x93, 0
 text(s, 1.0, 1.55, W - 2.0, 1.9, ["Only the simulator decides, and every PASS states how much it is worth."], size=36,
      color=WHITE, bold=True, label="c main")
 for k, (big, small) in enumerate([("14 / 14", "live runs PASS"), ("102 / 111", "bugs caught"), ("16 / 18", "netlists formally proven"),
-                                  ("632 + 277", "automated tests")]):
+                                  ("655 + 277", "automated tests")]):
     x = 1.0 + k * 2.88
     text(s, x, 3.75, 2.7, 0.75, [big], size=32, color=WHITE, bold=True, label="c big")
     text(s, x, 4.45, 2.7, 0.45, [small], size=15, color=RGBColor(0xCB, 0xD5, 0xE1), label="c small")

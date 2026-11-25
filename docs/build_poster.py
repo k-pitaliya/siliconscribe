@@ -393,7 +393,7 @@ rows = [("Metric", "Achieved", "Status"),
         ("Mutation sweep (built-in)", "27 / 27", "PASS"),
         ("Gate-level simulation", "19 / 19 match", "PASS"),
         ("Formal netlist = RTL", "16 / 18 proven", "PROVEN*"),
-        ("Automated tests", "632 + 277", "PASS")]
+        ("Automated tests", "655 + 277", "PASS")]
 cws = [rw * 0.46, rw * 0.30, rw * 0.24]; trh = 0.8; ty = iy + 0.72
 for r, row in enumerate(rows):
     xx = rx
