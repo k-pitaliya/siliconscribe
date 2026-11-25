@@ -26,7 +26,7 @@ Everything here was checked against the real app. Where a number depends on the 
 # terminal 1: backend, live model
 cd ~/Kushal_Master/Projects/VLSI/ai-eda-playground/backend
 PATH="$HOME/.local/bin:$PATH" env -u OFFLINE_MODE LLM_PROVIDER=opencode-app \
-  LLM_MODEL=deepseek-v4.1-flash-free LLM_TIMEOUT_SECONDS=600 python3 -m uvicorn main:app --host 127.0.0.1 --port 8000
+  LLM_MODEL=deepseek-v4.1-flash-free LLM_TIMEOUT_SECONDS=600 TESTBENCH_FALLBACK_MODEL=claude/sonnet python3 -m uvicorn main:app --host 127.0.0.1 --port 8000
 
 # terminal 2: frontend
 cd ~/Kushal_Master/Projects/VLSI/ai-eda-playground/frontend && npm run dev -- --host 127.0.0.1 --port 5173
@@ -35,7 +35,9 @@ Open http://127.0.0.1:5173. The top-right badge must say **Live · deepseek-v4.1
 
 **Keep the Mac awake (lesson of 25 Nov morning):** a run freezes while the Mac sleeps, and its time limit pauses with it. A FIFO run looked like a 96-minute hang because the lid was closed on battery from 07:26 to 09:18. During the viva: charger in, `caffeinate -dims` running in a terminal, and never close the lid while something is running.
 
-**Testbench fallback (added 25 Nov):** free models write the RTL reliably but often cannot write the testbench (timeouts, cut-off answers). When the testbench model fails, the run now asks `deepseek-v4.1-flash-free` instead and continues; the timeline says so and Results shows who wrote the testbench. DeepSeek needs about 3 minutes for a small testbench (full adder: 175 s, PASS 48/48). Each model call may take up to 10 minutes (`LLM_TIMEOUT_SECONDS=600`). Switch the fallback off with `TESTBENCH_FALLBACK_MODEL=` in front of the start command.
+**Testbench fallback (added 25 Nov):** free models write the RTL reliably but often cannot write the testbench (timeouts, cut-off answers). When the testbench model fails, the run now asks the fallback model instead (the start command above sets `claude/sonnet`, 26 s for the testbench task; without it the default is `deepseek-v4.1-flash-free`) and continues; the timeline says so and Results shows who wrote the testbench. DeepSeek needs about 3 minutes for a small testbench (full adder: 175 s, PASS 48/48). Each model call may take up to 10 minutes (`LLM_TIMEOUT_SECONDS=600`). Switch the fallback off with `TESTBENCH_FALLBACK_MODEL=` in front of the start command.
+
+**Claude Code (added 25 Nov, the most reliable option):** in the Model menu pick the **Claude** tab, then **Claude Sonnet** (fast) or **Claude Opus** (strongest). It uses your Claude plan through the installed `claude` command, with no tools and none of your settings. On 24-25 Nov Sonnet and Opus were the only models besides DeepSeek to write a correct testbench first time, and 4-6 times faster. Say: *"This one uses my own Claude subscription, so it is not part of the free-model evaluation; the evaluation in the report used free models."*
 
 **One run per tab, and not three at once:** a tab is locked while it generates (no Projects, Re-run or Ask). Use one tab for a live Generate and a second for everything else; several live runs at the same time slow each other down.
 

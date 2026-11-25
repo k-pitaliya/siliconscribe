@@ -33,6 +33,8 @@ def _no_real_credentials_or_network_models(monkeypatch):
     # The testbench fallback (orchestrator.testbench_fallback_model) is off unless a test turns it on, so tests of
     # "the chosen model failed and the run says so" keep their meaning.
     monkeypatch.setenv("TESTBENCH_FALLBACK_MODEL", "")
+    # The developer machine has the real Claude Code CLI; menu tests must not depend on it (tests that need it turn it on).
+    monkeypatch.setenv("CLAUDE_CODE_PROVIDER", "0")
     model_catalog.clear_cache()
     yield
     model_catalog.clear_cache()

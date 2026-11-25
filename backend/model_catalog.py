@@ -25,6 +25,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import ssl
 import subprocess
 import tempfile
@@ -107,9 +108,13 @@ def is_nim_id(value: Optional[str]) -> bool:
     return bool(value) and value.startswith(NIM_PREFIX)
 
 
+def is_claude_id(value: Optional[str]) -> bool:
+    return bool(value) and value.startswith(CLAUDE_PREFIX)
+
+
 def is_routed_id(value: Optional[str]) -> bool:
-    """True for ids served by a provider of their own (Cloudflare, NVIDIA NIM) instead of the configured one."""
-    return is_cloudflare_id(value) or is_nim_id(value)
+    """True for ids served by a provider of their own (Cloudflare, NVIDIA NIM, Claude Code) instead of the configured one."""
+    return is_cloudflare_id(value) or is_nim_id(value) or is_claude_id(value)
 
 
 def normalize_opencode_id(model: str) -> str:
@@ -329,6 +334,41 @@ def _search_nim(key: str, base: str, timeout: float = 20.0) -> List[dict]:
     req = urllib.request.Request(f"{base}/models", headers={"Authorization": f"Bearer {key}", "Accept": "application/json"})
     with _urlopen(req, timeout) as r:
         return parse_nim_models(json.loads(r.read().decode("utf-8")))
+
+
+# ----------------------------------------------------------------------------- Claude Code (the user's own CLI)
+CLAUDE_PREFIX = "claude/"
+# (alias passed to `claude --model`, label, note). The CLI resolves an alias to the latest model of that family.
+CLAUDE_MODELS = (
+    ("opus", "Claude Opus (latest)", "Claude Code on your Claude plan · strongest; uses your plan's usage"),
+    ("sonnet", "Claude Sonnet (latest)", "Claude Code on your Claude plan · fast and strong; uses your plan's usage"),
+    ("haiku", "Claude Haiku (latest)", "Claude Code on your Claude plan · fastest; uses your plan's usage"),
+)
+_CLAUDE_ALIAS_RE = re.compile(r"^[a-z][a-z0-9.\-]{0,40}$")
+
+
+def claude_alias(model_id: str) -> Optional[str]:
+    """`claude/opus` -> `opus`; None when the rest is not a plain model name (it becomes a CLI argument)."""
+    if not is_claude_id(model_id):
+        return None
+    alias = model_id[len(CLAUDE_PREFIX):]
+    return alias if _CLAUDE_ALIAS_RE.match(alias) else None
+
+
+def claude_enabled() -> bool:
+    return os.getenv("CLAUDE_CODE_PROVIDER", "1").strip().lower() not in ("0", "false", "no", "off")
+
+
+def claude_status() -> dict:
+    """{'available': bool, 'hint': str|None, 'models': [...]}: the Claude Code CLI on this machine, if installed."""
+    if not claude_enabled():
+        return {"available": False, "models": [], "hint": "Claude Code is switched off (CLAUDE_CODE_PROVIDER=0)."}
+    if shutil.which("claude") is None:
+        return {"available": False, "models": [],
+                "hint": "Claude Code is not installed on the server (the 'claude' command was not found)."}
+    models = [{"id": CLAUDE_PREFIX + a, "label": label, "provider": "claude", "group": "Claude Code", "free": None,
+               "note": note, "tag": "accurate", "thinking_levels": [], "reasoning": False} for a, label, note in CLAUDE_MODELS]
+    return {"available": True, "models": models, "hint": None}
 
 
 def nim_status(refresh: bool = False) -> dict:

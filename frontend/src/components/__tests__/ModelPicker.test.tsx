@@ -11,12 +11,14 @@ const models: ModelInfo[] = [
   { id: '@cf/openai/gpt-oss-120b', label: 'gpt-oss-120b', note: 'Cloudflare Workers AI', tag: 'balanced', provider: 'cloudflare', group: 'Cloudflare Workers AI', free: null },
   { id: 'nim/poolside/laguna-xs-2.1', label: 'poolside/laguna-xs-2.1', note: 'NVIDIA NIM hosted API', tag: 'balanced', provider: 'nim', group: 'NVIDIA NIM', free: null },
   { id: 'nim/nvidia/nemotron-3-ultra-550b-a55b', label: 'nvidia/nemotron-3-ultra-550b-a55b', note: '', tag: 'balanced', provider: 'nim', group: 'NVIDIA NIM', free: null },
+  { id: 'claude/opus', label: 'Claude Opus (latest)', note: 'Claude Code on your Claude plan', tag: 'accurate', provider: 'claude', group: 'Claude Code', free: null },
 ]
 
 const providers: ProviderInfo[] = [
   { id: 'opencode', label: 'OpenCode', available: true, count: 3 },
   { id: 'cloudflare', label: 'Cloudflare', available: true, count: 1 },
   { id: 'nim', label: 'NVIDIA NIM', available: true, count: 2 },
+  { id: 'claude', label: 'Claude Code', available: true, count: 1 },
 ]
 
 function renderPicker(overrides: Partial<ComponentProps<typeof ModelPicker>> = {}) {
@@ -139,10 +141,11 @@ describe('ModelPicker', () => {
     expect(screen.getByRole('checkbox', { name: /Show other models/ })).toBeDisabled()
   })
 
-  it('renders three source radios named OpenCode, Cloudflare and NVIDIA NIM inside the Model source radiogroup', () => {
+  it('renders four source radios named OpenCode, Cloudflare, NVIDIA NIM and Claude inside the Model source radiogroup', () => {
     renderPicker()
     const group = screen.getByRole('radiogroup', { name: 'Model source' })
-    expect(within(group).getAllByRole('radio')).toHaveLength(3)
+    expect(within(group).getAllByRole('radio')).toHaveLength(4)
+    expect(within(group).getByRole('radio', { name: 'Claude' })).toBeInTheDocument()
     expect(within(group).getByRole('radio', { name: 'OpenCode' })).toBeInTheDocument()
     expect(within(group).getByRole('radio', { name: 'Cloudflare' })).toBeInTheDocument()
     expect(within(group).getByRole('radio', { name: 'NVIDIA NIM' })).toBeInTheDocument()
@@ -221,7 +224,7 @@ describe('ModelPicker: keyboard, focus order and honest states', () => {
   it('has one tab stop in the source switch: the checked source', () => {
     renderPicker()
     const radios = screen.getAllByRole('radio')
-    expect(radios.map((r) => r.getAttribute('tabindex'))).toEqual(['0', '-1', '-1'])
+    expect(radios.map((r) => r.getAttribute('tabindex'))).toEqual(['0', '-1', '-1', '-1'])
   })
 
   it('arrow keys move between sources, wrap around, and move focus with them', () => {
@@ -231,14 +234,14 @@ describe('ModelPicker: keyboard, focus order and honest states', () => {
     expect(props.onModelChange).toHaveBeenLastCalledWith('@cf/openai/gpt-oss-120b')
     expect(screen.getByRole('radio', { name: 'Cloudflare' })).toHaveFocus()
     fireEvent.keyDown(opencode, { key: 'ArrowLeft' })                    // wraps from the first to the last
-    expect(props.onModelChange).toHaveBeenLastCalledWith('nim/poolside/laguna-xs-2.1')
-    expect(screen.getByRole('radio', { name: 'NVIDIA NIM' })).toHaveFocus()
+    expect(props.onModelChange).toHaveBeenLastCalledWith('claude/opus')
+    expect(screen.getByRole('radio', { name: 'Claude' })).toHaveFocus()
   })
 
   it('Home and End jump to the first and last source', () => {
     const props = renderPicker({ selectedModel: '@cf/openai/gpt-oss-120b' })
     fireEvent.keyDown(screen.getByRole('radio', { name: 'Cloudflare' }), { key: 'End' })
-    expect(props.onModelChange).toHaveBeenLastCalledWith('nim/poolside/laguna-xs-2.1')
+    expect(props.onModelChange).toHaveBeenLastCalledWith('claude/opus')
     fireEvent.keyDown(screen.getByRole('radio', { name: 'Cloudflare' }), { key: 'Home' })
     expect(props.onModelChange).toHaveBeenLastCalledWith('opencode/deepseek-v4.1-flash-free')
   })

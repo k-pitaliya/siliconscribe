@@ -2,22 +2,25 @@ import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { RefreshCw } from 'lucide-react'
 import type { ModelInfo, ProviderInfo } from '../types'
 
-type Family = 'opencode' | 'cloudflare' | 'nim'
+type Family = 'opencode' | 'cloudflare' | 'nim' | 'claude'
 
 const SOURCES: [Family, string][] = [
   ['opencode', 'OpenCode'],
   ['cloudflare', 'Cloudflare'],
   ['nim', 'NVIDIA NIM'],
+  ['claude', 'Claude'],
 ]
 
-const DEFAULT_HINT: Record<'cloudflare' | 'nim', string> = {
+const DEFAULT_HINT: Record<'cloudflare' | 'nim' | 'claude', string> = {
   cloudflare: 'Cloudflare is not set up. Start the backend with CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN set.',
   nim: 'NVIDIA NIM is not set up. Start the backend with NVIDIA_NIM_API_KEY set.',
+  claude: 'Claude Code is not available on the server (install the claude command and sign in).',
 }
 
 function familyOf(m: ModelInfo): Family {
   if (m.provider === 'cloudflare' || m.id.startsWith('@cf/') || m.id.startsWith('@hf/')) return 'cloudflare'
   if (m.provider === 'nim' || m.id.startsWith('nim/')) return 'nim'
+  if (m.provider === 'claude' || m.id.startsWith('claude/')) return 'claude'
   return 'opencode'
 }
 
@@ -126,7 +129,7 @@ export default function ModelPicker({
 
       {nonOpenCodeOffline ? (
         <div className="model-offline" role="status">
-          {viewProvider?.hint || DEFAULT_HINT[view as 'cloudflare' | 'nim']}
+          {viewProvider?.hint || DEFAULT_HINT[view as 'cloudflare' | 'nim' | 'claude']}
         </div>
       ) : visible.length === 0 ? (
         <div className="model-offline" role="status">{viewProvider?.hint || 'No models available.'}</div>

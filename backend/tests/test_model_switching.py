@@ -330,7 +330,7 @@ def test_a_rejected_nim_key_is_a_typed_upstream_error_that_never_contains_the_ke
 def test_the_menu_lists_nim_as_a_third_provider(monkeypatch):
     out = menu(monkeypatch)
     nim_p = next(p for p in out["providers"] if p["id"] == "nim")
-    assert [p["id"] for p in out["providers"]] == ["opencode", "cloudflare", "nim"]
+    assert [p["id"] for p in out["providers"]] == ["opencode", "cloudflare", "nim", "claude"]
     assert nim_p["available"] is False and "NVIDIA_NIM_API_KEY" in nim_p["hint"]
     with nim(monkeypatch, models=["poolside/laguna-xs-2.1", "nvidia/nemotron-3-ultra-550b-a55b", "nvidia/nv-embedqa-e5-v5"]):
         out = menu(monkeypatch)

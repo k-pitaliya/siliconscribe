@@ -810,6 +810,59 @@ class OpenCodeAppProvider(OpenAIProvider):
         return content
 
 
+class ClaudeCodeProvider(OpenAIProvider):
+    """Drive the user's own Claude Code CLI (`claude -p`) as the model, signed in with their Claude account.
+
+    Same safety pattern as OpenCodeAppProvider: every call runs in a fresh empty temp directory, with NO built-in tools
+    (`--tools ""`), no MCP servers (`--strict-mcp-config`), none of the user's settings (`--setting-sources ""`), our own
+    system prompt instead of Claude Code's (`--system-prompt`), no saved session, and an allow-listed environment. The
+    model can only return text; the server compiles, simulates and judges. Local, single-user only: do not expose it on
+    a public server (use an API key provider there).
+    """
+
+    def __init__(self):
+        self.timeout = float(os.getenv("LLM_TIMEOUT_SECONDS", "120"))
+        self.max_tokens = int(os.getenv("LLM_MAX_TOKENS", "8192"))
+        self.max_retries = 0
+        self.model = model_catalog.CLAUDE_PREFIX + "opus"
+        self.mini_model = self.model
+        self.name = "claude-code"
+        self.stage_models = {}
+
+    def _chat(self, system: Optional[str], user: str, temperature: float,
+              mini: bool = False, model: Optional[str] = None, reasoning_effort: Optional[str] = None,
+              stage: Optional[str] = None) -> str:
+        chosen = model if model_catalog.is_claude_id(model) else self.model
+        alias = model_catalog.claude_alias(chosen)
+        if alias is None:                                  # becomes an argument of `claude --model`: never a flag
+            raise ModelNotAvailable("That Claude model name is not valid.")
+        logger.info("llm stage=%s model=%s", stage or "-", chosen)
+        cmd = ["claude", "-p", "--output-format", "json", "--model", alias, "--tools", "", "--strict-mcp-config",
+               "--setting-sources", "", "--no-session-persistence", "--disable-slash-commands",
+               "--system-prompt", system or "You are an expert digital hardware engineer. Reply with plain text only."]
+        env = {k: v for k, v in model_catalog.child_env().items() if not k.endswith(("_API_KEY", "_TOKEN"))}
+        with tempfile.TemporaryDirectory(prefix="siliconscribe_cc_") as cwd:
+            try:
+                proc = subprocess.run(cmd, input=user, cwd=cwd, capture_output=True, text=True,
+                                      timeout=self.timeout, env=env)
+            except subprocess.TimeoutExpired as e:
+                raise LLMUpstreamError(f"LLM_UPSTREAM:Timeout: claude model={chosen} after {self.timeout:.0f}s") from e
+            except FileNotFoundError as e:
+                raise ModelNotAvailable("Claude Code is not installed on the server (the 'claude' command was not found).") from e
+        try:
+            out = json.loads(proc.stdout or "")
+        except json.JSONDecodeError:
+            tail = (proc.stderr or proc.stdout or "").strip()[-300:]
+            raise LLMUpstreamError(f"LLM_UPSTREAM:ClaudeCodeExit{proc.returncode}: model={chosen} {tail}")
+        if out.get("is_error") or out.get("subtype") != "success":
+            detail = str(out.get("result") or out.get("subtype") or out.get("api_error_status") or "error")[:300]
+            raise LLMUpstreamError(f"LLM_UPSTREAM:ClaudeCodeError: model={chosen} {detail}")
+        content = str(out.get("result") or "").strip()
+        if not content:
+            raise LLMUpstreamError(f"LLM_UPSTREAM:EmptyContent: claude model={chosen} returned no text")
+        return content
+
+
 class CloudflareProvider(OpenAIProvider):
     """Cloudflare Workers AI through its OpenAI-compatible endpoint (/accounts/{id}/ai/v1/chat/completions).
 
@@ -1031,6 +1084,18 @@ def _nim_provider() -> "NimProvider":
         return _nim_cache["provider"]
 
 
+_claude_cache: dict = {}
+
+
+def _claude_provider() -> "ClaudeCodeProvider":
+    if not model_catalog.claude_enabled():
+        raise ModelNotAvailable("Claude Code is switched off on this server (CLAUDE_CODE_PROVIDER=0).")
+    with _provider_lock:
+        if "provider" not in _claude_cache:
+            _claude_cache["provider"] = ClaudeCodeProvider()
+        return _claude_cache["provider"]
+
+
 def _cloudflare_provider() -> "CloudflareProvider":
     cfg = model_catalog.cloudflare_config()
     if cfg is None:
@@ -1052,6 +1117,8 @@ def get_provider(model: Optional[str] = None):
         return _cloudflare_provider()
     if model and model_catalog.is_nim_id(model):
         return _nim_provider()
+    if model and model_catalog.is_claude_id(model):
+        return _claude_provider()
     return _provider
 
 
@@ -1180,8 +1247,11 @@ def list_models(include_paid: bool = False, refresh: bool = False) -> dict:
     nim = model_catalog.nim_status(refresh)
     nim_models = keep(nim["models"])
     providers.append({"id": "nim", "label": "NVIDIA NIM", "available": nim["available"], "count": len(nim_models), "hint": nim["hint"]})
-    failed_hidden += len(cf["models"]) - len(cf_models) + len(nim["models"]) - len(nim_models)
-    models = models + cf_models + nim_models
+    cc = model_catalog.claude_status()
+    cc_models = keep(cc["models"])
+    providers.append({"id": "claude", "label": "Claude Code", "available": cc["available"], "count": len(cc_models), "hint": cc["hint"]})
+    failed_hidden += len(cf["models"]) - len(cf_models) + len(nim["models"]) - len(nim_models) + len(cc["models"]) - len(cc_models)
+    models = models + cf_models + nim_models + cc_models
     # Per-stage overrides (LLM_MODEL_TESTBENCH etc.) that differ from the default model. A request that
     # explicitly picks another model in the UI overrides them, so say where they apply.
     stage = {s: m for s, m in (getattr(prov, "stage_models", None) or {}).items() if m and m != current}

@@ -231,13 +231,14 @@ textarea::placeholder, input::placeholder { color: var(--ink-3); }
 /* model picker: source switch (OpenCode | Cloudflare) with a refresh button beside it, the menu, the other-models checkbox */
 .model-picker { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: stretch; }
 .model-picker > * { grid-column: 1 / -1; }
-.model-picker > .seg { grid-column: 1; }
-.model-picker > .icon-btn { grid-column: 2; grid-row: 1; }
-.model-picker .field-label { margin-bottom: -2px; }
+/* Four sources need the full width: the tabs take row 1, the refresh button sits beside the "Model" label in row 2. */
+.model-picker > .seg { grid-column: 1 / -1; grid-row: 1; }
+.model-picker > .icon-btn { grid-column: 2; grid-row: 2; align-self: end; }
+.model-picker > .field-label { grid-column: 1; grid-row: 2; align-self: end; margin-bottom: 0; }
 .model-picker .model-note { margin-top: 0; }
-.seg { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; border: 1px solid var(--line-strong); border-radius: var(--r-control); overflow: hidden; background: var(--panel); }
+.seg { display: grid; grid-auto-flow: column; grid-auto-columns: auto; border: 1px solid var(--line-strong); border-radius: var(--r-control); overflow: hidden; background: var(--panel); }
 .seg-btn {
-  padding: 6px 4px; font-size: 12.5px; white-space: nowrap; color: var(--ink-2); background: transparent; border: 0;
+  padding: 6px 4px; font-size: 12px; white-space: nowrap; color: var(--ink-2); background: transparent; border: 0;
   border-right: 1px solid var(--line-strong);
   transition: background var(--t-fast) var(--ease-out), color var(--t-fast) var(--ease-out);
 }
