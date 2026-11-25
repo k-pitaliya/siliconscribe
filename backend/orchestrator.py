@@ -322,7 +322,7 @@ def _lint_payload(lint_res: dict) -> dict:
     }
 
 
-def pipeline_events(
+def _pipeline_steps(
     prompt: str,
     design_id: str,
     simulator: IcarusSimulator,
@@ -982,6 +982,32 @@ _REASON_PATTERNS = (
      "needs a paid plan)"),
     (re.compile(r"\b404\b|not found|unknown model|does not exist"), "the provider does not know this model"),
 )
+
+
+# Stages whose event may carry the model's reasoning for that step (display only).
+REASONING_STAGES = frozenset({"intent", "rtl", "testbench", "explanation", "fix", "second_opinion"})
+
+
+def pipeline_events(*args, **kwargs):
+    """The pipeline (see _pipeline_steps), with the model's own reasoning attached to the step that produced it.
+
+    The reasoning slot is per thread and the web server reuses threads across requests, so it is cleared right before
+    each step and read right after it, in the same thread: another request's reasoning can never reach this run.
+    """
+    steps = _pipeline_steps(*args, **kwargs)
+    try:
+        while True:
+            llm_service.take_reasoning()                  # drop anything left on this worker thread
+            try:
+                event = next(steps)
+            except StopIteration:
+                return
+            thinking = llm_service.take_reasoning()
+            if thinking and event.get("stage") in REASONING_STAGES:
+                event = {**event, "reasoning": thinking}
+            yield event
+    finally:
+        steps.close()
 
 
 def _reason(low: str) -> str:

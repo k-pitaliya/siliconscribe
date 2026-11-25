@@ -39,6 +39,36 @@ logger = logging.getLogger("siliconscribe.llm")
 load_dotenv(override=True)
 
 
+# --------------------------------------------------------------------------- #
+# The model's own reasoning, for display only (never parsed, never used as an answer).
+# Each model call records it in a per-thread slot; orchestrator.pipeline_events clears the slot right before a step and
+# reads it right after, in the same thread, so reasoning can only be attached to the step that produced it.
+# --------------------------------------------------------------------------- #
+REASONING_MAX_CHARS = 6000
+_reasoning_slot = threading.local()
+
+
+def _note_reasoning(text) -> None:
+    t = text.strip() if isinstance(text, str) else ""
+    if t:
+        items = getattr(_reasoning_slot, "items", None)
+        if items is None:
+            items = _reasoning_slot.items = []
+        items.append(t[:REASONING_MAX_CHARS])
+
+
+def take_reasoning() -> str:
+    """The reasoning recorded on this thread since the last call (empty when the model gave none), and clear it."""
+    items = getattr(_reasoning_slot, "items", None) or []
+    _reasoning_slot.items = []
+    text = "\n\n".join(items)
+    return text if len(text) <= REASONING_MAX_CHARS else text[:REASONING_MAX_CHARS] + "\n[... cut]"
+
+
+def _opencode_thinking() -> bool:
+    return os.getenv("OPENCODE_THINKING", "1").strip().lower() not in ("0", "false", "no", "off")
+
+
 class ModelNotAvailable(RuntimeError):
     """The model the user picked cannot be used here (not set up, malformed). The message is shown to the user as is."""
 
@@ -433,6 +463,17 @@ def _parse_fix_response(text: str, rtl_fallback: str, tb_fallback: str) -> dict:
 # --------------------------------------------------------------------------- #
 # Providers
 # --------------------------------------------------------------------------- #
+def _reply_reasoning(msg):
+    """Reasoning text an OpenAI-compatible reply carries (`reasoning_content` or `reasoning`), else None."""
+    for key in ("reasoning_content", "reasoning"):
+        v = msg.get(key) if isinstance(msg, dict) else getattr(msg, key, None)
+        if v is None and not isinstance(msg, dict):
+            v = (getattr(msg, "model_extra", None) or {}).get(key)
+        if isinstance(v, str) and v.strip():
+            return v
+    return None
+
+
 class OpenAIProvider:
     """Works with OpenAI and any OpenAI-compatible endpoint (NVIDIA NIM, Groq,
     Together, OpenRouter, local Ollama, ...) by configuring base_url + model."""
@@ -592,6 +633,7 @@ class OpenAIProvider:
                 f"Reasoning counts against the output budget; increase "
                 f"LLM_MAX_TOKENS or disable reasoning."
             )
+        _note_reasoning(_reply_reasoning(msg))           # display only; the answer is `content`
         return str(content)
 
     def parse_intent(self, prompt: str, model: Optional[str] = None, reasoning_effort: Optional[str] = None) -> RTLDesignSpec:
@@ -728,7 +770,7 @@ class OpenCodeAppProvider(OpenAIProvider):
         logger.info("llm stage=%s model=%s", stage or "-", chosen)
         message = f"{system}\n\n{user}" if system else user
         cmd = ["opencode", "run", "-m", chosen, "--agent", self.agent,
-               "--archived", "--format", "json", message]
+               "--archived", "--format", "json"] + (["--thinking"] if _opencode_thinking() else []) + [message]
         with tempfile.TemporaryDirectory(prefix="siliconscribe_oc_") as cwd:
             try:
                 proc = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, stdin=subprocess.DEVNULL,
@@ -738,6 +780,7 @@ class OpenCodeAppProvider(OpenAIProvider):
             except FileNotFoundError as e:
                 raise RuntimeError("LLM_UPSTREAM:OpenCodeNotInstalled: the 'opencode' command was not found") from e
         texts: list[str] = []
+        thoughts: list[str] = []
         for line in (proc.stdout or "").splitlines():
             line = line.strip()
             if not line.startswith("{"):
@@ -753,12 +796,17 @@ class OpenCodeAppProvider(OpenAIProvider):
                 txt = (ev.get("part") or {}).get("text")
                 if txt:
                     texts.append(txt)
+            elif ev.get("type") == "reasoning":              # only with --thinking; display only, never the answer
+                txt = (ev.get("part") or {}).get("text")
+                if txt:
+                    thoughts.append(txt)
         content = "".join(texts).strip()
         if proc.returncode != 0 and not content:
             tail = (proc.stderr or proc.stdout or "").strip()[-300:]
             raise LLMUpstreamError(f"LLM_UPSTREAM:OpenCodeExit{proc.returncode}: model={chosen} {tail}")
         if not content:
             raise LLMUpstreamError(f"LLM_UPSTREAM:EmptyContent: opencode model={chosen} returned no text")
+        _note_reasoning("\n\n".join(thoughts))
         return content
 
 

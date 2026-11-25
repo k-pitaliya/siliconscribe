@@ -46,6 +46,7 @@ Natural language ─▶ Specification ─▶ RTL gen ─▶ Testbench gen ─▶
 - **Editable code**: CodeMirror with Verilog highlighting, Copy per tab, `Ctrl+Enter` to generate; edit and **Re-run** (`POST /api/simulation/run`).
 - **Ask about this run (debugging agent, added 24 Nov 2026)**: a sidebar chat answers questions about the code in the editor from simulation evidence. `POST /api/agent/ask` (SSE) re-simulates the editor's code in the sandbox, then the chosen model calls tools on that run: failing checks, a signal's value at a time and just before it, changes in a window, a cycle-by-cycle table at each clock edge, when a value occurred, which lines assign a signal, numbered source, and testing a fix (max 3). It must query the simulation before answering; every fix in an answer is re-simulated by the server and shown with that verdict; a testbench fix is flagged as changing the checker; with no model (or a failed one) it shows labelled rule-based evidence. Times in the answer are links that move the waveform cursor. Live on 24 Nov (NVIDIA NIM Nemotron Ultra): a hidden enable bug found with fix 57/57; a correct counter with a wrong testbench identified as a testbench bug (fix 57/57); an SR-latch timeout fixed 558/558 with a partly wrong explanation. The fix is verified; the explanation is not.
 - **Testbench fallback (added 25 Nov 2026)**: free models write the RTL reliably but often cannot write the testbench (timeouts, cut-off answers, unusable code). When the testbench model fails, the run asks the fallback model (`TESTBENCH_FALLBACK_MODEL`, default `opencode/deepseek-v4.1-flash-free`: the only free model that wrote a correct testbench first time in the 40-model check) and continues. The timeline says which model failed and why, and the result records the fallback as the testbench author. It never replaces a model with itself, never uses the offline demo under a model's name, and a set-up problem (missing key) still ends the run with its own message. Set `TESTBENCH_FALLBACK_MODEL=` to switch it off.
+- **Model's reasoning (added 25 Nov 2026)**: each step of a run (specification, RTL, testbench, explanation, repair) shows the model's own reasoning in a collapsed box, when the model provides it (OpenCode models with `--thinking`; OpenAI-compatible replies with `reasoning_content`). Display only: never parsed, never used as the answer, labelled "its own account, not checked". `OPENCODE_THINKING=0` switches it off for OpenCode.
 - **Live agent stream**: the pipeline streams over Server-Sent Events into the agent panel (spec, RTL, testbench, lint, simulate, fix, synthesis, strength, timing, second opinion).
 - **Sandbox policy (defence in depth, not a jail)**: before anything is compiled, linted, synthesized or timed, RTL/testbench are rejected if they use a system task outside an allow-list (`$display`/`$monitor`/`$finish`/`$dump*`/`$random`/math helpers…), `` `include ``, `$readmemh`, `$system`, file I/O, macro token pasting or a non-plain `$dumpfile`; RTL may not print the testbench's `Passed:`/`Failed:` lines or call `$finish`. The child process gets a scrubbed environment (API keys never reach `vvp`), a closed stdin, CPU-time / file-size / memory limits (the memory limit is enforced on Linux, not macOS) and at most `SIM_MAX_CONCURRENT` (default 2) simulations run at once.
 - **Verdict integrity**: PASS needs a whole-line `Passed: N` / `Failed: 0` summary with N > 0 (at least one executed check), no `FAIL`/`ERROR` line contradicting it, and a clean `vvp` exit. Zero executed checks is never a PASS. A testbench whose watchdog fires before its summary is ERROR. PASS is evidence, not proof: it is only as strong as the testbench that prints it.
@@ -147,13 +148,13 @@ Full table (checks, strength, toggle coverage, timing, area per design): [`backe
 
 ```bash
 cd backend
-PATH="$HOME/.local/bin:$PATH" OFFLINE_MODE=1 python3 -m pytest tests/ -q   # 655 passed (37 test files)
+PATH="$HOME/.local/bin:$PATH" OFFLINE_MODE=1 python3 -m pytest tests/ -q   # 666 passed (38 test files)
 PATH="$HOME/.local/bin:$PATH" python3 tools/mutation_sweep.py            # 27 of 27 injected bugs caught
 PATH="$HOME/.local/bin:$PATH" python3 tools/verify_mapping.py            # 19 of 19 designs equivalent at gate level (about 30 s)
 PATH="$HOME/.local/bin:$PATH" python3 tools/preflight.py                 # demo readiness, free checks only
 #   add --live to preflight.py for ONE tiny live model call (uses a little quota)
 cd ../frontend
-npm test                  # 277 passed (vitest)
+npm test                  # 279 passed (vitest)
 npm run build             # tsc -b && vite build
 ```
 
@@ -226,7 +227,7 @@ backend/
   pdk/               sky130hd_tt.lib goes here (git-ignored, see pdk/README.md)
   tools/             mutation_sweep.py, verify_mapping.py, evaluate_live.py, preflight.py, build_opensta.sh
   evaluation/        live evaluation: summary.md, results.jsonl, artifacts/, independent/
-  tests/             pytest suite (655 tests, 37 files; offline, no key)
+  tests/             pytest suite (666 tests, 38 files; offline, no key)
 frontend/
   src/App.tsx        layout + streaming + Projects drawer + UVM export → zip download
   src/components/    PromptPanel, ModelPicker, TestbenchModelSelect, SpecReview, SpecSummary, CodeEditor, AgentChat,

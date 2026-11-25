@@ -517,6 +517,7 @@ def ask(question: str, tools: Toolbox, history: Optional[List[dict]] = None,
     for _ in range(MAX_STEPS):
         try:
             reply = chat(SYSTEM_PROMPT, _transcript(base, steps))
+            llm_service.take_reasoning()        # not shown here yet; clear it so it can never reach another request
         except Exception as e:
             logger.warning("agent model call failed: %s", str(e)[:300])
             who = model or llm_service.current_model_id() or "the AI model"

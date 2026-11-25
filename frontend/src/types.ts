@@ -354,6 +354,8 @@ export interface StreamEvent {
   fix_summary?: string
   fix_type?: string
   diagnosis?: Diagnosis | null
+  /** The model's own reasoning for this step, when it gave any (display only, not checked). */
+  reasoning?: string
   fallback_notice?: string
   result?: SimulationResult
   response?: RunResponse

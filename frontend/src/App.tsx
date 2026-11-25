@@ -248,7 +248,7 @@ export default function App() {
         },
         (e) => {
           if (e.message && ['start', 'intent', 'rtl', 'testbench', 'explanation', 'simulate', 'fixing', 'fix', 'lint', 'synthesis', 'strength', 'timing', 'second_opinion', 'done', 'error'].includes(e.stage)) {
-            pushMsg({ role: 'ai', text: e.message, stage: e.stage, status: e.status, diagnosis: e.diagnosis })
+            pushMsg({ role: 'ai', text: e.message, stage: e.stage, status: e.status, diagnosis: e.diagnosis, reasoning: e.reasoning })
           }
           if (e.fallback_notice && e.fallback_notice !== lastNoticeRef.current) {
             lastNoticeRef.current = e.fallback_notice

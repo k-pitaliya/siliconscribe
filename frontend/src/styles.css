@@ -678,3 +678,10 @@ textarea::placeholder, input::placeholder { color: var(--ink-3); }
 .debug-input { display: flex; gap: 6px; align-items: flex-end; margin-top: 10px; }
 .debug-input textarea { resize: vertical; font-size: 13px; min-height: 40px; }
 .debug-input .btn { height: 40px; }
+
+/* The model's own reasoning for a step (collapsed by default). */
+.run-reasoning .reasoning-text {
+  margin: 6px 0 0; padding: 8px; border-radius: 6px; background: var(--panel-2); color: var(--ink-2);
+  font-family: var(--font-mono); font-size: 11px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere;
+  max-height: 260px; overflow: auto;
+}

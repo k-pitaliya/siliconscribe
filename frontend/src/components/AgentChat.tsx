@@ -11,6 +11,8 @@ export interface ChatMessage {
   stage?: string
   status?: string
   diagnosis?: Diagnosis | null
+  /** The model's own reasoning for this step (display only). */
+  reasoning?: string
   /** When the event arrived (ms since epoch); used to show how long each step took. */
   at?: number
 }
@@ -101,6 +103,13 @@ export default function AgentChat({ messages, running, explanation, repairs = 0 
                   step has arrived so the timeline does not look stuck. */}
               <span className="txt">{i < messages.length - 1 || !running ? m.text.replace(/(\.\.\.|…)$/, '.') : m.text}</span>
               <span className="when">{took != null && took > 0 ? formatElapsed(took) : ''}</span>
+              {m.reasoning && (
+                <details className="run-diag run-reasoning" data-testid="chat-reasoning">
+                  {/* Collapsed: reasoning can be long. Plain text in a <pre>, never HTML. */}
+                  <summary><strong>Model's reasoning</strong> <span className="muted">(its own account, not checked)</span></summary>
+                  <pre className="reasoning-text">{m.reasoning}</pre>
+                </details>
+              )}
               {m.diagnosis && (
                 <details className="run-diag" data-testid="chat-diagnosis">
                   {/* Collapsed by default: the full text is also under "Self-correction loop" on the Results tab

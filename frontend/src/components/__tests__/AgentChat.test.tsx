@@ -90,3 +90,22 @@ describe('AgentChat explanation after repairs (live finding, 20 Nov)', () => {
     expect(screen.queryByTestId('explanation-stale')).not.toBeInTheDocument()
   })
 })
+
+describe('AgentChat model reasoning', () => {
+  it('shows a step\'s reasoning collapsed, labelled as unchecked, and as text only', () => {
+    const msgs = [{ role: 'ai' as const, text: 'Generated RTL.', stage: 'rtl', reasoning: 'Use a <script>alert(1)</script> case statement.' }]
+    render(<AgentChat messages={msgs} running={false} explanation="" />)
+    const box = screen.getByTestId('chat-reasoning')
+    expect(box.tagName).toBe('DETAILS')
+    expect((box as HTMLDetailsElement).open).toBe(false)
+    expect(box.textContent).toContain("Model's reasoning")
+    expect(box.textContent).toContain('not checked')
+    expect(box.querySelector('script')).toBeNull()
+    expect(box.textContent).toContain('<script>alert(1)</script>')
+  })
+
+  it('shows nothing extra when a step has no reasoning', () => {
+    render(<AgentChat messages={[{ role: 'ai' as const, text: 'Generated RTL.', stage: 'rtl' }]} running={false} explanation="" />)
+    expect(screen.queryByTestId('chat-reasoning')).toBeNull()
+  })
+})
