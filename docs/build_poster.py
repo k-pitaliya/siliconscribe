@@ -393,7 +393,7 @@ rows = [("Metric", "Achieved", "Status"),
         ("Mutation sweep (built-in)", "27 / 27", "PASS"),
         ("Gate-level simulation", "19 / 19 match", "PASS"),
         ("Formal netlist = RTL", "16 / 18 proven", "PROVEN*"),
-        ("Automated tests", "655 + 277", "PASS")]
+        ("Automated tests", "679 + 279", "PASS")]
 cws = [rw * 0.46, rw * 0.30, rw * 0.24]; trh = 0.8; ty = iy + 0.72
 for r, row in enumerate(rows):
     xx = rx
@@ -424,7 +424,9 @@ CONC = ("SiliconScribe closes the loop between a language model and a real simul
         "and every PASS states how much it is worth. All 14 completed live runs passed and were confirmed by "
         "reference testbenches, and the sky130 netlist is formally proven equal to the RTL on 16 of 18 designs. "
         "The evidence is pre-layout and from simulation, on small designs run once each. Added after submission "
-        "(24 Nov): a chat that answers questions from the run's waveform; every fix it proposes is re-simulated.")
+        "(24-25 Nov): a chat that answers from the run's waveform (every fix it proposes is re-simulated), the "
+        "model's reasoning for each step, an automatic fallback when a model cannot write the testbench, and "
+        "Claude Code as an optional model source.")
 FUT = ["Power from simulation activity", "Testbench hardening", "OpenROAD place and route", "SVA assertions",
        "Tiny Tapeout chip"]
 h_c = para_h(CONC, 23, iw); h_f = chips(ix, 0, iw, FUT, size=20, draw=False)
