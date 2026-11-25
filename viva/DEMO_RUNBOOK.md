@@ -9,7 +9,7 @@ Everything here was checked against the real app. Where a number depends on the 
    ```
    cd ~/Kushal_Master/Projects/VLSI/ai-eda-playground/backend
    PATH="$HOME/.local/bin:$PATH" env -u OFFLINE_MODE LLM_PROVIDER=opencode-app \
-     LLM_MODEL=deepseek-v4.1-flash-free LLM_TIMEOUT_SECONDS=360 python3 tools/preflight.py --live
+     LLM_MODEL=deepseek-v4.1-flash-free LLM_TIMEOUT_SECONDS=600 python3 tools/preflight.py --live
    ```
    You want: no FAIL lines, "live model: READY", and the offline demo and saved results READY.
 2. Open the OpenCode app once so you are signed in.
@@ -26,7 +26,7 @@ Everything here was checked against the real app. Where a number depends on the 
 # terminal 1: backend, live model
 cd ~/Kushal_Master/Projects/VLSI/ai-eda-playground/backend
 PATH="$HOME/.local/bin:$PATH" env -u OFFLINE_MODE LLM_PROVIDER=opencode-app \
-  LLM_MODEL=deepseek-v4.1-flash-free LLM_TIMEOUT_SECONDS=360 python3 -m uvicorn main:app --host 127.0.0.1 --port 8000
+  LLM_MODEL=deepseek-v4.1-flash-free LLM_TIMEOUT_SECONDS=600 python3 -m uvicorn main:app --host 127.0.0.1 --port 8000
 
 # terminal 2: frontend
 cd ~/Kushal_Master/Projects/VLSI/ai-eda-playground/frontend && npm run dev -- --host 127.0.0.1 --port 5173
